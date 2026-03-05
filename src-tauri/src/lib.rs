@@ -1176,6 +1176,9 @@ fn set_application_menu(app: &AppHandle) -> CmdResult<()> {
     let copy_item = PredefinedMenuItem::copy(app, None).map_err(|e| e.to_string())?;
     let paste_item = PredefinedMenuItem::paste(app, None).map_err(|e| e.to_string())?;
     let select_all_item = PredefinedMenuItem::select_all(app, None).map_err(|e| e.to_string())?;
+    let minimize_item = PredefinedMenuItem::minimize(app, None).map_err(|e| e.to_string())?;
+    let close_window_item =
+        PredefinedMenuItem::close_window(app, None).map_err(|e| e.to_string())?;
 
     let app_submenu = Submenu::with_items(
         app,
@@ -1199,7 +1202,15 @@ fn set_application_menu(app: &AppHandle) -> CmdResult<()> {
         ],
     )
     .map_err(|e| e.to_string())?;
-    let menu = Menu::with_items(app, &[&app_submenu, &edit_submenu]).map_err(|e| e.to_string())?;
+    let window_submenu = Submenu::with_items(
+        app,
+        "Window",
+        true,
+        &[&minimize_item, &close_window_item],
+    )
+    .map_err(|e| e.to_string())?;
+    let menu = Menu::with_items(app, &[&app_submenu, &edit_submenu, &window_submenu])
+        .map_err(|e| e.to_string())?;
 
     app.set_menu(menu).map_err(|e| e.to_string())?;
     app.on_menu_event(|app_handle, event| {
@@ -1224,6 +1235,27 @@ fn wire_deep_links(app: &AppHandle) {
             let _ = handle_deep_link_string(&app_handle, url.as_ref());
         }
     });
+}
+
+fn restore_or_open_primary_window(app: &AppHandle) {
+    if let Some(main) = app.get_webview_window(MAIN_WINDOW_LABEL) {
+        let _ = main.show();
+        let _ = main.set_focus();
+        return;
+    }
+
+    let settings = load_settings(app).unwrap_or_default();
+    if let Some(runtime_flags) = app.try_state::<Arc<RuntimeFlags>>() {
+        if ensure_main_window(app, runtime_flags.inner().clone(), &settings).is_ok() {
+            if let Some(main) = app.get_webview_window(MAIN_WINDOW_LABEL) {
+                let _ = main.show();
+                let _ = main.set_focus();
+                return;
+            }
+        }
+    }
+
+    let _ = show_settings_window(app);
 }
 
 #[tauri::command]
@@ -1256,9 +1288,6 @@ fn save_settings(
     apply_main_webview_debug_flag(&app, normalized.debug_in_webview);
 
     if previous.instance_base_url != normalized.instance_base_url {
-        if let Some(main) = app.get_webview_window(MAIN_WINDOW_LABEL) {
-            let _ = main.close();
-        }
         ensure_main_window(&app, runtime_flags.inner().clone(), &normalized)?;
         let _ = navigate_main_to_instance_home(&app, &normalized);
     }
@@ -1351,27 +1380,10 @@ fn get_window_label(window: tauri::WebviewWindow) -> String {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
-        .plugin(tauri_plugin_single_instance::init(
-            |app: &AppHandle, args, _cwd| {
-                let mut handled = false;
-                for arg in args {
-                    if handle_deep_link_string(app, &arg).is_ok() {
-                        handled = true;
-                    }
-                }
-
-                if !handled {
-                    if let Some(main) = app.get_webview_window(MAIN_WINDOW_LABEL) {
-                        let _ = main.show();
-                        let _ = main.set_focus();
-                    }
-                }
-            },
-        ))
         .setup(|app| {
             let mut settings = load_settings(app.handle())?;
             if normalize_instance_base_url(&mut settings).is_err() {
@@ -1420,9 +1432,23 @@ pub fn run() {
                     let _ = window.hide();
                 }
             }
+
+            #[cfg(target_os = "macos")]
+            if window.label() == MAIN_WINDOW_LABEL || window.label() == SETTINGS_WINDOW_LABEL {
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application");
+
+    app.run(|app, event| {
+        if let tauri::RunEvent::Reopen { .. } = event {
+            restore_or_open_primary_window(app);
+        }
+    });
 }
 
 #[cfg(test)]
