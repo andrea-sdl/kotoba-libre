@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 use std::fs;
+use std::process::Command;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc, Mutex,
@@ -15,6 +16,7 @@ use objc2_foundation::{NSData, NSString};
 use serde::{Deserialize, Serialize};
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::{image::Image, AppHandle, Manager, State, WebviewUrl, WebviewWindowBuilder};
+use tauri_plugin_autostart::ManagerExt as AutostartManagerExt;
 use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use tauri_plugin_store::StoreExt;
@@ -93,6 +95,7 @@ struct Preset {
 struct AppSettings {
     instance_base_url: Option<String>,
     global_shortcut: String,
+    autostart_enabled: bool,
     open_in_new_window: bool,
     restrict_host_to_instance_host: bool,
     default_preset_id: Option<String>,
@@ -107,6 +110,7 @@ impl Default for AppSettings {
         Self {
             instance_base_url: None,
             global_shortcut: DEFAULT_SHORTCUT.to_string(),
+            autostart_enabled: false,
             open_in_new_window: false,
             restrict_host_to_instance_host: true,
             default_preset_id: None,
@@ -123,6 +127,14 @@ impl Default for AppSettings {
 struct ValidationResult {
     valid: bool,
     reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ImportPresetsResult {
+    imported: usize,
+    skipped: usize,
+    errors: Vec<String>,
 }
 
 enum DeepLinkAction {
@@ -450,6 +462,44 @@ fn validate_url_template_internal(url_template: &str) -> ValidationResult {
     }
 }
 
+fn parse_url_template_candidate(url_template: &str) -> CmdResult<Url> {
+    let candidate = url_template.replace("{query}", "example");
+    Url::parse(&candidate).map_err(|e| format!("Invalid URL template: {e}"))
+}
+
+fn validate_import_compatibility(
+    preset: &Preset,
+    allowed_host: &str,
+    row: usize,
+) -> Option<String> {
+    if preset.name.trim().is_empty() {
+        return Some(format!("Row {row}: name cannot be empty"));
+    }
+
+    let validation = validate_url_template_internal(&preset.url_template);
+    if !validation.valid {
+        let reason = validation
+            .reason
+            .unwrap_or_else(|| "Invalid URL template".to_string());
+        return Some(format!("Row {row} ('{}'): {reason}", preset.name));
+    }
+
+    let parsed = match parse_url_template_candidate(&preset.url_template) {
+        Ok(url) => url,
+        Err(reason) => return Some(format!("Row {row} ('{}'): {reason}", preset.name)),
+    };
+
+    let host = parsed.host_str().unwrap_or_default();
+    if !host.eq_ignore_ascii_case(allowed_host) {
+        return Some(format!(
+            "Row {row} ('{}'): host '{host}' is not compatible with configured LibreChat host '{allowed_host}'",
+            preset.name
+        ));
+    }
+
+    None
+}
+
 fn parse_instance_base_url(settings: &AppSettings) -> CmdResult<Option<Url>> {
     let raw = match settings.instance_base_url.as_ref() {
         Some(value) => value.trim(),
@@ -509,6 +559,47 @@ fn enforce_destination(url: &str, settings: &AppSettings) -> CmdResult<Url> {
     Ok(parsed)
 }
 
+fn sync_autostart(app: &AppHandle, enabled: bool) -> CmdResult<()> {
+    let manager = app.autolaunch();
+    if enabled {
+        manager.enable().map_err(|e| e.to_string())
+    } else {
+        manager.disable().map_err(|e| e.to_string())
+    }
+}
+
+fn open_in_default_app(url: &Url) -> CmdResult<()> {
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open")
+            .arg(url.as_str())
+            .spawn()
+            .map_err(|e| format!("Failed to open external URL: {e}"))?;
+        return Ok(());
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        Command::new("cmd")
+            .args(["/C", "start", "", url.as_str()])
+            .spawn()
+            .map_err(|e| format!("Failed to open external URL: {e}"))?;
+        return Ok(());
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        Command::new("xdg-open")
+            .arg(url.as_str())
+            .spawn()
+            .map_err(|e| format!("Failed to open external URL: {e}"))?;
+        return Ok(());
+    }
+
+    #[allow(unreachable_code)]
+    Err("External URL opening is not supported on this platform".to_string())
+}
+
 fn allow_navigation(url: &Url, runtime_flags: &RuntimeFlags) -> bool {
     if url.scheme() != "https" {
         return true;
@@ -524,6 +615,31 @@ fn allow_navigation(url: &Url, runtime_flags: &RuntimeFlags) -> bool {
     };
 
     matches!(url.host_str(), Some(host) if host.eq_ignore_ascii_case(&allowed_host))
+}
+
+fn should_open_externally(url: &Url, runtime_flags: &RuntimeFlags) -> bool {
+    if url.scheme() != "https" {
+        return false;
+    }
+
+    let Some(instance_host) = runtime_flags.read_instance_host() else {
+        return false;
+    };
+
+    let Some(host) = url.host_str() else {
+        return false;
+    };
+
+    !host.eq_ignore_ascii_case(&instance_host)
+}
+
+fn handle_navigation(url: &Url, runtime_flags: &RuntimeFlags) -> bool {
+    if should_open_externally(url, runtime_flags) {
+        let _ = open_in_default_app(url);
+        return false;
+    }
+
+    allow_navigation(url, runtime_flags)
 }
 
 fn main_webview_url(settings: &AppSettings) -> CmdResult<WebviewUrl> {
@@ -550,7 +666,7 @@ fn ensure_main_window(
         .icon(icon)
         .map_err(|e| e.to_string())?
         .inner_size(1280.0, 860.0)
-        .on_navigation(move |next_url| allow_navigation(next_url, runtime_flags.as_ref()))
+        .on_navigation(move |next_url| handle_navigation(next_url, runtime_flags.as_ref()))
         .build()
         .map_err(|e| e.to_string())?;
 
@@ -714,6 +830,7 @@ fn can_use_spa_navigation(instance_host: Option<&str>, url: &Url) -> bool {
 fn open_url_in_window(
     app: &AppHandle,
     url: Url,
+    runtime_flags: Arc<RuntimeFlags>,
     open_in_new_window: bool,
     debug_in_webview: bool,
     use_route_reload_for_launcher_chats: bool,
@@ -721,9 +838,11 @@ fn open_url_in_window(
 ) -> CmdResult<()> {
     if open_in_new_window {
         let label = format!("chat-{}", Uuid::new_v4());
+        let runtime_flags = runtime_flags.clone();
         WebviewWindowBuilder::new(app, label, WebviewUrl::External(url))
             .title("Toro Libre")
             .inner_size(1280.0, 860.0)
+            .on_navigation(move |next_url| handle_navigation(next_url, runtime_flags.as_ref()))
             .build()
             .map_err(|e| e.to_string())?;
         return Ok(());
@@ -1039,9 +1158,11 @@ fn open_url_internal(app: &AppHandle, destination: &str) -> CmdResult<()> {
     let settings = load_settings(app)?;
     let target = enforce_destination(destination, &settings)?;
     let instance_host = settings_instance_host(&settings)?;
+    let runtime_flags = app.state::<Arc<RuntimeFlags>>().inner().clone();
     open_url_in_window(
         app,
         target,
+        runtime_flags,
         settings.open_in_new_window,
         settings.debug_in_webview,
         settings.use_route_reload_for_launcher_chats,
@@ -1070,9 +1191,11 @@ fn navigate_main_to_instance_home(app: &AppHandle, settings: &AppSettings) -> Cm
     }
 
     let instance_host = settings_instance_host(settings)?;
+    let runtime_flags = app.state::<Arc<RuntimeFlags>>().inner().clone();
     open_url_in_window(
         app,
         target,
+        runtime_flags,
         false,
         settings.debug_in_webview,
         settings.use_route_reload_for_launcher_chats,
@@ -1286,6 +1409,7 @@ fn save_settings(
     )?;
 
     apply_main_webview_debug_flag(&app, normalized.debug_in_webview);
+    sync_autostart(&app, normalized.autostart_enabled)?;
 
     if previous.instance_base_url != normalized.instance_base_url {
         ensure_main_window(&app, runtime_flags.inner().clone(), &normalized)?;
@@ -1349,6 +1473,48 @@ fn delete_preset(app: AppHandle, id: String) -> CmdResult<()> {
 }
 
 #[tauri::command]
+fn import_presets(app: AppHandle, presets: Vec<Preset>) -> CmdResult<ImportPresetsResult> {
+    let settings = load_settings(&app)?;
+    let allowed_host = settings_instance_host(&settings)?.ok_or_else(|| {
+        "Set your LibreChat instance URL in Settings before importing agents".to_string()
+    })?;
+    let mut existing_presets = load_presets(&app)?;
+    let mut existing_ids = existing_presets
+        .iter()
+        .map(|preset| preset.id.clone())
+        .collect::<HashSet<_>>();
+    let mut imported = 0usize;
+    let mut errors = Vec::new();
+
+    for (index, preset) in presets.into_iter().enumerate() {
+        let row = index + 1;
+        let mut normalized = normalize_preset(preset, None);
+        if let Some(error) = validate_import_compatibility(&normalized, &allowed_host, row) {
+            errors.push(error);
+            continue;
+        }
+
+        if normalized.id.is_empty() || existing_ids.contains(&normalized.id) {
+            normalized.id = Uuid::new_v4().to_string();
+        }
+
+        existing_ids.insert(normalized.id.clone());
+        existing_presets.push(normalized);
+        imported += 1;
+    }
+
+    if imported > 0 {
+        save_presets(&app, &existing_presets)?;
+    }
+
+    Ok(ImportPresetsResult {
+        imported,
+        skipped: errors.len(),
+        errors,
+    })
+}
+
+#[tauri::command]
 fn open_preset(app: AppHandle, id: String, query: Option<String>) -> CmdResult<()> {
     open_preset_internal(&app, &id, query.as_deref())
 }
@@ -1384,6 +1550,10 @@ pub fn run() {
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
         .setup(|app| {
             let mut settings = load_settings(app.handle())?;
             if normalize_instance_base_url(&mut settings).is_err() {
@@ -1402,6 +1572,7 @@ pub fn run() {
             set_application_menu(app.handle())?;
             ensure_main_window(app.handle(), runtime_flags.clone(), &settings)?;
             apply_main_webview_debug_flag(app.handle(), settings.debug_in_webview);
+            sync_autostart(app.handle(), settings.autostart_enabled)?;
             ensure_launcher_window(app.handle())?;
             apply_app_icon(app.handle())?;
             register_global_shortcut(app.handle(), runtime_flags, &settings.global_shortcut)?;
@@ -1419,6 +1590,7 @@ pub fn run() {
             list_presets,
             upsert_preset,
             delete_preset,
+            import_presets,
             open_preset,
             open_url,
             validate_url_template,
@@ -1459,6 +1631,7 @@ mod tests {
         AppSettings {
             instance_base_url: Some("https://chat.example.com".to_string()),
             global_shortcut: DEFAULT_SHORTCUT.to_string(),
+            autostart_enabled: false,
             open_in_new_window: false,
             restrict_host_to_instance_host: true,
             default_preset_id: Some("preset-1".to_string()),
@@ -1609,6 +1782,38 @@ mod tests {
         assert!(!normalized[0].created_at.is_empty());
         assert!(!normalized[0].updated_at.is_empty());
         assert_eq!(normalized[1].updated_at, "unix-ms-1");
+    }
+
+    #[test]
+    fn import_validation_rejects_host_mismatch() {
+        let preset = Preset {
+            id: "id-1".to_string(),
+            name: "Support Agent".to_string(),
+            url_template: "https://other.example.com/c/new?agent_id=1".to_string(),
+            kind: PresetKind::Agent,
+            tags: vec![],
+            created_at: "unix-ms-1".to_string(),
+            updated_at: "unix-ms-2".to_string(),
+        };
+
+        let error = validate_import_compatibility(&preset, "chat.example.com", 1);
+        assert!(error.is_some());
+    }
+
+    #[test]
+    fn import_validation_accepts_matching_host() {
+        let preset = Preset {
+            id: "id-1".to_string(),
+            name: "Support Agent".to_string(),
+            url_template: "https://chat.example.com/c/new?agent_id=1".to_string(),
+            kind: PresetKind::Agent,
+            tags: vec![],
+            created_at: "unix-ms-1".to_string(),
+            updated_at: "unix-ms-2".to_string(),
+        };
+
+        let error = validate_import_compatibility(&preset, "chat.example.com", 1);
+        assert!(error.is_none());
     }
 
     #[test]

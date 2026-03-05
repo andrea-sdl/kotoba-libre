@@ -13,6 +13,7 @@ export type Preset = {
 export type AppSettings = {
   instanceBaseUrl: string | null;
   globalShortcut: string;
+  autostartEnabled: boolean;
   openInNewWindow: boolean;
   restrictHostToInstanceHost: boolean;
   defaultPresetId: string | null;
@@ -25,4 +26,10 @@ export type AppSettings = {
 export type ValidationResult = {
   valid: boolean;
   reason?: string;
+};
+
+export type ImportPresetsResult = {
+  imported: number;
+  skipped: number;
+  errors: string[];
 };

@@ -3,6 +3,7 @@ import {
   getSettings,
   getWindowLabel,
   hideLauncher,
+  importPresets,
   listPresets,
   openPreset,
   openUrl,
@@ -19,6 +20,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   globalShortcut: navigator.platform.toLowerCase().includes("mac")
     ? "Alt+Space"
     : "CommandOrControl+Space",
+  autostartEnabled: false,
   openInNewWindow: false,
   restrictHostToInstanceHost: true,
   defaultPresetId: null,
@@ -128,6 +130,19 @@ function parseTags(raw: string): string[] {
 
 function formatTags(tags: string[]): string {
   return tags.join(", ");
+}
+
+function importedAgentsFromPayload(payload: unknown): unknown[] | null {
+  if (Array.isArray(payload)) {
+    return payload;
+  }
+
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+
+  const agents = (payload as { agents?: unknown }).agents;
+  return Array.isArray(agents) ? agents : null;
 }
 
 function debounce<T extends (...args: never[]) => void>(
@@ -413,7 +428,12 @@ async function initSettingsView(): Promise<void> {
                   <h2>Agents</h2>
                   <p>Manage and configure your Toro Libre agents. Star sets default.</p>
                 </div>
-                <button id="agent-new" type="button" class="secondary">+ Add Agent</button>
+                <div class="panel-header-actions">
+                  <button id="agents-export" type="button" class="secondary">Export JSON</button>
+                  <button id="agents-import" type="button" class="secondary">Import JSON</button>
+                  <button id="agent-new" type="button" class="secondary">+ Add Agent</button>
+                  <input id="agents-import-file" type="file" accept=".json,application/json" class="hidden" />
+                </div>
               </div>
             </header>
             <div id="instance-warning" class="instance-warning hidden"></div>
@@ -477,6 +497,14 @@ async function initSettingsView(): Promise<void> {
                 <span>Open presets in a new window</span>
                 <label class="toggle-switch">
                   <input id="open-in-new-window" type="checkbox" />
+                  <span class="toggle-slider"></span>
+                </label>
+              </div>
+
+              <div class="toggle-row">
+                <span>Launch Toro Libre at login</span>
+                <label class="toggle-switch">
+                  <input id="autostart-enabled" type="checkbox" />
                   <span class="toggle-slider"></span>
                 </label>
               </div>
@@ -574,6 +602,8 @@ async function initSettingsView(): Promise<void> {
   const openInNewWindowInput = document.querySelector<HTMLInputElement>(
     "#open-in-new-window",
   );
+  const autostartEnabledInput =
+    document.querySelector<HTMLInputElement>("#autostart-enabled");
   const restrictHostInput =
     document.querySelector<HTMLInputElement>("#restrict-host");
   const debugInWebviewInput =
@@ -617,6 +647,13 @@ async function initSettingsView(): Promise<void> {
   const presetList = document.querySelector<HTMLElement>("#preset-list");
   const presetNewButton =
     document.querySelector<HTMLButtonElement>("#agent-new");
+  const exportAgentsButton =
+    document.querySelector<HTMLButtonElement>("#agents-export");
+  const importAgentsButton =
+    document.querySelector<HTMLButtonElement>("#agents-import");
+  const importAgentsFileInput = document.querySelector<HTMLInputElement>(
+    "#agents-import-file",
+  );
   const presetClearButton =
     document.querySelector<HTMLButtonElement>("#preset-clear");
   const presetOpenButton =
@@ -633,6 +670,7 @@ async function initSettingsView(): Promise<void> {
     !shortcutSaveButton ||
     !instanceBaseUrlInput ||
     !openInNewWindowInput ||
+    !autostartEnabledInput ||
     !restrictHostInput ||
     !debugInWebviewInput ||
     !useRouteReloadForLauncherChatsInput ||
@@ -651,6 +689,9 @@ async function initSettingsView(): Promise<void> {
     !presetStatus ||
     !presetList ||
     !presetNewButton ||
+    !exportAgentsButton ||
+    !importAgentsButton ||
+    !importAgentsFileInput ||
     !presetClearButton ||
     !presetOpenButton ||
     !instanceWarning ||
@@ -952,6 +993,7 @@ async function initSettingsView(): Promise<void> {
 
       instanceBaseUrlInput.value = settings.instanceBaseUrl ?? "";
       openInNewWindowInput.checked = settings.openInNewWindow;
+      autostartEnabledInput.checked = settings.autostartEnabled;
       restrictHostInput.checked = settings.restrictHostToInstanceHost;
       debugInWebviewInput.checked = settings.debugInWebview;
       useRouteReloadForLauncherChatsInput.checked =
@@ -1014,6 +1056,7 @@ async function initSettingsView(): Promise<void> {
       ...settings,
       instanceBaseUrl: normalizedInstanceUrl,
       openInNewWindow: openInNewWindowInput.checked,
+      autostartEnabled: autostartEnabledInput.checked,
       restrictHostToInstanceHost: restrictHostInput.checked,
       debugInWebview: debugInWebviewInput.checked,
       useRouteReloadForLauncherChats:
@@ -1118,6 +1161,101 @@ async function initSettingsView(): Promise<void> {
       setPresetStatus("Opened URL.");
     } catch (error) {
       setPresetStatus(String(error), true);
+    }
+  });
+
+  exportAgentsButton.addEventListener("click", () => {
+    if (presets.length === 0) {
+      setPresetStatus("No agents to export.", true);
+      return;
+    }
+
+    const payload = {
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      instanceBaseUrl: settings.instanceBaseUrl,
+      agents: presets,
+    };
+    const json = `${JSON.stringify(payload, null, 2)}\n`;
+    const blob = new Blob([json], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    const stamp = new Date().toISOString().slice(0, 10);
+    anchor.href = url;
+    anchor.download = `torolibre-agents-${stamp}.json`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+    setPresetStatus(`Exported ${presets.length} agents.`);
+  });
+
+  importAgentsButton.addEventListener("click", () => {
+    importAgentsFileInput.value = "";
+    importAgentsFileInput.click();
+  });
+
+  importAgentsFileInput.addEventListener("change", async () => {
+    const file = importAgentsFileInput.files?.[0];
+    if (!file) {
+      return;
+    }
+
+    if (!settings.instanceBaseUrl) {
+      applyPanel("settings");
+      setPresetStatus("Set your instance URL before importing agents.", true);
+      return;
+    }
+
+    try {
+      const rawText = await file.text();
+      const parsed: unknown = JSON.parse(rawText);
+      const importedItems = importedAgentsFromPayload(parsed);
+
+      if (!importedItems || importedItems.length === 0) {
+        setPresetStatus("Import file has no agents.", true);
+        return;
+      }
+
+      const candidates: Preset[] = importedItems
+        .filter((item) => item && typeof item === "object")
+        .map((item) => {
+          const value = item as Record<string, unknown>;
+          return {
+            id: typeof value.id === "string" ? value.id : "",
+            name: typeof value.name === "string" ? value.name : "",
+            urlTemplate:
+              typeof value.urlTemplate === "string" ? value.urlTemplate : "",
+            kind: value.kind === "link" ? "link" : "agent",
+            tags: Array.isArray(value.tags)
+              ? value.tags.filter((tag): tag is string => typeof tag === "string")
+              : [],
+            createdAt:
+              typeof value.createdAt === "string" ? value.createdAt : nowMarker(),
+            updatedAt:
+              typeof value.updatedAt === "string" ? value.updatedAt : nowMarker(),
+          };
+        });
+
+      if (candidates.length === 0) {
+        setPresetStatus("Import file has no valid agent entries.", true);
+        return;
+      }
+
+      const result = await importPresets(candidates);
+      presets = await listPresets();
+      renderPresetList();
+      updatePresetForm(emptyPreset(settings));
+
+      const summary = `Imported ${result.imported}, skipped ${result.skipped}.`;
+      if (result.errors.length > 0) {
+        const preview = result.errors.slice(0, 3).join(" ");
+        setPresetStatus(`${summary} ${preview}`, true);
+      } else {
+        setPresetStatus(summary);
+      }
+    } catch (error) {
+      setPresetStatus(`Import failed: ${String(error)}`, true);
     }
   });
 
@@ -1251,6 +1389,9 @@ async function initLauncherView(): Promise<void> {
 
     try {
       await openPreset(target.id, query);
+      input.value = "";
+      agentSelect.selectedIndex = -1;
+      selectedPresetId = null;
       await hideLauncher();
       setStatus(`Opened ${target.name}.`);
     } catch (error) {
