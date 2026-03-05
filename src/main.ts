@@ -1269,6 +1269,13 @@ async function initLauncherView(): Promise<void> {
     }
   });
 
+  agentSelect.addEventListener("keyup", async (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      await runPreset();
+    }
+  });
+
   const page = document.querySelector<HTMLElement>(".spotlight-page");
   if (page) {
     page.addEventListener("mousedown", async (event) => {
