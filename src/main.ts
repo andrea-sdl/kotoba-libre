@@ -18,8 +18,8 @@ import appIcon from "./assets/icons/creative.svg";
 const DEFAULT_SETTINGS: AppSettings = {
   instanceBaseUrl: null,
   globalShortcut: navigator.platform.toLowerCase().includes("mac")
-    ? "Alt+Space"
-    : "CommandOrControl+Space",
+    ? "Alt+Shift+Space"
+    : "CommandOrControl+Shift+Space",
   autostartEnabled: false,
   openInNewWindow: false,
   restrictHostToInstanceHost: true,

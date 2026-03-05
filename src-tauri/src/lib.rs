@@ -29,9 +29,9 @@ const LAUNCHER_WINDOW_LABEL: &str = "launcher";
 const SETTINGS_STORE_PATH: &str = "settings.json";
 const PRESETS_STORE_PATH: &str = "presets.json";
 #[cfg(target_os = "macos")]
-const DEFAULT_SHORTCUT: &str = "Alt+Space";
+const DEFAULT_SHORTCUT: &str = "Alt+Shift+Space";
 #[cfg(not(target_os = "macos"))]
-const DEFAULT_SHORTCUT: &str = "CommandOrControl+Space";
+const DEFAULT_SHORTCUT: &str = "CommandOrControl+Shift+Space";
 const MENU_OPEN_SETTINGS_ID: &str = "open_settings";
 const APP_ICON_BYTES: &[u8] = include_bytes!("../icons/app/icon-creative.png");
 
