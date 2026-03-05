@@ -38,6 +38,11 @@ body {
   padding: 0;
 }
 
+html[data-view="launcher"],
+html[data-view="launcher"] body {
+  background: transparent !important;
+}
+
 body {
   font-family:
     -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue",
@@ -607,9 +612,10 @@ button[type="submit"]:active,
 }
 
 .spotlight-page {
-  height: auto;
+  min-height: 100vh;
   display: grid;
-  place-items: 2vh;
+  place-items: center;
+  padding: 2vh 1rem;
   background: transparent;
 }
 
