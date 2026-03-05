@@ -17,6 +17,7 @@ export type AppSettings = {
   restrictHostToInstanceHost: boolean;
   defaultPresetId: string | null;
   debugInWebview: boolean;
+  useRouteReloadForLauncherChats: boolean;
   accentColor: string;
   launcherOpacity: number;
 };

@@ -23,6 +23,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   restrictHostToInstanceHost: true,
   defaultPresetId: null,
   debugInWebview: false,
+  useRouteReloadForLauncherChats: false,
   accentColor: "blue",
   launcherOpacity: 0.95,
 };
@@ -488,6 +489,14 @@ async function initSettingsView(): Promise<void> {
                 </label>
               </div>
 
+              <div class="toggle-row">
+                <span>Use route reload for launcher chats</span>
+                <label class="toggle-switch">
+                  <input id="use-route-reload-for-launcher-chats" type="checkbox" />
+                  <span class="toggle-slider"></span>
+                </label>
+              </div>
+
               <div class="setting-group">
                 <label>
                   <span>Accent Color</span>
@@ -569,6 +578,10 @@ async function initSettingsView(): Promise<void> {
     document.querySelector<HTMLInputElement>("#restrict-host");
   const debugInWebviewInput =
     document.querySelector<HTMLInputElement>("#debug-in-webview");
+  const useRouteReloadForLauncherChatsInput =
+    document.querySelector<HTMLInputElement>(
+      "#use-route-reload-for-launcher-chats",
+    );
   const shortcutInput =
     document.querySelector<HTMLInputElement>("#global-shortcut");
   const shortcutRecordButton =
@@ -622,6 +635,7 @@ async function initSettingsView(): Promise<void> {
     !openInNewWindowInput ||
     !restrictHostInput ||
     !debugInWebviewInput ||
+    !useRouteReloadForLauncherChatsInput ||
     !shortcutInput ||
     !shortcutRecordButton ||
     !shortcutResetButton ||
@@ -940,6 +954,8 @@ async function initSettingsView(): Promise<void> {
       openInNewWindowInput.checked = settings.openInNewWindow;
       restrictHostInput.checked = settings.restrictHostToInstanceHost;
       debugInWebviewInput.checked = settings.debugInWebview;
+      useRouteReloadForLauncherChatsInput.checked =
+        settings.useRouteReloadForLauncherChats;
       shortcutInput.value = settings.globalShortcut;
       renderKeycaps(settings.globalShortcut);
       setShortcutRecording(false);
@@ -1000,6 +1016,8 @@ async function initSettingsView(): Promise<void> {
       openInNewWindow: openInNewWindowInput.checked,
       restrictHostToInstanceHost: restrictHostInput.checked,
       debugInWebview: debugInWebviewInput.checked,
+      useRouteReloadForLauncherChats:
+        useRouteReloadForLauncherChatsInput.checked,
     };
 
     try {
@@ -1165,6 +1183,7 @@ async function initLauncherView(): Promise<void> {
   let settings: AppSettings = DEFAULT_SETTINGS;
   let presets: Preset[] = [];
   let isLoadingPresets = false;
+  let selectedPresetId: string | null = null;
 
   const setStatus = (message: string, isError = false) => {
     status.textContent = message;
@@ -1181,6 +1200,8 @@ async function initLauncherView(): Promise<void> {
 
   const populateSelect = () => {
     const sorted = sortedPresets();
+    const preferredSelection = selectedPresetId ?? agentSelect.value;
+
     agentSelect.innerHTML = sorted
       .map((preset) => {
         const isDefault = settings.defaultPresetId === preset.id;
@@ -1189,13 +1210,36 @@ async function initLauncherView(): Promise<void> {
       })
       .join("");
 
-    if (sorted.length > 0) {
-      agentSelect.value = sorted[0].id;
+    if (sorted.length === 0) {
+      return;
     }
+
+    const previousStillExists = sorted.some(
+      (preset) => preset.id === preferredSelection,
+    );
+    if (previousStillExists) {
+      agentSelect.value = preferredSelection;
+      selectedPresetId = agentSelect.value;
+      return;
+    }
+
+    if (settings.defaultPresetId) {
+      const hasDefault = sorted.some(
+        (preset) => preset.id === settings.defaultPresetId,
+      );
+      if (hasDefault) {
+        agentSelect.value = settings.defaultPresetId;
+        selectedPresetId = agentSelect.value;
+        return;
+      }
+    }
+
+    agentSelect.value = sorted[0].id;
+    selectedPresetId = agentSelect.value;
   };
 
   const runPreset = async () => {
-    const targetId = agentSelect.value;
+    const targetId = selectedPresetId ?? agentSelect.value;
     const target = presets.find((p) => p.id === targetId);
 
     if (!target) {
@@ -1274,6 +1318,9 @@ async function initLauncherView(): Promise<void> {
       event.preventDefault();
       await runPreset();
     }
+  });
+  agentSelect.addEventListener("change", () => {
+    selectedPresetId = agentSelect.value;
   });
 
   const page = document.querySelector<HTMLElement>(".spotlight-page");

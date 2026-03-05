@@ -97,6 +97,7 @@ struct AppSettings {
     restrict_host_to_instance_host: bool,
     default_preset_id: Option<String>,
     debug_in_webview: bool,
+    use_route_reload_for_launcher_chats: bool,
     accent_color: String,
     launcher_opacity: f64,
 }
@@ -110,6 +111,7 @@ impl Default for AppSettings {
             restrict_host_to_instance_host: true,
             default_preset_id: None,
             debug_in_webview: false,
+            use_route_reload_for_launcher_chats: false,
             accent_color: "blue".to_string(),
             launcher_opacity: 0.95,
         }
@@ -331,6 +333,44 @@ fn normalize_preset(input: Preset, existing: Option<&Preset>) -> Preset {
     }
 }
 
+fn normalize_loaded_presets(input: Vec<Preset>) -> Vec<Preset> {
+    let mut seen_ids = HashSet::new();
+
+    input
+        .into_iter()
+        .map(|mut preset| {
+            let id = preset.id.trim().to_string();
+            if id.is_empty() || seen_ids.contains(&id) {
+                preset.id = Uuid::new_v4().to_string();
+            } else {
+                preset.id = id;
+            }
+            seen_ids.insert(preset.id.clone());
+
+            preset.name = preset.name.trim().to_string();
+            preset.url_template = preset.url_template.trim().to_string();
+            preset.tags = normalize_tags(preset.tags);
+
+            let created_at = preset.created_at.trim().to_string();
+            let updated_at = preset.updated_at.trim().to_string();
+            if created_at.is_empty() {
+                let now = now_marker();
+                preset.created_at = now.clone();
+                preset.updated_at = if updated_at.is_empty() { now } else { updated_at };
+            } else {
+                preset.created_at = created_at.clone();
+                preset.updated_at = if updated_at.is_empty() {
+                    created_at
+                } else {
+                    updated_at
+                };
+            }
+
+            preset
+        })
+        .collect()
+}
+
 fn load_settings(app: &AppHandle) -> CmdResult<AppSettings> {
     let store = app.store(SETTINGS_STORE_PATH).map_err(|e| e.to_string())?;
     let settings = match store.get("settings") {
@@ -355,7 +395,11 @@ fn load_presets(app: &AppHandle) -> CmdResult<Vec<Preset>> {
         Some(value) => serde_json::from_value(value).unwrap_or_default(),
         None => Vec::new(),
     };
-    Ok(presets)
+    let normalized = normalize_loaded_presets(presets.clone());
+    if normalized != presets {
+        save_presets(app, &normalized)?;
+    }
+    Ok(normalized)
 }
 
 fn save_presets(app: &AppHandle, presets: &[Preset]) -> CmdResult<()> {
@@ -618,22 +662,6 @@ fn hide_launcher_window(app: &AppHandle) -> CmdResult<()> {
     Ok(())
 }
 
-fn should_force_hard_navigation(url: &Url) -> bool {
-    let path = url.path().to_ascii_lowercase();
-    if path == "/c/new" || path.starts_with("/c/new/") {
-        return true;
-    }
-
-    url.query_pairs().any(|(key, value)| {
-        let key = key.as_ref().to_ascii_lowercase();
-        match key.as_str() {
-            "agent" | "agent_id" | "assistant" | "assistant_id" | "prompt" | "q" => true,
-            "submit" => value.eq_ignore_ascii_case("true"),
-            _ => false,
-        }
-    })
-}
-
 fn register_global_shortcut(
     app: &AppHandle,
     runtime_flags: Arc<RuntimeFlags>,
@@ -676,11 +704,19 @@ fn register_global_shortcut(
     Ok(())
 }
 
+fn can_use_spa_navigation(instance_host: Option<&str>, url: &Url) -> bool {
+    match (instance_host, url.host_str()) {
+        (Some(instance_host), Some(url_host)) => url_host.eq_ignore_ascii_case(instance_host),
+        _ => false,
+    }
+}
+
 fn open_url_in_window(
     app: &AppHandle,
     url: Url,
     open_in_new_window: bool,
     debug_in_webview: bool,
+    use_route_reload_for_launcher_chats: bool,
     instance_host: Option<&str>,
 ) -> CmdResult<()> {
     if open_in_new_window {
@@ -696,20 +732,21 @@ fn open_url_in_window(
     let main = app
         .get_webview_window(MAIN_WINDOW_LABEL)
         .ok_or_else(|| "Main window not available".to_string())?;
-    let can_use_spa_navigation = match (instance_host, url.host_str()) {
-        (Some(instance_host), Some(url_host)) => url_host.eq_ignore_ascii_case(instance_host),
-        _ => false,
-    };
-    let force_hard_navigation = should_force_hard_navigation(&url);
-    if can_use_spa_navigation && !force_hard_navigation {
+    if can_use_spa_navigation(instance_host, &url) {
         let payload = serde_json::to_string(url.as_str()).map_err(|e| e.to_string())?;
         let debug_flag = if debug_in_webview { "true" } else { "false" };
+        let route_reload_flag = if use_route_reload_for_launcher_chats {
+            "true"
+        } else {
+            "false"
+        };
         let script = format!(
             r#"(async function() {{
   try {{
     const next = new URL({payload});
     const target = `${{next.pathname}}${{next.search}}${{next.hash}}`;
     const debug = {debug_flag};
+    const useRouteReloadForLauncherChats = {route_reload_flag};
     const debugLog = (...args) => {{
       if (!debug) {{
         return;
@@ -739,114 +776,28 @@ fn open_url_in_window(
       target,
       current: `${{window.location.pathname}}${{window.location.search}}${{window.location.hash}}`,
     }});
-    const promptText = next.searchParams.get("prompt") ?? next.searchParams.get("q") ?? "";
-    const shouldFallbackToHardNavigation =
+    const shouldAutoSubmitFromQuery =
       (next.searchParams.get("submit") ?? "").toLowerCase() === "true" &&
-      promptText.length > 0;
-    const cleanupSubmitParams = () => {{
-      try {{
-        const clean = new URL(window.location.href);
-        clean.searchParams.delete("prompt");
-        clean.searchParams.delete("q");
-        clean.searchParams.delete("submit");
-        window.history.replaceState(
-          window.history.state,
-          "",
-          `${{clean.pathname}}${{clean.search}}${{clean.hash}}`,
-        );
-      }} catch (error) {{
-        debugLog("cleanupSubmitParams failed", {{ error: String(error) }});
-      }}
-    }};
-    const attemptClientSubmit = async () => {{
-      if (!shouldFallbackToHardNavigation) {{
-        return false;
-      }}
+      (next.searchParams.has("prompt") || next.searchParams.has("q"));
+    if (useRouteReloadForLauncherChats && shouldAutoSubmitFromQuery) {{
+      debugLog("forced route reload for launcher chats", {{ to: next.href }});
+      window.location.assign(next.href);
+      return;
+    }}
 
-      const setText = (textarea, value) => {{
-        try {{
-          const setter = Object.getOwnPropertyDescriptor(
-            HTMLTextAreaElement.prototype,
-            "value",
-          )?.set;
-          if (setter) {{
-            setter.call(textarea, value);
-          }} else {{
-            textarea.value = value;
-          }}
-          textarea.dispatchEvent(
-            new InputEvent("input", {{
-              bubbles: true,
-              cancelable: true,
-              data: value,
-              inputType: "insertText",
-            }}),
-          );
-          textarea.dispatchEvent(new Event("change", {{ bubbles: true }}));
+    const locationValue = () =>
+      `${{window.location.pathname}}${{window.location.search}}${{window.location.hash}}`;
+    const isAtTargetLocation = () => locationValue() === target;
+    const delay = (ms) => new Promise((resolve) => window.setTimeout(resolve, ms));
+    const waitForTargetLocation = async (timeoutMs) => {{
+      const started = Date.now();
+      while (Date.now() - started < timeoutMs) {{
+        if (isAtTargetLocation()) {{
           return true;
-        }} catch (error) {{
-          debugLog("setText failed", {{ error: String(error) }});
-          return false;
         }}
-      }};
-
-      for (let attempt = 0; attempt < 22; attempt++) {{
-        const textarea =
-          document.querySelector("textarea[data-testid='text-input']") ??
-          document.querySelector("textarea#prompt-textarea") ??
-          document.querySelector("textarea");
-        if (textarea instanceof HTMLTextAreaElement) {{
-          if (textarea.value !== promptText) {{
-            setText(textarea, promptText);
-            debugLog("client submit textarea set", {{ attempt }});
-          }}
-
-          const sendButton =
-            document.querySelector("button#send-button:not([disabled])") ??
-            document.querySelector("button[data-testid='send-button']:not([disabled])") ??
-            document.querySelector("button[type='submit']:not([disabled])");
-          if (sendButton instanceof HTMLElement) {{
-            sendButton.click();
-            cleanupSubmitParams();
-            debugLog("client submit send click", {{ attempt }});
-            return true;
-          }}
-
-          const form = textarea.closest("form");
-          if (form && typeof form.requestSubmit === "function") {{
-            form.requestSubmit();
-            cleanupSubmitParams();
-            debugLog("client submit requestSubmit", {{ attempt }});
-            return true;
-          }}
-        }}
-
-        await new Promise((resolve) => window.setTimeout(resolve, 120));
+        await delay(60);
       }}
-
-      debugLog("client submit failed");
-      return false;
-    }};
-    const scheduleHardNavigationFallback = () => {{
-      if (!shouldFallbackToHardNavigation) {{
-        return;
-      }}
-      window.setTimeout(() => {{
-        try {{
-          const currentUrl = new URL(window.location.href);
-          const stillPending =
-            (currentUrl.searchParams.get("submit") ?? "").toLowerCase() === "true" &&
-            (currentUrl.searchParams.has("prompt") || currentUrl.searchParams.has("q"));
-          if (!stillPending) {{
-            debugLog("fallback not needed (query params consumed)");
-            return;
-          }}
-          debugLog("fallback hard navigate", {{ to: next.href }});
-          window.location.assign(next.href);
-        }} catch (error) {{
-          debugLog("fallback check failed", {{ error: String(error) }});
-        }}
-      }}, 1800);
+      return isAtTargetLocation();
     }};
 
     const pushWithHistory = (value) => {{
@@ -870,15 +821,107 @@ fn open_url_in_window(
       return true;
     }};
 
-    const routeWithRouter = (value) => {{
+    const navigateWithHistoryAndWait = async (value, timeoutMs = 1200) => {{
+      if (!pushWithHistory(value)) {{
+        return false;
+      }}
+      await waitForRouteToApply();
+      return await waitForTargetLocation(timeoutMs);
+    }};
+
+    const clickFirstMatching = (selectors) => {{
+      for (const selector of selectors) {{
+        const element = document.querySelector(selector);
+        if (element instanceof HTMLElement) {{
+          element.click();
+          return true;
+        }}
+      }}
+      return false;
+    }};
+
+    const navigateViaLibreChatUi = async () => {{
+      if (!shouldAutoSubmitFromQuery) {{
+        return false;
+      }}
+      if (!(next.pathname === "/c/new" || next.pathname.startsWith("/c/new/"))) {{
+        return false;
+      }}
+
+      // Keep query params in current location so LibreChat's New Chat flow
+      // carries them into /c/new and lets useQueryParams process them natively.
+      try {{
+        const current = new URL(window.location.href);
+        current.search = next.search;
+        window.history.replaceState(window.history.state, "", `${{current.pathname}}${{current.search}}${{current.hash}}`);
+        window.dispatchEvent(new PopStateEvent("popstate", {{ state: window.history.state }}));
+      }} catch (error) {{
+        debugLog("navigateViaLibreChatUi replaceState failed", {{ error: String(error) }});
+      }}
+
+      await delay(80);
+
+      // Force a route remount first (search), then trigger New Chat button.
+      clickFirstMatching([
+        "a[href='/search']",
+        "a[href$='/search']",
+        "[data-testid='nav-search-button']",
+      ]);
+
+      await delay(120);
+
+      const clickedNewChat = clickFirstMatching([
+        "[data-testid='nav-new-chat-button']",
+        "a[href='/c/new']",
+        "a[href$='/c/new']",
+      ]);
+      if (!clickedNewChat) {{
+        debugLog("navigateViaLibreChatUi missing new chat control");
+        return false;
+      }}
+
+      const reached = await waitForTargetLocation(2000);
+      debugLog("navigateViaLibreChatUi completed", {{ reached }});
+      return reached;
+    }};
+
+    const performSubmitRouteRemount = async () => {{
+      if (!shouldAutoSubmitFromQuery) {{
+        return false;
+      }}
+
+      // LibreChat's query-processing hook is mount-oriented; remount chat route
+      // without full reload by briefly switching routes.
+      const remountPath = `/search?tl_remount=${{Date.now()}}`;
+      if (window.location.pathname !== "/search") {{
+        pushWithHistory(remountPath);
+        await waitForRouteToApply();
+      }}
+
+      const reached = await navigateWithHistoryAndWait(target, 1600);
+      debugLog("submit remount route completed", {{ reached }});
+      return reached;
+    }};
+
+    const waitForRouteToApply = async () => {{
+      await new Promise((resolve) => window.setTimeout(resolve, 0));
+      await new Promise((resolve) => window.setTimeout(resolve, 80));
+    }};
+
+    const routeWithRouter = async (value) => {{
       const nextPush =
         globalThis.next?.router?.push ??
         globalThis.__next_router__?.push ??
         globalThis.__NEXT_ROUTER__?.push;
       if (typeof nextPush === "function") {{
-        nextPush(value);
-        debugLog("routeWithRouter used next push");
-        return true;
+        const result = nextPush(value);
+        if (result && typeof result.then === "function") {{
+          await result;
+        }}
+        await waitForRouteToApply();
+        const reached = await waitForTargetLocation(1200);
+        debugLog("routeWithRouter used next push", {{ reached }});
+        return reached;
       }}
 
       const genericNavigate =
@@ -886,38 +929,49 @@ fn open_url_in_window(
         globalThis.__NEXT_ROUTER__?.navigate ??
         globalThis.__remixRouter?.navigate;
       if (typeof genericNavigate === "function") {{
-        genericNavigate(value);
-        debugLog("routeWithRouter used generic navigate");
-        return true;
+        const result = genericNavigate(value);
+        if (result && typeof result.then === "function") {{
+          await result;
+        }}
+        await waitForRouteToApply();
+        const reached = await waitForTargetLocation(1200);
+        debugLog("routeWithRouter used generic navigate", {{ reached }});
+        return reached;
       }}
       debugLog("routeWithRouter unavailable");
       return false;
     }};
 
-    if (pushWithHistory(target)) {{
-      routeWithRouter(target);
-      const softSubmitted = await attemptClientSubmit();
-      debugLog("navigation completed with history first", {{ softSubmitted }});
-      if (!softSubmitted) {{
-        scheduleHardNavigationFallback();
-      }}
+    if (await routeWithRouter(target)) {{
+      debugLog("navigation completed with router first", {{ shouldAutoSubmitFromQuery }});
       return;
     }}
 
-    if (routeWithRouter(target)) {{
-      const softSubmitted = await attemptClientSubmit();
-      debugLog("navigation completed with router only", {{ softSubmitted }});
-      if (!softSubmitted) {{
-        scheduleHardNavigationFallback();
-      }}
+    if (await navigateViaLibreChatUi()) {{
+      debugLog("navigation completed with LibreChat UI strategy");
       return;
+    }}
+
+    if (await performSubmitRouteRemount()) {{
+      debugLog("navigation completed with submit remount strategy");
+      return;
+    }}
+
+    if (pushWithHistory(target)) {{
+      const reached = await waitForTargetLocation(600);
+      debugLog("navigation completed with history fallback", {{ reached, shouldAutoSubmitFromQuery }});
+      if (reached) {{
+        return;
+      }}
     }}
     debugLog("navigation path not handled");
-    if (shouldFallbackToHardNavigation) {{
-      debugLog("immediate hard navigate fallback", {{ to: next.href }});
-      window.location.assign(next.href);
+    if (shouldAutoSubmitFromQuery) {{
+      debugLog("skip hard fallback for submit query to avoid full reload");
       return;
     }}
+    debugLog("immediate hard navigate fallback", {{ to: next.href }});
+    window.location.assign(next.href);
+    return;
   }} catch (error) {{
     try {{
       console.log("[Toro Libre Debug] navigation exception", error);
@@ -990,6 +1044,7 @@ fn open_url_internal(app: &AppHandle, destination: &str) -> CmdResult<()> {
         target,
         settings.open_in_new_window,
         settings.debug_in_webview,
+        settings.use_route_reload_for_launcher_chats,
         instance_host.as_deref(),
     )
 }
@@ -1020,6 +1075,7 @@ fn navigate_main_to_instance_home(app: &AppHandle, settings: &AppSettings) -> Cm
         target,
         false,
         settings.debug_in_webview,
+        settings.use_route_reload_for_launcher_chats,
         instance_host.as_deref(),
     )
 }
@@ -1381,6 +1437,7 @@ mod tests {
             restrict_host_to_instance_host: true,
             default_preset_id: Some("preset-1".to_string()),
             debug_in_webview: false,
+            use_route_reload_for_launcher_chats: false,
             accent_color: "blue".to_string(),
             launcher_opacity: 0.95,
         }
@@ -1480,24 +1537,68 @@ mod tests {
     }
 
     #[test]
-    fn hard_navigation_is_forced_for_agent_urls() {
-        let url =
-            Url::parse("https://chat.example.com/c/new?agent_id=agent_aLfpSjQmQKt9nhbFi7BIs")
-                .expect("url parses");
-        assert!(should_force_hard_navigation(&url));
+    fn loaded_presets_are_normalized_with_unique_non_empty_ids() {
+        let input = vec![
+            Preset {
+                id: "".to_string(),
+                name: "  Agent One  ".to_string(),
+                url_template: " https://chat.example.com/c/new?agent_id=1 ".to_string(),
+                kind: PresetKind::Agent,
+                tags: vec![" support ".to_string(), "support".to_string()],
+                created_at: "".to_string(),
+                updated_at: "".to_string(),
+            },
+            Preset {
+                id: "dup".to_string(),
+                name: "Agent Two".to_string(),
+                url_template: "https://chat.example.com/c/new?agent_id=2".to_string(),
+                kind: PresetKind::Agent,
+                tags: vec![],
+                created_at: "unix-ms-1".to_string(),
+                updated_at: "".to_string(),
+            },
+            Preset {
+                id: "dup".to_string(),
+                name: "Agent Three".to_string(),
+                url_template: "https://chat.example.com/c/new?agent_id=3".to_string(),
+                kind: PresetKind::Agent,
+                tags: vec![],
+                created_at: "unix-ms-2".to_string(),
+                updated_at: "unix-ms-3".to_string(),
+            },
+        ];
+
+        let normalized = normalize_loaded_presets(input);
+        assert_eq!(normalized.len(), 3);
+        assert!(!normalized[0].id.is_empty());
+        assert_eq!(normalized[1].id, "dup");
+        assert_ne!(normalized[2].id, "dup");
+        assert_ne!(normalized[2].id, normalized[0].id);
+        assert_eq!(normalized[0].name, "Agent One");
+        assert_eq!(
+            normalized[0].url_template,
+            "https://chat.example.com/c/new?agent_id=1"
+        );
+        assert_eq!(normalized[0].tags, vec!["support".to_string()]);
+        assert!(!normalized[0].created_at.is_empty());
+        assert!(!normalized[0].updated_at.is_empty());
+        assert_eq!(normalized[1].updated_at, "unix-ms-1");
     }
 
     #[test]
-    fn hard_navigation_is_forced_for_submit_prompt_urls() {
-        let url = Url::parse("https://chat.example.com/c/new?prompt=hello&submit=true")
+    fn spa_navigation_allowed_for_launcher_submit_url_on_instance_host() {
+        let url = Url::parse(
+            "https://chat.example.com/c/new?agent_id=agent_aLfpSjQmQKt9nhbFi7BIs&prompt=hello&submit=true",
+        )
+        .expect("url parses");
+        assert!(can_use_spa_navigation(Some("chat.example.com"), &url));
+    }
+
+    #[test]
+    fn spa_navigation_blocked_for_non_instance_host() {
+        let url = Url::parse("https://example.com/c/new?prompt=hello&submit=true")
             .expect("url parses");
-        assert!(should_force_hard_navigation(&url));
-    }
-
-    #[test]
-    fn hard_navigation_is_not_forced_for_simple_routes() {
-        let url = Url::parse("https://chat.example.com/settings/profile").expect("url parses");
-        assert!(!should_force_hard_navigation(&url));
+        assert!(!can_use_spa_navigation(Some("chat.example.com"), &url));
     }
 
     #[test]
