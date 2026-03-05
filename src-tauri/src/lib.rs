@@ -561,9 +561,10 @@ fn ensure_launcher_window(app: &AppHandle) -> CmdResult<()> {
         WebviewUrl::App("index.html?view=launcher".into()),
     )
 
-    .title("Librechat Spotlight")    .icon(icon)
+    .title("Librechat Spotlight")
+    .icon(icon)
     .map_err(|e| e.to_string())?
-    .inner_size(860.0, 110.0)
+    .inner_size(860.0, 115.0)
     .auto_resize()
     .decorations(false)
     .skip_taskbar(true)
@@ -572,6 +573,7 @@ fn ensure_launcher_window(app: &AppHandle) -> CmdResult<()> {
     .visible(false)
     .center()
     .shadow(false)
+    .transparent(true)
     .build()
     .map_err(|e| e.to_string())?;
 
@@ -614,6 +616,22 @@ fn hide_launcher_window(app: &AppHandle) -> CmdResult<()> {
         launcher.hide().map_err(|e| e.to_string())?;
     }
     Ok(())
+}
+
+fn should_force_hard_navigation(url: &Url) -> bool {
+    let path = url.path().to_ascii_lowercase();
+    if path == "/c/new" || path.starts_with("/c/new/") {
+        return true;
+    }
+
+    url.query_pairs().any(|(key, value)| {
+        let key = key.as_ref().to_ascii_lowercase();
+        match key.as_str() {
+            "agent" | "agent_id" | "assistant" | "assistant_id" | "prompt" | "q" => true,
+            "submit" => value.eq_ignore_ascii_case("true"),
+            _ => false,
+        }
+    })
 }
 
 fn register_global_shortcut(
@@ -682,7 +700,8 @@ fn open_url_in_window(
         (Some(instance_host), Some(url_host)) => url_host.eq_ignore_ascii_case(instance_host),
         _ => false,
     };
-    if can_use_spa_navigation {
+    let force_hard_navigation = should_force_hard_navigation(&url);
+    if can_use_spa_navigation && !force_hard_navigation {
         let payload = serde_json::to_string(url.as_str()).map_err(|e| e.to_string())?;
         let debug_flag = if debug_in_webview { "true" } else { "false" };
         let script = format!(
@@ -1458,6 +1477,27 @@ mod tests {
             result,
             "https://chat.example.com/c/new?agent_id=agent_aLfpSjQmQKt9nhbFi7BIs&prompt=hello+world&submit=true"
         );
+    }
+
+    #[test]
+    fn hard_navigation_is_forced_for_agent_urls() {
+        let url =
+            Url::parse("https://chat.example.com/c/new?agent_id=agent_aLfpSjQmQKt9nhbFi7BIs")
+                .expect("url parses");
+        assert!(should_force_hard_navigation(&url));
+    }
+
+    #[test]
+    fn hard_navigation_is_forced_for_submit_prompt_urls() {
+        let url = Url::parse("https://chat.example.com/c/new?prompt=hello&submit=true")
+            .expect("url parses");
+        assert!(should_force_hard_navigation(&url));
+    }
+
+    #[test]
+    fn hard_navigation_is_not_forced_for_simple_routes() {
+        let url = Url::parse("https://chat.example.com/settings/profile").expect("url parses");
+        assert!(!should_force_hard_navigation(&url));
     }
 
     #[test]

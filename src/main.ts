@@ -1354,6 +1354,11 @@ async function bootstrap(): Promise<void> {
     }
   }
 
+  if (view) {
+    document.documentElement.dataset.view = view;
+    document.body?.setAttribute("data-view", view);
+  }
+
   if (view === "settings") {
     await initSettingsView();
     return;
