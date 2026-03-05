@@ -61,6 +61,46 @@ Artifacts:
 - `dist-artifacts/Toro Libre-unsigned.dmg`
 - `dist-artifacts/Toro Libre-unsigned-app.zip`
 
+## Automated Releases (GitHub Actions)
+
+This repo includes a macOS unsigned release workflow at `.github/workflows/release.yml`.
+
+### Trigger modes
+
+- Tag push: push a semantic version tag like `v0.2.0`
+- Manual: run the `Release macOS (Unsigned)` workflow with:
+  - `version` (for example `0.2.0` or `v0.2.0`)
+  - optional `prerelease` and `draft` flags
+
+### What it does
+
+1. Validates version consistency across:
+   - `package.json`
+   - `src-tauri/Cargo.toml`
+   - `src-tauri/tauri.conf.json`
+2. Builds unsigned macOS artifacts
+3. Generates `dist-artifacts/SHA256SUMS.txt`
+4. Publishes a GitHub Release with:
+   - `Toro Libre-unsigned.dmg`
+   - `Toro Libre-unsigned-app.zip`
+   - `SHA256SUMS.txt`
+
+### Versioning contract
+
+Before creating a release tag, keep all app version files aligned:
+
+- `package.json`
+- `src-tauri/Cargo.toml`
+- `src-tauri/tauri.conf.json`
+
+You can validate locally with:
+
+```bash
+./scripts/ci/validate-version.sh v0.2.0
+```
+
+If a release already exists for a tag, the workflow fails early with an actionable message.
+
 ## Notes for Distribution
 
 Because the build is unsigned/not notarized:
