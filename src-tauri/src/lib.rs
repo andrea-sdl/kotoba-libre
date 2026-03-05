@@ -563,14 +563,15 @@ fn ensure_launcher_window(app: &AppHandle) -> CmdResult<()> {
 
     .title("Librechat Spotlight")    .icon(icon)
     .map_err(|e| e.to_string())?
-    .inner_size(860.0, 200.0)
-
+    .inner_size(860.0, 110.0)
+    .auto_resize()
     .decorations(false)
     .skip_taskbar(true)
     .resizable(false)
     .always_on_top(true)
     .visible(false)
     .center()
+    .shadow(false)
     .build()
     .map_err(|e| e.to_string())?;
 

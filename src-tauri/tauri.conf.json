@@ -11,14 +11,7 @@
   },
   "app": {
     "withGlobalTauri": false,
-    "windows": [
-      {
-        "label": "launcher",
-        "transparent": true,
-        "decorations": false,
-        "shadow": false
-      }
-    ],
+    "windows": [],
     "security": {
       "csp": null
     }

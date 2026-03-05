@@ -142,29 +142,6 @@ function debounce<T extends (...args: never[]) => void>(
   };
 }
 
-function fuzzyScore(target: string, search: string): number {
-  if (!search) {
-    return 1;
-  }
-
-  const haystack = target.toLowerCase();
-  const needle = search.toLowerCase();
-
-  let score = 0;
-  let cursor = 0;
-
-  for (const char of needle) {
-    const found = haystack.indexOf(char, cursor);
-    if (found === -1) {
-      return -1;
-    }
-
-    score += found === cursor ? 3 : 1;
-    cursor = found + 1;
-  }
-
-  return score;
-}
 
 const SUPPORTED_SHORTCUT_CODES = new Set<string>([
   "Space",
@@ -403,23 +380,6 @@ function presetAvatarStyle(preset: Preset): string {
   return `--avatar-start:${gradient[0]};--avatar-end:${gradient[1]};`;
 }
 
-function parseQueryMode(input: string): {
-  agentFilter: string;
-  query: string | undefined;
-} {
-  const trimmed = input.trim();
-  if (trimmed.startsWith("/")) {
-    return {
-      agentFilter: trimmed.slice(1).trim(),
-      query: undefined,
-    };
-  }
-
-  return {
-    agentFilter: "",
-    query: trimmed.length > 0 ? trimmed : undefined,
-  };
-}
 
 async function initSettingsView(): Promise<void> {
   const root = rootElement();
@@ -1184,28 +1144,26 @@ async function initLauncherView(): Promise<void> {
   root.innerHTML = `
     <div class="spotlight-page">
       <div class="spotlight-shell">
-        <label class="spotlight-input-wrap">
-          <span class="spotlight-icon">/</span>
-          <input id="spotlight-input" type="text" placeholder="Ask... (press esc for agents, / to filter agents, or use default)" autofocus />
-        </label>
-        <div id="spotlight-list" class="spotlight-list"></div>
+        <div class="spotlight-input-wrap">
+          <span class="spotlight-icon">⌕</span>
+          <input id="spotlight-input" type="text" placeholder="Ask..." autofocus />
+          <select id="spotlight-agent-select"></select>
+        </div>
         <p id="launcher-status" class="status"></p>
       </div>
     </div>
   `;
 
   const input = document.querySelector<HTMLInputElement>("#spotlight-input");
-  const listContainer = document.querySelector<HTMLElement>("#spotlight-list");
+  const agentSelect = document.querySelector<HTMLSelectElement>("#spotlight-agent-select");
   const status = document.querySelector<HTMLElement>("#launcher-status");
 
-  if (!input || !listContainer || !status) {
+  if (!input || !agentSelect || !status) {
     throw new Error("Launcher UI failed to initialize");
   }
 
   let settings: AppSettings = DEFAULT_SETTINGS;
   let presets: Preset[] = [];
-  let filtered: Preset[] = [];
-  let selectedIndex = 0;
   let isLoadingPresets = false;
 
   const setStatus = (message: string, isError = false) => {
@@ -1213,115 +1171,39 @@ async function initLauncherView(): Promise<void> {
     status.classList.toggle("error", isError);
   };
 
-  const applyFilter = () => {
-    const mode = parseQueryMode(input.value);
-    const search = mode.agentFilter;
-
-    filtered = presets
-      .map((preset) => {
-        const searchTarget = `${preset.name} ${preset.tags.join(" ")}`;
-        return { preset, score: fuzzyScore(searchTarget, search) };
-      })
-      .filter((entry) => entry.score >= 0)
-      .sort((a, b) => {
-        const defaultA = settings.defaultPresetId === a.preset.id ? 1 : 0;
-        const defaultB = settings.defaultPresetId === b.preset.id ? 1 : 0;
-        return (
-          defaultB - defaultA ||
-          b.score - a.score ||
-          a.preset.name.localeCompare(b.preset.name)
-        );
-      })
-      .map((entry) => entry.preset);
-
-    if (filtered.length === 0) {
-      selectedIndex = 0;
-      return;
-    }
-
-    if (selectedIndex < 0 || selectedIndex >= filtered.length) {
-      selectedIndex = 0;
-    }
+  const sortedPresets = (): Preset[] => {
+    return [...presets].sort((a, b) => {
+      const defaultA = settings.defaultPresetId === a.id ? 1 : 0;
+      const defaultB = settings.defaultPresetId === b.id ? 1 : 0;
+      return defaultB - defaultA || a.name.localeCompare(b.name);
+    });
   };
 
-  const renderList = () => {
-    applyFilter();
-
-    if (!settings.instanceBaseUrl) {
-      listContainer.innerHTML = `
-        <div class="spotlight-empty">
-          <p>First run: choose your Toro Libre instance in settings.</p>
-          <button id="spotlight-open-settings" type="button" class="secondary">Open Settings</button>
-        </div>
-      `;
-      const openSettingsButton = listContainer.querySelector<HTMLButtonElement>(
-        "#spotlight-open-settings",
-      );
-      if (openSettingsButton) {
-        openSettingsButton.addEventListener("click", async () => {
-          await showSettings();
-          await hideLauncher();
-        });
-      }
-      return;
-    }
-
-    if (filtered.length === 0) {
-      listContainer.innerHTML = '<p class="empty">No matching agents.</p>';
-      return;
-    }
-
-    listContainer.innerHTML = filtered
-      .map((preset, index) => {
-        const selectedClass = index === selectedIndex ? " selected" : "";
+  const populateSelect = () => {
+    const sorted = sortedPresets();
+    agentSelect.innerHTML = sorted
+      .map((preset) => {
         const isDefault = settings.defaultPresetId === preset.id;
-        return `
-          <button type="button" class="spotlight-item${selectedClass}" data-id="${escapeHtml(preset.id)}">
-            <span class="spotlight-item-icon" style="${escapeHtml(presetAvatarStyle(preset))}">${escapeHtml(presetAvatarLabel(preset))}</span>
-            <span class="spotlight-item-name">${escapeHtml(preset.name)}</span>
-            ${isDefault ? '<span class="pill">DEFAULT</span>' : ""}
-          </button>
-        `;
+        const label = isDefault ? `${preset.name} ★` : preset.name;
+        return `<option value="${escapeHtml(preset.id)}">${escapeHtml(label)}</option>`;
       })
       .join("");
 
-    for (const item of listContainer.querySelectorAll<HTMLButtonElement>(
-      ".spotlight-item",
-    )) {
-      item.addEventListener("mouseenter", () => {
-        const id = item.dataset.id;
-        if (!id) {
-          return;
-        }
-        const index = filtered.findIndex((preset) => preset.id === id);
-        if (index >= 0) {
-          selectedIndex = index;
-          renderList();
-        }
-      });
-
-      item.addEventListener("click", async () => {
-        const id = item.dataset.id;
-        if (!id) {
-          return;
-        }
-        await runPreset(id);
-      });
+    if (sorted.length > 0) {
+      agentSelect.value = sorted[0].id;
     }
   };
 
-  const runPreset = async (id?: string) => {
-    const target = id
-      ? filtered.find((preset) => preset.id === id)
-      : filtered[selectedIndex];
+  const runPreset = async () => {
+    const targetId = agentSelect.value;
+    const target = presets.find((p) => p.id === targetId);
 
     if (!target) {
       setStatus("No agent selected.", true);
       return;
     }
 
-    const mode = parseQueryMode(input.value);
-    const query = mode.query;
+    const query = input.value.trim() || undefined;
 
     try {
       await openPreset(target.id, query);
@@ -1332,19 +1214,10 @@ async function initLauncherView(): Promise<void> {
     }
   };
 
-  const moveSelection = (delta: number) => {
-    if (filtered.length === 0) {
-      return;
-    }
-    selectedIndex = (selectedIndex + delta + filtered.length) % filtered.length;
-    renderList();
-  };
-
   const loadPresets = async () => {
     try {
       settings = await getSettings();
       presets = await listPresets();
-      selectedIndex = 0;
 
       applyAccentColor(settings.accentColor);
       const shell = document.querySelector<HTMLElement>(".spotlight-shell");
@@ -1353,7 +1226,7 @@ async function initLauncherView(): Promise<void> {
         shell.style.background = `rgba(255, 255, 255, ${opacity})`;
       }
 
-      renderList();
+      populateSelect();
 
       if (!settings.instanceBaseUrl) {
         setStatus("Configure instance URL first.", true);
@@ -1365,7 +1238,7 @@ async function initLauncherView(): Promise<void> {
         return;
       }
 
-      setStatus("Type your question and press Enter.");
+      setStatus("");
     } catch (error) {
       setStatus(String(error), true);
     }
@@ -1383,24 +1256,7 @@ async function initLauncherView(): Promise<void> {
     }
   };
 
-  input.addEventListener("input", () => {
-    selectedIndex = 0;
-    renderList();
-  });
-
   input.addEventListener("keydown", async (event) => {
-    if (event.key === "ArrowDown") {
-      event.preventDefault();
-      moveSelection(1);
-      return;
-    }
-
-    if (event.key === "ArrowUp") {
-      event.preventDefault();
-      moveSelection(-1);
-      return;
-    }
-
     if (event.key === "Enter") {
       event.preventDefault();
       await runPreset();
@@ -1409,11 +1265,6 @@ async function initLauncherView(): Promise<void> {
 
     if (event.key === "Escape") {
       event.preventDefault();
-      if (input.value.trim().startsWith("/")) {
-        input.value = "";
-        renderList();
-        return;
-      }
       await hideLauncher();
     }
   });
