@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bgGrad2" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1e1b4b"/>
+      <stop offset="100%" stop-color="#0f172a"/>
+    </linearGradient>
+    <filter id="shadow2" x="-10%" y="-10%" width="130%" height="130%">
+      <feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#000000" flood-opacity="0.4"/>
+    </filter>
+  </defs>
+
+  <rect x="32" y="32" width="448" height="448" rx="100" fill="url(#bgGrad2)"/>
+  
+  <circle cx="120" cy="140" r="2" fill="#ffffff" opacity="0.4"/>
+  <circle cx="400" cy="100" r="3" fill="#ffffff" opacity="0.2"/>
+  <circle cx="380" cy="400" r="1.5" fill="#ffffff" opacity="0.5"/>
+  <circle cx="100" cy="350" r="2" fill="#ffffff" opacity="0.3"/>
+
+  <g filter="url(#shadow2)">
+    <polygon points="150,380 220,310 200,220" fill="#ea580c"/>
+    <polygon points="220,310 300,230 200,220" fill="#f97316"/>
+    <polygon points="300,230 380,150 280,150" fill="#facc15"/>
+    <polygon points="300,230 200,220 280,150" fill="#fb923c"/>
+    
+    <polygon points="150,380 220,310 280,340" fill="#b91c1c"/>
+    <polygon points="220,310 300,230 280,340" fill="#dc2626"/>
+    <polygon points="300,230 380,150 360,260" fill="#f59e0b"/>
+    <polygon points="300,230 280,340 360,260" fill="#ea580c"/>
+
+    <line x1="140" y1="390" x2="380" y2="150" stroke="#fef08a" stroke-width="4" stroke-linecap="square"/>
+  </g>
+</svg>
