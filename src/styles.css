@@ -309,6 +309,13 @@ input::placeholder {
   gap: 1rem;
 }
 
+.panel-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
 .panel-header.compact h2 {
   font-size: 1.35rem;
 }

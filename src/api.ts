@@ -1,5 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { AppSettings, Preset, ValidationResult } from "./types";
+import type {
+  AppSettings,
+  ImportPresetsResult,
+  Preset,
+  ValidationResult,
+} from "./types";
 
 export async function getSettings(): Promise<AppSettings> {
   return invoke<AppSettings>("get_settings");
@@ -19,6 +24,12 @@ export async function upsertPreset(preset: Preset): Promise<Preset> {
 
 export async function deletePreset(id: string): Promise<void> {
   await invoke("delete_preset", { id });
+}
+
+export async function importPresets(
+  presets: Preset[],
+): Promise<ImportPresetsResult> {
+  return invoke<ImportPresetsResult>("import_presets", { presets });
 }
 
 export async function openPreset(id: string, query?: string): Promise<void> {
