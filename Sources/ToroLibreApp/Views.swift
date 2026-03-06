@@ -367,11 +367,28 @@ struct ShortcutPanelView: View {
                     Text("Listening for a shortcut...")
                         .foregroundStyle(.secondary)
                 }
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Runtime Diagnostics")
+                        .font(.headline)
+                    Text("Backend: \(appController.shortcutDiagnostics.backend)")
+                    Text("Active shortcut: \(appController.shortcutDiagnostics.activeShortcut)")
+                    Text("Carbon registered: \(yesNo(appController.shortcutDiagnostics.carbonRegistered))")
+                    Text("Event tap installed: \(yesNo(appController.shortcutDiagnostics.eventTapInstalled))")
+                    Text("Accessibility: \(yesNo(appController.shortcutDiagnostics.accessibilityGranted))")
+                    Text("Input Monitoring: \(yesNo(appController.shortcutDiagnostics.inputMonitoringGranted))")
+                    Text("Last Carbon status: \(appController.shortcutDiagnostics.lastCarbonStatusDescription)")
+                }
+                .font(.footnote)
+                .foregroundStyle(.secondary)
             }
 
             if !statusMessage.isEmpty {
                 Text(statusMessage)
                     .foregroundColor(statusIsError ? .red : .secondary)
+            } else if let registrationIssue = appController.shortcutRegistrationIssue {
+                Text(registrationIssue)
+                    .foregroundColor(.red)
             }
 
             Spacer()
@@ -398,6 +415,10 @@ struct ShortcutPanelView: View {
     private func setStatus(_ message: String, isError: Bool) {
         statusMessage = message
         statusIsError = isError
+    }
+
+    private func yesNo(_ value: Bool) -> String {
+        value ? "Yes" : "No"
     }
 }
 

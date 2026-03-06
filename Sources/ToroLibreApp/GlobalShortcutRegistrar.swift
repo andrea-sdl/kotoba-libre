@@ -1,35 +1,88 @@
 import AppKit
+import ApplicationServices
 import Carbon
+@preconcurrency import CoreGraphics
 import Foundation
+import IOKit
+import IOKit.hidsystem
 import ToroLibreCore
 
-@MainActor
 final class GlobalShortcutRegistrar {
-    private var hotKeyRef: EventHotKeyRef?
-    private var eventHandler: EventHandlerRef?
-    private var onShortcutPressed: (() -> Void)?
+    private enum RegistrationBackend {
+        case carbonOnly
+        case carbonWithEventTap
+        case eventTapOnly
 
-    init() {
-        installHandlerIfNeeded()
+        var displayName: String {
+            switch self {
+            case .carbonOnly:
+                return "Carbon"
+            case .carbonWithEventTap:
+                return "Carbon + Event Tap"
+            case .eventTapOnly:
+                return "Event Tap"
+            }
+        }
     }
 
-    func register(shortcut: String, onShortcutPressed: @escaping () -> Void) throws {
-        unregisterCurrentShortcut()
-        self.onShortcutPressed = onShortcutPressed
+    private var hotKeyRef: EventHotKeyRef?
+    private var eventHandler: EventHandlerRef?
+    private var eventTap: CFMachPort?
+    private var eventTapSource: CFRunLoopSource?
+    private var activeDescriptor: ShortcutDescriptor?
+    private var onShortcutPressed: (() -> Void)?
+    private var registrationBackend: RegistrationBackend?
+    private var lastTriggerTime: CFAbsoluteTime = 0
+    private var lastCarbonStatus: OSStatus?
+
+    struct RuntimeStatus {
+        let activeShortcut: String?
+        let backend: String
+        let carbonRegistered: Bool
+        let eventTapInstalled: Bool
+        let accessibilityGranted: Bool
+        let inputMonitoringGranted: Bool
+        let lastCarbonStatus: OSStatus?
+    }
+
+    static func isShortcutSupportedBySystemPolicy(_ shortcut: String) -> Bool {
+        let modifierTokens = ToroLibreCore.normalizeShortcutValue(shortcut)
+            .split(separator: "+")
+            .map(String.init)
+            .filter { ["CmdOrCtrl", "Ctrl", "Alt", "Shift"].contains($0) }
+
+        guard !modifierTokens.isEmpty else {
+            return false
+        }
+
+        return !modifierTokens.allSatisfy { token in
+            token == "Alt" || token == "Shift"
+        }
+    }
+
+    func register(
+        shortcut: String,
+        promptForPermission: Bool = true,
+        onShortcutPressed: @escaping () -> Void
+    ) throws {
+        guard Self.isShortcutSupportedBySystemPolicy(shortcut) else {
+            throw ShortcutRegistrationError.unsupportedBySystemPolicy(shortcut)
+        }
 
         let descriptor = try ShortcutDescriptor(shortcut: shortcut)
-        let hotKeyID = EventHotKeyID(signature: OSType(0x544C4853), id: descriptor.id)
-        let status = RegisterEventHotKey(
-            UInt32(descriptor.keyCode),
-            descriptor.modifiers,
-            hotKeyID,
-            GetEventDispatcherTarget(),
-            0,
-            &hotKeyRef
-        )
+        unregisterCurrentShortcut()
 
-        guard status == noErr else {
-            throw ShortcutRegistrationError.registrationFailed(shortcut)
+        self.activeDescriptor = descriptor
+        self.onShortcutPressed = onShortcutPressed
+
+        do {
+            try installCarbonHotKey(descriptor: descriptor)
+            registrationBackend = .carbonOnly
+            installSupplementalEventTapIfAvailable(descriptor: descriptor)
+            return
+        } catch {
+            try installEventTapFallback(descriptor: descriptor, promptForPermission: promptForPermission)
+            registrationBackend = .eventTapOnly
         }
     }
 
@@ -38,6 +91,33 @@ final class GlobalShortcutRegistrar {
             UnregisterEventHotKey(hotKeyRef)
             self.hotKeyRef = nil
         }
+
+        if let eventTapSource {
+            CFRunLoopRemoveSource(CFRunLoopGetMain(), eventTapSource, .commonModes)
+            self.eventTapSource = nil
+        }
+
+        if let eventTap {
+            CFMachPortInvalidate(eventTap)
+            self.eventTap = nil
+        }
+
+        activeDescriptor = nil
+        onShortcutPressed = nil
+        registrationBackend = nil
+        lastCarbonStatus = nil
+    }
+
+    func runtimeStatus() -> RuntimeStatus {
+        RuntimeStatus(
+            activeShortcut: activeDescriptor?.normalizedShortcut,
+            backend: registrationBackend?.displayName ?? "Unavailable",
+            carbonRegistered: hotKeyRef != nil,
+            eventTapInstalled: eventTap != nil,
+            accessibilityGranted: Self.currentAccessibilityTrust(),
+            inputMonitoringGranted: Self.currentInputMonitoringTrust(),
+            lastCarbonStatus: lastCarbonStatus
+        )
     }
 
     static func shortcutString(from event: NSEvent) -> String? {
@@ -68,23 +148,47 @@ final class GlobalShortcutRegistrar {
         return ToroLibreCore.normalizeShortcutValue(parts.joined(separator: "+"))
     }
 
-    private func installHandlerIfNeeded() {
+    private func installCarbonHotKey(descriptor: ShortcutDescriptor) throws {
+        try installCarbonHandlerIfNeeded()
+
+        let hotKeyID = EventHotKeyID(signature: OSType(0x544C4853), id: descriptor.id)
+        let status = RegisterEventHotKey(
+            UInt32(descriptor.keyCode),
+            descriptor.carbonModifiers,
+            hotKeyID,
+            GetEventDispatcherTarget(),
+            0,
+            &hotKeyRef
+        )
+
+        lastCarbonStatus = status
+
+        guard status == noErr else {
+            throw ShortcutRegistrationError.registrationFailed(descriptor.normalizedShortcut)
+        }
+    }
+
+    private func installCarbonHandlerIfNeeded() throws {
         guard eventHandler == nil else {
             return
         }
 
-        var eventType = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
+        var eventType = EventTypeSpec(
+            eventClass: OSType(kEventClassKeyboard),
+            eventKind: UInt32(kEventHotKeyPressed)
+        )
+
         let callback: EventHandlerUPP = { _, _, userData in
             guard let userData else {
                 return noErr
             }
 
             let registrar = Unmanaged<GlobalShortcutRegistrar>.fromOpaque(userData).takeUnretainedValue()
-            registrar.onShortcutPressed?()
+            registrar.triggerShortcutIfNeeded()
             return noErr
         }
 
-        InstallEventHandler(
+        let status = InstallEventHandler(
             GetEventDispatcherTarget(),
             callback,
             1,
@@ -92,7 +196,157 @@ final class GlobalShortcutRegistrar {
             Unmanaged.passUnretained(self).toOpaque(),
             &eventHandler
         )
+
+        lastCarbonStatus = status
+
+        guard status == noErr else {
+            throw ShortcutRegistrationError.registrationFailed(activeShortcut)
+        }
     }
+
+    private func installEventTapFallback(
+        descriptor: ShortcutDescriptor,
+        promptForPermission: Bool
+    ) throws {
+        try ensureEventTapPermissions(promptForPermission: promptForPermission, shortcut: descriptor.normalizedShortcut)
+        try installEventTap(descriptor: descriptor)
+    }
+
+    private func installSupplementalEventTapIfAvailable(descriptor: ShortcutDescriptor) {
+        guard Self.currentAccessibilityTrust(), Self.currentInputMonitoringTrust() else {
+            return
+        }
+
+        do {
+            try ensureEventTapPermissions(promptForPermission: false, shortcut: descriptor.normalizedShortcut)
+            try installEventTap(descriptor: descriptor)
+            registrationBackend = .carbonWithEventTap
+        } catch {
+            // Carbon registration is already active, so we keep it and surface no supplemental error here.
+        }
+    }
+
+    private func ensureEventTapPermissions(promptForPermission: Bool, shortcut: String) throws {
+        var accessibilityTrusted = Self.currentAccessibilityTrust()
+        if !accessibilityTrusted && promptForPermission {
+            accessibilityTrusted = Self.requestAccessibilityTrustPrompt()
+        }
+
+        guard accessibilityTrusted else {
+            throw ShortcutRegistrationError.accessibilityPermissionRequired(shortcut)
+        }
+    }
+
+    private func installEventTap(descriptor: ShortcutDescriptor) throws {
+        let inputMonitoringTrustedBeforeTap = Self.currentInputMonitoringTrust()
+        let eventMask = CGEventMask(1 << CGEventType.keyDown.rawValue)
+        let callback: CGEventTapCallBack = { _, type, event, userData in
+            guard let userData else {
+                return Unmanaged.passUnretained(event)
+            }
+
+            let registrar = Unmanaged<GlobalShortcutRegistrar>.fromOpaque(userData).takeUnretainedValue()
+            return registrar.handleEventTap(type: type, event: event)
+        }
+
+        guard let eventTap = CGEvent.tapCreate(
+            tap: .cghidEventTap,
+            place: .headInsertEventTap,
+            options: .defaultTap,
+            eventsOfInterest: eventMask,
+            callback: callback,
+            userInfo: Unmanaged.passUnretained(self).toOpaque()
+        ) else {
+            if !Self.currentInputMonitoringTrust() {
+                throw ShortcutRegistrationError.inputMonitoringPermissionRequired(descriptor.normalizedShortcut)
+            }
+            throw ShortcutRegistrationError.registrationFailed(descriptor.normalizedShortcut)
+        }
+
+        if !inputMonitoringTrustedBeforeTap && !Self.currentInputMonitoringTrust() {
+            CFMachPortInvalidate(eventTap)
+            throw ShortcutRegistrationError.inputMonitoringPermissionRequired(descriptor.normalizedShortcut)
+        }
+
+        guard let eventTapSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, eventTap, 0) else {
+            CFMachPortInvalidate(eventTap)
+            throw ShortcutRegistrationError.registrationFailed(descriptor.normalizedShortcut)
+        }
+
+        self.eventTap = eventTap
+        self.eventTapSource = eventTapSource
+
+        CFRunLoopAddSource(CFRunLoopGetMain(), eventTapSource, .commonModes)
+        CGEvent.tapEnable(tap: eventTap, enable: true)
+    }
+
+    private static func currentAccessibilityTrust() -> Bool {
+        return AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": false] as CFDictionary)
+    }
+
+    private static func requestAccessibilityTrustPrompt() -> Bool {
+        return AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": true] as CFDictionary)
+    }
+
+    private static func currentInputMonitoringTrust() -> Bool {
+        IOHIDCheckAccess(kIOHIDRequestTypeListenEvent) == kIOHIDAccessTypeGranted
+    }
+
+    private func handleEventTap(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
+        switch type {
+        case .tapDisabledByTimeout, .tapDisabledByUserInput:
+            if let eventTap {
+                CGEvent.tapEnable(tap: eventTap, enable: true)
+            }
+        case .keyDown:
+            if matchesRegisteredShortcut(event: event) {
+                triggerShortcutIfNeeded()
+            }
+        default:
+            break
+        }
+
+        return Unmanaged.passUnretained(event)
+    }
+
+    private func matchesRegisteredShortcut(event: CGEvent) -> Bool {
+        guard let activeDescriptor else {
+            return false
+        }
+
+        if event.getIntegerValueField(.keyboardEventAutorepeat) != 0 {
+            return false
+        }
+
+        let keyCode = Int(event.getIntegerValueField(.keyboardEventKeycode))
+        guard keyCode == activeDescriptor.keyCode else {
+            return false
+        }
+
+        let flags = event.flags.intersection(Self.relevantEventFlags)
+        return flags == activeDescriptor.requiredEventFlags
+    }
+
+    private var activeShortcut: String {
+        activeDescriptor?.normalizedShortcut ?? "unknown"
+    }
+
+    private func triggerShortcutIfNeeded() {
+        let now = CFAbsoluteTimeGetCurrent()
+        guard now - lastTriggerTime > 0.2 else {
+            return
+        }
+
+        lastTriggerTime = now
+        onShortcutPressed?()
+    }
+
+    private static let relevantEventFlags: CGEventFlags = [
+        .maskCommand,
+        .maskControl,
+        .maskAlternate,
+        .maskShift
+    ]
 
     private static func keyToken(for event: NSEvent) -> String? {
         switch event.keyCode {
@@ -156,8 +410,10 @@ final class GlobalShortcutRegistrar {
 
 private struct ShortcutDescriptor {
     let id: UInt32
+    let normalizedShortcut: String
     let keyCode: Int
-    let modifiers: UInt32
+    let carbonModifiers: UInt32
+    let requiredEventFlags: CGEventFlags
 
     init(shortcut: String) throws {
         let normalized = ToroLibreCore.normalizeShortcutValue(shortcut)
@@ -167,18 +423,23 @@ private struct ShortcutDescriptor {
         }
 
         var carbonModifiers: UInt32 = 0
+        var requiredEventFlags: CGEventFlags = []
         var keyToken: String?
 
         for token in tokens {
             switch token {
             case "CmdOrCtrl":
                 carbonModifiers |= UInt32(cmdKey)
+                requiredEventFlags.insert(.maskCommand)
             case "Ctrl":
                 carbonModifiers |= UInt32(controlKey)
+                requiredEventFlags.insert(.maskControl)
             case "Alt":
                 carbonModifiers |= UInt32(optionKey)
+                requiredEventFlags.insert(.maskAlternate)
             case "Shift":
                 carbonModifiers |= UInt32(shiftKey)
+                requiredEventFlags.insert(.maskShift)
             default:
                 keyToken = token
             }
@@ -189,8 +450,10 @@ private struct ShortcutDescriptor {
         }
 
         self.id = UInt32(truncatingIfNeeded: normalized.hashValue)
+        self.normalizedShortcut = normalized
         self.keyCode = keyCode
-        self.modifiers = carbonModifiers
+        self.carbonModifiers = carbonModifiers
+        self.requiredEventFlags = requiredEventFlags
     }
 
     private static func keyCode(for token: String) -> Int? {
@@ -256,6 +519,9 @@ private struct ShortcutDescriptor {
 enum ShortcutRegistrationError: LocalizedError {
     case invalidShortcut(String)
     case registrationFailed(String)
+    case unsupportedBySystemPolicy(String)
+    case accessibilityPermissionRequired(String)
+    case inputMonitoringPermissionRequired(String)
 
     var errorDescription: String? {
         switch self {
@@ -263,6 +529,12 @@ enum ShortcutRegistrationError: LocalizedError {
             return "Unsupported global shortcut: \(value)"
         case let .registrationFailed(value):
             return "Failed to register global shortcut: \(value)"
+        case let .unsupportedBySystemPolicy(value):
+            return "macOS does not allow '\(value)' as a global shortcut. Use a shortcut that includes Control or Command."
+        case let .accessibilityPermissionRequired(value):
+            return "Toro Libre needs Accessibility permission to use '\(value)' when Carbon registration is unavailable. Allow Toro Libre in System Settings > Privacy & Security > Accessibility, then relaunch the app if macOS asks for it."
+        case let .inputMonitoringPermissionRequired(value):
+            return "Toro Libre needs Input Monitoring permission to use '\(value)' while the app is in the background. Allow Toro Libre in System Settings > Privacy & Security > Input Monitoring, then relaunch the app if macOS asks for it."
         }
     }
 }

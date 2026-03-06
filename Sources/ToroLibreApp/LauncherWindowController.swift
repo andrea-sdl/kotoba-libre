@@ -14,6 +14,7 @@ final class LauncherWindowController: NSWindowController, NSWindowDelegate {
     private weak var appController: AppController?
     private let viewModel: LauncherViewModel
     private var eventMonitor: Any?
+    private var previouslyFrontmostApplication: NSRunningApplication?
 
     var isVisible: Bool {
         window?.isVisible ?? false
@@ -58,17 +59,24 @@ final class LauncherWindowController: NSWindowController, NSWindowDelegate {
     }
 
     func showAndFocus() {
+        if !NSApp.isActive {
+            previouslyFrontmostApplication = NSWorkspace.shared.frontmostApplication
+        } else {
+            previouslyFrontmostApplication = nil
+        }
+
         viewModel.refresh()
         updateFrameForActiveScreen()
         window?.alphaValue = CGFloat(appController?.settings.launcherOpacity ?? 0.95)
-        window?.orderFrontRegardless()
-        window?.makeKey()
+        NSApp.activate(ignoringOtherApps: true)
+        window?.makeKeyAndOrderFront(nil)
         viewModel.focusToken = UUID()
     }
 
     func hide() {
-        window?.close()
+        window?.orderOut(nil)
         viewModel.reset()
+        restorePreviouslyFrontmostApplicationIfNeeded()
     }
 
     func windowDidResignKey(_ notification: Notification) {
@@ -77,6 +85,19 @@ final class LauncherWindowController: NSWindowController, NSWindowDelegate {
 
     func windowDidResignMain(_ notification: Notification) {
         hide()
+    }
+
+    private func restorePreviouslyFrontmostApplicationIfNeeded() {
+        guard let previousApplication = previouslyFrontmostApplication else {
+            return
+        }
+
+        previouslyFrontmostApplication = nil
+        guard previousApplication != NSRunningApplication.current else {
+            return
+        }
+
+        previousApplication.activate(options: [.activateIgnoringOtherApps])
     }
 
     private func installKeyboardMonitor() {
