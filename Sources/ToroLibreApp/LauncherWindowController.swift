@@ -2,6 +2,13 @@ import AppKit
 import SwiftUI
 import ToroLibreCore
 
+private let defaultLauncherWindowSize = NSSize(width: 800, height: 64)
+
+final class LauncherPanel: NSPanel {
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { false }
+}
+
 @MainActor
 final class LauncherWindowController: NSWindowController, NSWindowDelegate {
     private weak var appController: AppController?
@@ -16,9 +23,9 @@ final class LauncherWindowController: NSWindowController, NSWindowDelegate {
         self.appController = appController
         self.viewModel = LauncherViewModel(appController: appController)
 
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 860, height: 120),
-            styleMask: [.borderless],
+        let window = LauncherPanel(
+            contentRect: NSRect(origin: .zero, size: defaultLauncherWindowSize),
+            styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
         )
@@ -27,8 +34,11 @@ final class LauncherWindowController: NSWindowController, NSWindowDelegate {
         window.isOpaque = false
         window.backgroundColor = .clear
         window.hasShadow = false
+        window.isFloatingPanel = true
+        window.hidesOnDeactivate = true
+        window.becomesKeyOnlyIfNeeded = false
         window.level = .floating
-        window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        window.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary, .transient, .ignoresCycle]
 
         super.init(window: window)
         self.window?.delegate = self
@@ -49,20 +59,23 @@ final class LauncherWindowController: NSWindowController, NSWindowDelegate {
 
     func showAndFocus() {
         viewModel.refresh()
-        window?.center()
-        showWindow(nil)
-        window?.makeKeyAndOrderFront(nil)
+        updateFrameForActiveScreen()
         window?.alphaValue = CGFloat(appController?.settings.launcherOpacity ?? 0.95)
-        NSApp.activate(ignoringOtherApps: true)
+        window?.orderFrontRegardless()
+        window?.makeKey()
         viewModel.focusToken = UUID()
     }
 
     func hide() {
-        window?.orderOut(nil)
+        window?.close()
         viewModel.reset()
     }
 
     func windowDidResignKey(_ notification: Notification) {
+        hide()
+    }
+
+    func windowDidResignMain(_ notification: Notification) {
         hide()
     }
 
@@ -83,6 +96,29 @@ final class LauncherWindowController: NSWindowController, NSWindowDelegate {
                 return event
             }
         }
+    }
+
+    private func updateFrameForActiveScreen() {
+        guard let window else {
+            return
+        }
+
+        let mouseLocation = NSEvent.mouseLocation
+        let screen = NSScreen.screens.first(where: { NSMouseInRect(mouseLocation, $0.frame, false) }) ?? NSScreen.main
+        let visibleFrame = screen?.visibleFrame ?? .zero
+        guard visibleFrame.width > 0, visibleFrame.height > 0 else {
+            window.setContentSize(defaultLauncherWindowSize)
+            window.center()
+            return
+        }
+
+        let width = defaultLauncherWindowSize.width
+        let height = defaultLauncherWindowSize.height
+        let origin = NSPoint(
+            x: visibleFrame.midX - (width / 2),
+            y: visibleFrame.midY - (height / 2)
+        )
+        window.setFrame(NSRect(origin: origin, size: NSSize(width: width, height: height)), display: false)
     }
 }
 

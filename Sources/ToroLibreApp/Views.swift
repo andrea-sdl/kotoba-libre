@@ -426,7 +426,6 @@ struct AboutPanelView: View {
 
 struct LauncherRootView: View {
     @ObservedObject var viewModel: LauncherViewModel
-    @FocusState private var inputFocused: Bool
     private var selectedPresetBinding: Binding<String> {
         Binding(
             get: { viewModel.selectedPresetID ?? viewModel.presets.first?.id ?? "" },
@@ -436,34 +435,58 @@ struct LauncherRootView: View {
 
     var body: some View {
         VStack(spacing: 10) {
-            HStack(spacing: 12) {
-                Image(systemName: "magnifyingglass")
-                    .foregroundStyle(.secondary)
-                TextField("Ask...", text: $viewModel.query)
-                    .textFieldStyle(.plain)
-                    .font(.title3)
-                    .focused($inputFocused)
-                    .onSubmit { viewModel.submit() }
-                if viewModel.presets.isEmpty {
-                    Text("No agents")
-                        .foregroundColor(.secondary)
-                        .frame(width: 220, alignment: .leading)
-                } else {
-                    Picker("Agent", selection: selectedPresetBinding) {
-                        ForEach(viewModel.presets) { preset in
-                            Text(preset.name).tag(preset.id)
+            ZStack(alignment: .trailing) {
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .fill(Color.white.opacity(0.9))
+
+                LauncherSearchField(
+                    text: $viewModel.query,
+                    focusToken: viewModel.focusToken,
+                    onSubmit: viewModel.submit
+                )
+                .padding(.leading, 72)
+                .padding(.trailing, 234)
+                .frame(maxWidth: .infinity, minHeight: 44)
+
+                HStack {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 18, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .padding(.leading, 18)
+                    Spacer()
+                }
+                .frame(maxWidth: .infinity, minHeight: 44)
+
+                HStack {
+                    Spacer()
+                    Group {
+                        if viewModel.presets.isEmpty {
+                            Text("No agents")
+                                .foregroundStyle(.secondary)
+                                .frame(width: 190, alignment: .trailing)
+                        } else {
+                            Picker("Agent", selection: selectedPresetBinding) {
+                                ForEach(viewModel.presets) { preset in
+                                    Text(preset.name).tag(preset.id)
+                                }
+                            }
+                            .labelsHidden()
+                            .font(.system(size: 16, weight: .medium, design: .rounded))
+                            .frame(width: 190, alignment: .trailing)
                         }
                     }
-                    .labelsHidden()
-                    .frame(width: 220)
+                    .padding(.trailing, 14)
                 }
+                .frame(maxWidth: .infinity, minHeight: 44)
             }
-            .padding(.horizontal, 18)
-            .padding(.vertical, 16)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .frame(width: 800)
+            .frame(minHeight: 56)
             .background(
                 RoundedRectangle(cornerRadius: 18, style: .continuous)
                     .fill(Color.white.opacity(viewModel.opacity))
-                    .shadow(color: .black.opacity(0.1), radius: 16, x: 0, y: 8)
+                    .shadow(color: .black.opacity(0.12), radius: 12, x: 0, y: 6)
             )
 
             if !viewModel.statusMessage.isEmpty {
@@ -472,15 +495,84 @@ struct LauncherRootView: View {
                     .font(.footnote)
             }
         }
-        .padding(14)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 4)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color.clear)
-        .onChange(of: viewModel.focusToken) { _ in
-            inputFocused = true
+    }
+}
+
+private struct LauncherSearchField: NSViewRepresentable {
+    @Binding var text: String
+    let focusToken: UUID
+    let onSubmit: () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(text: $text, onSubmit: onSubmit)
+    }
+
+    func makeNSView(context: Context) -> NSTextField {
+        let textField = NSTextField()
+        textField.isBordered = false
+        textField.isBezeled = false
+        textField.drawsBackground = false
+        textField.isEditable = true
+        textField.isSelectable = true
+        textField.focusRingType = .none
+        textField.font = .systemFont(ofSize: 20, weight: .medium)
+        textField.alignment = .center
+        textField.placeholderString = "Ask..."
+        textField.delegate = context.coordinator
+        textField.lineBreakMode = .byTruncatingTail
+        return textField
+    }
+
+    func updateNSView(_ nsView: NSTextField, context: Context) {
+        if nsView.stringValue != text {
+            nsView.stringValue = text
         }
-        .onAppear {
-            inputFocused = true
+
+        if context.coordinator.lastFocusToken != focusToken {
+            context.coordinator.lastFocusToken = focusToken
+            DispatchQueue.main.async {
+                guard let window = nsView.window else {
+                    return
+                }
+
+                window.makeFirstResponder(nsView)
+                if let editor = window.fieldEditor(true, for: nsView) as? NSTextView {
+                    editor.alignment = .center
+                    editor.selectedRange = NSRange(location: nsView.stringValue.count, length: 0)
+                }
+            }
         }
+    }
+}
+
+private final class Coordinator: NSObject, NSTextFieldDelegate {
+    @Binding private var text: String
+    private let onSubmit: () -> Void
+    var lastFocusToken = UUID()
+
+    init(text: Binding<String>, onSubmit: @escaping () -> Void) {
+        self._text = text
+        self.onSubmit = onSubmit
+    }
+
+    func controlTextDidChange(_ obj: Notification) {
+        guard let textField = obj.object as? NSTextField else {
+            return
+        }
+        text = textField.stringValue
+    }
+
+    func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+        if commandSelector == #selector(NSResponder.insertNewline(_:)) {
+            onSubmit()
+            return true
+        }
+
+        return false
     }
 }
 

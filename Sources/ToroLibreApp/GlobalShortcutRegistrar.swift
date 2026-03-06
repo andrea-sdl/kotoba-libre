@@ -23,7 +23,7 @@ final class GlobalShortcutRegistrar {
             UInt32(descriptor.keyCode),
             descriptor.modifiers,
             hotKeyID,
-            GetApplicationEventTarget(),
+            GetEventDispatcherTarget(),
             0,
             &hotKeyRef
         )
@@ -85,7 +85,7 @@ final class GlobalShortcutRegistrar {
         }
 
         InstallEventHandler(
-            GetApplicationEventTarget(),
+            GetEventDispatcherTarget(),
             callback,
             1,
             &eventType,

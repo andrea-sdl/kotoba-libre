@@ -55,6 +55,8 @@ final class AppController: NSObject, ObservableObject {
 
         if settings.instanceBaseUrl == nil {
             showSettingsWindow()
+        } else {
+            mainWindowController.showAndFocus()
         }
     }
 
@@ -69,6 +71,7 @@ final class AppController: NSObject, ObservableObject {
             return
         }
 
+        refreshMainWindowContent(openHomeIfNeeded: false)
         mainWindowController.showAndFocus()
     }
 
@@ -136,6 +139,9 @@ final class AppController: NSObject, ObservableObject {
         try registerGlobalShortcut()
         try syncAutostart(enabled: normalized.autostartEnabled)
         refreshMainWindowContent(openHomeIfNeeded: previous.instanceBaseUrl != normalized.instanceBaseUrl)
+        if normalized.instanceBaseUrl != nil {
+            mainWindowController.showAndFocus()
+        }
     }
 
     func setDefaultPreset(id: String?) throws {
@@ -381,7 +387,8 @@ final class AppController: NSObject, ObservableObject {
         let mainMenu = NSMenu()
         let appMenuItem = NSMenuItem()
         let appMenu = NSMenu()
-        appMenu.addItem(withTitle: "Settings...", action: #selector(openSettingsFromMenu), keyEquivalent: ",")
+        let settingsItem = appMenu.addItem(withTitle: "Settings...", action: #selector(openSettingsFromMenu), keyEquivalent: ",")
+        settingsItem.target = self
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "Quit \(appDisplayName)", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appMenuItem.submenu = appMenu
