@@ -82,6 +82,8 @@ cat > "${CONTENTS_DIR}/Info.plist" <<EOF
 </plist>
 EOF
 
+codesign --force --deep --sign - --identifier "${BUNDLE_IDENTIFIER}" --timestamp=none "${APP_DIR}"
+
 echo "Built app bundle:"
 echo "- ${APP_DIR}"
 

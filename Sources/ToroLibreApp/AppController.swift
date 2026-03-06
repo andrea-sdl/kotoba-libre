@@ -7,8 +7,28 @@ import ToroLibreCore
 
 @MainActor
 final class AppController: NSObject, ObservableObject {
+    struct ShortcutDiagnostics {
+        let activeShortcut: String
+        let backend: String
+        let carbonRegistered: Bool
+        let eventTapInstalled: Bool
+        let accessibilityGranted: Bool
+        let inputMonitoringGranted: Bool
+        let lastCarbonStatusDescription: String
+    }
+
     @Published private(set) var settings: AppSettings = AppSettings()
     @Published private(set) var presets: [Preset] = []
+    @Published private(set) var shortcutRegistrationIssue: String?
+    @Published private(set) var shortcutDiagnostics = ShortcutDiagnostics(
+        activeShortcut: AppSettings.defaultShortcut,
+        backend: "Unavailable",
+        carbonRegistered: false,
+        eventTapInstalled: false,
+        accessibilityGranted: false,
+        inputMonitoringGranted: false,
+        lastCarbonStatusDescription: "n/a"
+    )
     @Published var shortcutDraft: String = AppSettings.defaultShortcut
     @Published var isRecordingShortcut = false
 
@@ -49,7 +69,7 @@ final class AppController: NSObject, ObservableObject {
         setupApplicationMenu()
         applyAppIcon()
         try? syncAutostart(enabled: settings.autostartEnabled)
-        try? registerGlobalShortcut()
+        registerGlobalShortcutIfPossible(promptForPermission: false)
         refreshMainWindowContent(openHomeIfNeeded: settings.instanceBaseUrl != nil)
         launcherWindowController.prepare()
 
@@ -135,9 +155,16 @@ final class AppController: NSObject, ObservableObject {
 
         settings = normalized
         shortcutDraft = normalized.globalShortcut
-        try persistSettings()
-        try registerGlobalShortcut()
-        try syncAutostart(enabled: normalized.autostartEnabled)
+        do {
+            try persistSettings()
+            try syncAutostart(enabled: normalized.autostartEnabled)
+        } catch {
+            restoreTransientSettingsState(previous)
+            registerGlobalShortcutIfPossible(promptForPermission: false)
+            throw error
+        }
+
+        registerGlobalShortcutIfPossible(promptForPermission: true)
         refreshMainWindowContent(openHomeIfNeeded: previous.instanceBaseUrl != normalized.instanceBaseUrl)
         if normalized.instanceBaseUrl != nil {
             mainWindowController.showAndFocus()
@@ -162,16 +189,19 @@ final class AppController: NSObject, ObservableObject {
     }
 
     func beginShortcutRecording() {
+        suspendGlobalShortcut()
         isRecordingShortcut = true
     }
 
     func stopShortcutRecording() {
         isRecordingShortcut = false
+        resumeSavedShortcutRegistration(promptForPermission: false)
     }
 
     func captureShortcut(_ shortcut: String) {
         shortcutDraft = shortcut
         isRecordingShortcut = false
+        resumeSavedShortcutRegistration(promptForPermission: false)
     }
 
     func upsertPreset(_ preset: Preset) throws -> Preset {
@@ -363,12 +393,57 @@ final class AppController: NSObject, ObservableObject {
         try store.savePresets(presets)
     }
 
-    private func registerGlobalShortcut() throws {
-        try shortcutRegistrar.register(shortcut: settings.globalShortcut) { [weak self] in
+    private func restoreTransientSettingsState(_ previous: AppSettings) {
+        settings = previous
+        shortcutDraft = previous.globalShortcut
+    }
+
+    private func suspendGlobalShortcut() {
+        shortcutRegistrar.unregisterCurrentShortcut()
+        shortcutRegistrationIssue = nil
+        refreshShortcutDiagnostics()
+    }
+
+    private func resumeSavedShortcutRegistration(promptForPermission: Bool) {
+        guard !isRecordingShortcut else {
+            return
+        }
+
+        registerGlobalShortcutIfPossible(promptForPermission: promptForPermission)
+    }
+
+    private func registerGlobalShortcut(promptForPermission: Bool) throws {
+        try shortcutRegistrar.register(shortcut: settings.globalShortcut, promptForPermission: promptForPermission) { [weak self] in
             Task { @MainActor in
                 self?.toggleLauncherWindow()
             }
         }
+        shortcutRegistrationIssue = nil
+        refreshShortcutDiagnostics()
+    }
+
+    private func registerGlobalShortcutIfPossible(promptForPermission: Bool) {
+        do {
+            try registerGlobalShortcut(promptForPermission: promptForPermission)
+        } catch {
+            shortcutRegistrationIssue = error.localizedDescription
+            refreshShortcutDiagnostics()
+        }
+    }
+
+    private func refreshShortcutDiagnostics() {
+        let runtime = shortcutRegistrar.runtimeStatus()
+        let activeShortcut = runtime.activeShortcut ?? settings.globalShortcut
+        let carbonStatus = runtime.lastCarbonStatus.map { "\($0)" } ?? "n/a"
+        shortcutDiagnostics = ShortcutDiagnostics(
+            activeShortcut: activeShortcut,
+            backend: runtime.backend,
+            carbonRegistered: runtime.carbonRegistered,
+            eventTapInstalled: runtime.eventTapInstalled,
+            accessibilityGranted: runtime.accessibilityGranted,
+            inputMonitoringGranted: runtime.inputMonitoringGranted,
+            lastCarbonStatusDescription: carbonStatus
+        )
     }
 
     private func refreshMainWindowContent(openHomeIfNeeded: Bool) {

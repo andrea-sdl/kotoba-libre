@@ -39,7 +39,7 @@ public struct Preset: Codable, Equatable, Identifiable, Sendable {
 }
 
 public struct AppSettings: Codable, Equatable, Sendable {
-    public static let defaultShortcut = "Alt+Shift+Space"
+    public static let defaultShortcut = "CmdOrCtrl+Shift+Space"
 
     public var instanceBaseUrl: String?
     public var globalShortcut: String
