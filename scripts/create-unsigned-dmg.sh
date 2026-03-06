@@ -2,13 +2,13 @@
 set -euo pipefail
 
 APP_NAME="${1:-Toro Libre}"
-APP_PATH="src-tauri/target/release/bundle/macos/${APP_NAME}.app"
+APP_PATH="dist-artifacts/${APP_NAME}.app"
 OUT_DIR="dist-artifacts"
 DMG_PATH="${OUT_DIR}/${APP_NAME}-unsigned.dmg"
 ZIP_PATH="${OUT_DIR}/${APP_NAME}-unsigned-app.zip"
 
 if [[ ! -d "${APP_PATH}" ]]; then
-  echo "App bundle not found at ${APP_PATH}. Run 'npm run tauri build' first." >&2
+  echo "App bundle not found at ${APP_PATH}. Run './scripts/build-app.sh' first." >&2
   exit 1
 fi
 

@@ -86,31 +86,22 @@ jobs:
               core.info(`No release exists for tag ${tag}. Continuing.`);
             }
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Setup Xcode
+        uses: maxim-lobanov/setup-xcode@v1
         with:
-          node-version: 20
-          cache: npm
-
-      - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Install dependencies
-        run: npm ci
+          xcode-version: latest-stable
 
       - name: Validate app version consistency
         run: ./scripts/ci/validate-version.sh "${{ steps.release_meta.outputs.version }}"
 
       - name: Build app bundle
-        run: npm run build:app
-
-      - name: Build unsigned release artifacts
-        run: npm run build:macos:unsigned
+        run: ./scripts/build-app.sh "${{ steps.release_meta.outputs.version }}"
 
       - name: Ensure expected artifacts exist
         shell: bash
         run: |
           set -euo pipefail
+          test -d "dist-artifacts/Toro Libre.app"
           test -f "dist-artifacts/Toro Libre-unsigned.dmg"
           test -f "dist-artifacts/Toro Libre-unsigned-app.zip"
 
