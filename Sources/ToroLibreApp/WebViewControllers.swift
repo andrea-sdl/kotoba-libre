@@ -3,6 +3,9 @@ import SwiftUI
 import ToroLibreCore
 import WebKit
 
+private let defaultChatWindowSize = NSSize(width: 1600, height: 1040)
+private let minimumChatWindowSize = NSSize(width: 1280, height: 860)
+
 @MainActor
 final class MainWindowController: NSWindowController, NSWindowDelegate {
     private weak var appController: AppController?
@@ -10,13 +13,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
     init(appController: AppController) {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 1280, height: 860),
+            contentRect: NSRect(origin: .zero, size: defaultChatWindowSize),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
         window.title = appDisplayName
         window.center()
+        window.minSize = minimumChatWindowSize
         window.setFrameAutosaveName("ToroLibreMainWindow")
         super.init(window: window)
         self.appController = appController
@@ -99,13 +103,14 @@ final class SecondaryWebWindowController: NSWindowController {
 
     init(url: URL, settings: AppSettings, instanceHost: String?, onExternalOpen: @escaping (URL) -> Void) {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 1280, height: 860),
+            contentRect: NSRect(origin: .zero, size: defaultChatWindowSize),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
         window.title = appDisplayName
         window.center()
+        window.minSize = minimumChatWindowSize
 
         self.webController = WebContentViewController(debugEnabled: settings.debugInWebview)
         super.init(window: window)
