@@ -1,4 +1,6 @@
 import AppKit
+import ApplicationServices
+import CoreGraphics
 import SwiftUI
 import ToroLibreCore
 
@@ -26,7 +28,7 @@ final class LauncherWindowController: NSWindowController, NSWindowDelegate {
 
         let window = LauncherPanel(
             contentRect: NSRect(origin: .zero, size: defaultLauncherWindowSize),
-            styleMask: [.borderless, .nonactivatingPanel],
+            styleMask: [.borderless],
             backing: .buffered,
             defer: false
         )
@@ -36,7 +38,7 @@ final class LauncherWindowController: NSWindowController, NSWindowDelegate {
         window.backgroundColor = .clear
         window.hasShadow = false
         window.isFloatingPanel = true
-        window.hidesOnDeactivate = true
+        window.hidesOnDeactivate = false
         window.becomesKeyOnlyIfNeeded = false
         window.level = .floating
         window.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary, .transient, .ignoresCycle]
@@ -59,18 +61,18 @@ final class LauncherWindowController: NSWindowController, NSWindowDelegate {
     }
 
     func showAndFocus() {
-        if !NSApp.isActive {
-            previouslyFrontmostApplication = NSWorkspace.shared.frontmostApplication
-        } else {
-            previouslyFrontmostApplication = nil
-        }
+        let frontmostApplication = NSWorkspace.shared.frontmostApplication
+        previouslyFrontmostApplication = frontmostApplication == NSRunningApplication.current ? nil : frontmostApplication
 
         viewModel.refresh()
-        updateFrameForActiveScreen()
         window?.alphaValue = CGFloat(appController?.settings.launcherOpacity ?? 0.95)
         NSApp.activate(ignoringOtherApps: true)
-        window?.makeKeyAndOrderFront(nil)
-        viewModel.focusToken = UUID()
+        DispatchQueue.main.async { [weak self] in
+            self?.updateFrameForActiveScreen()
+            self?.window?.orderFrontRegardless()
+            self?.window?.makeKeyAndOrderFront(nil)
+            self?.viewModel.focusToken = UUID()
+        }
     }
 
     func hide() {
@@ -97,7 +99,9 @@ final class LauncherWindowController: NSWindowController, NSWindowDelegate {
             return
         }
 
-        previousApplication.activate(options: [.activateIgnoringOtherApps])
+        DispatchQueue.main.async {
+            previousApplication.activate(options: [.activateIgnoringOtherApps])
+        }
     }
 
     private func installKeyboardMonitor() {
@@ -124,8 +128,7 @@ final class LauncherWindowController: NSWindowController, NSWindowDelegate {
             return
         }
 
-        let mouseLocation = NSEvent.mouseLocation
-        let screen = NSScreen.screens.first(where: { NSMouseInRect(mouseLocation, $0.frame, false) }) ?? NSScreen.main
+        let screen = targetScreenForLauncher(window: window)
         let visibleFrame = screen?.visibleFrame ?? .zero
         guard visibleFrame.width > 0, visibleFrame.height > 0 else {
             window.setContentSize(defaultLauncherWindowSize)
@@ -140,6 +143,128 @@ final class LauncherWindowController: NSWindowController, NSWindowDelegate {
             y: visibleFrame.midY - (height / 2)
         )
         window.setFrame(NSRect(origin: origin, size: NSSize(width: width, height: height)), display: false)
+    }
+
+    private func targetScreenForLauncher(window: NSWindow) -> NSScreen? {
+        if let frontmostApplication = previouslyFrontmostApplication ?? NSWorkspace.shared.frontmostApplication,
+           let screen = screenForFrontmostApplicationUsingAccessibility(frontmostApplication) ?? screenForFrontmostApplication(frontmostApplication) {
+            return screen
+        }
+
+        if let screen = window.screen {
+            return screen
+        }
+
+        let mouseLocation = NSEvent.mouseLocation
+        return NSScreen.screens.first(where: { NSMouseInRect(mouseLocation, $0.frame, false) }) ?? NSScreen.main
+    }
+
+    private func screenForFrontmostApplication(_ application: NSRunningApplication) -> NSScreen? {
+        let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
+        guard let windowList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
+            return nil
+        }
+
+        let pid = application.processIdentifier
+        let candidateBounds = windowList.lazy
+            .filter { windowInfo in
+                guard let ownerPID = windowInfo[kCGWindowOwnerPID as String] as? pid_t else {
+                    return false
+                }
+
+                let layer = windowInfo[kCGWindowLayer as String] as? Int ?? 0
+                let alpha = windowInfo[kCGWindowAlpha as String] as? Double ?? 1
+                let width = (windowInfo[kCGWindowBounds as String] as? [String: Any]).flatMap { $0["Width"] as? Double } ?? 0
+                let height = (windowInfo[kCGWindowBounds as String] as? [String: Any]).flatMap { $0["Height"] as? Double } ?? 0
+
+                return ownerPID == pid && layer == 0 && alpha > 0 && width > 0 && height > 0
+            }
+            .compactMap { windowInfo -> CGRect? in
+                guard let boundsDictionary = windowInfo[kCGWindowBounds as String] as? NSDictionary else {
+                    return nil
+                }
+
+                return CGRect(dictionaryRepresentation: boundsDictionary)
+            }
+            .first
+
+        guard let candidateBounds else {
+            return nil
+        }
+
+        let midpoint = NSPoint(x: candidateBounds.midX, y: candidateBounds.midY)
+        return NSScreen.screens.first(where: { NSMouseInRect(midpoint, $0.frame, false) })
+    }
+
+    private func screenForFrontmostApplicationUsingAccessibility(_ application: NSRunningApplication) -> NSScreen? {
+        let appElement = AXUIElementCreateApplication(application.processIdentifier)
+
+        var focusedWindowValue: CFTypeRef?
+        let focusedWindowResult = AXUIElementCopyAttributeValue(
+            appElement,
+            kAXFocusedWindowAttribute as CFString,
+            &focusedWindowValue
+        )
+
+        guard focusedWindowResult == .success,
+              let windowElement = focusedWindowValue else {
+            return nil
+        }
+
+        let windowAXElement = unsafeDowncast(windowElement, to: AXUIElement.self)
+
+        guard let position = axPoint(for: windowAXElement, attribute: kAXPositionAttribute),
+              let size = axSize(for: windowAXElement, attribute: kAXSizeAttribute) else {
+            return nil
+        }
+
+        let bounds = CGRect(origin: position, size: size)
+        let midpoint = NSPoint(x: bounds.midX, y: bounds.midY)
+        return NSScreen.screens.first(where: { NSMouseInRect(midpoint, $0.frame, false) })
+    }
+
+    private func axPoint(for element: AXUIElement, attribute: String) -> CGPoint? {
+        var value: CFTypeRef?
+        let result = AXUIElementCopyAttributeValue(element, attribute as CFString, &value)
+        guard result == .success,
+              let axValue = value,
+              CFGetTypeID(axValue) == AXValueGetTypeID() else {
+            return nil
+        }
+
+        let typedValue = unsafeDowncast(axValue, to: AXValue.self)
+        guard AXValueGetType(typedValue) == .cgPoint else {
+            return nil
+        }
+
+        var point = CGPoint.zero
+        guard AXValueGetValue(typedValue, .cgPoint, &point) else {
+            return nil
+        }
+
+        return point
+    }
+
+    private func axSize(for element: AXUIElement, attribute: String) -> CGSize? {
+        var value: CFTypeRef?
+        let result = AXUIElementCopyAttributeValue(element, attribute as CFString, &value)
+        guard result == .success,
+              let axValue = value,
+              CFGetTypeID(axValue) == AXValueGetTypeID() else {
+            return nil
+        }
+
+        let typedValue = unsafeDowncast(axValue, to: AXValue.self)
+        guard AXValueGetType(typedValue) == .cgSize else {
+            return nil
+        }
+
+        var size = CGSize.zero
+        guard AXValueGetValue(typedValue, .cgSize, &size) else {
+            return nil
+        }
+
+        return size
     }
 }
 
