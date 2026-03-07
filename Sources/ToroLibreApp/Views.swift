@@ -447,6 +447,7 @@ struct AboutPanelView: View {
 
 struct LauncherRootView: View {
     @ObservedObject var viewModel: LauncherViewModel
+
     private var selectedPresetBinding: Binding<String> {
         Binding(
             get: { viewModel.selectedPresetID ?? viewModel.presets.first?.id ?? "" },
@@ -456,69 +457,64 @@ struct LauncherRootView: View {
 
     var body: some View {
         VStack(spacing: 10) {
-            ZStack(alignment: .trailing) {
-                RoundedRectangle(cornerRadius: 22, style: .continuous)
-                    .fill(Color.white.opacity(0.9))
+            HStack(spacing: 14) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 18, weight: .medium))
+                    .foregroundStyle(.secondary)
 
                 LauncherSearchField(
                     text: $viewModel.query,
                     focusToken: viewModel.focusToken,
                     onSubmit: viewModel.submit
                 )
-                .padding(.leading, 72)
-                .padding(.trailing, 234)
                 .frame(maxWidth: .infinity, minHeight: 44)
 
-                HStack {
-                    Image(systemName: "magnifyingglass")
-                        .font(.system(size: 18, weight: .medium))
-                        .foregroundStyle(.secondary)
-                        .padding(.leading, 18)
-                    Spacer()
-                }
-                .frame(maxWidth: .infinity, minHeight: 44)
-
-                HStack {
-                    Spacer()
-                    Group {
-                        if viewModel.presets.isEmpty {
-                            Text("No agents")
-                                .foregroundStyle(.secondary)
-                                .frame(width: 190, alignment: .trailing)
-                        } else {
-                            Picker("Agent", selection: selectedPresetBinding) {
-                                ForEach(viewModel.presets) { preset in
-                                    Text(preset.name).tag(preset.id)
-                                }
+                Group {
+                    if viewModel.presets.isEmpty {
+                        Text("No agents")
+                            .foregroundStyle(.secondary)
+                            .frame(width: 220, alignment: .trailing)
+                    } else {
+                        Picker("Agent", selection: selectedPresetBinding) {
+                            ForEach(viewModel.presets) { preset in
+                                Text(preset.name).tag(preset.id)
                             }
-                            .labelsHidden()
-                            .font(.system(size: 16, weight: .medium, design: .rounded))
-                            .frame(width: 190, alignment: .trailing)
                         }
+                        .labelsHidden()
+                        .pickerStyle(.menu)
+                        .font(.system(size: 15, weight: .medium, design: .rounded))
+                        .frame(width: 220, alignment: .trailing)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 8)
+                        .background(
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .fill(Color.white.opacity(0.58))
+                        )
                     }
-                    .padding(.trailing, 14)
                 }
-                .frame(maxWidth: .infinity, minHeight: 44)
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .frame(width: 800)
-            .frame(minHeight: 56)
+            .padding(.horizontal, 18)
+            .padding(.vertical, 16)
+            .frame(maxWidth: .infinity, minHeight: 78)
             .background(
                 RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .fill(Color.white.opacity(viewModel.opacity))
-                    .shadow(color: .black.opacity(0.12), radius: 12, x: 0, y: 6)
+                    .fill(Color(nsColor: .windowBackgroundColor).opacity(viewModel.opacity))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            .stroke(Color.white.opacity(0.6), lineWidth: 1)
+                    )
+                    .shadow(color: .black.opacity(0.16), radius: 18, x: 0, y: 10)
             )
 
             if !viewModel.statusMessage.isEmpty {
                 Text(viewModel.statusMessage)
-                    .foregroundColor(viewModel.isError ? .red : .secondary)
+                    .foregroundStyle(viewModel.isError ? Color.red : .secondary)
                     .font(.footnote)
             }
         }
-        .padding(.horizontal, 6)
-        .padding(.vertical, 4)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(Color.clear)
     }
 }
@@ -542,7 +538,7 @@ private struct LauncherSearchField: NSViewRepresentable {
         textField.focusRingType = .none
         textField.font = .systemFont(ofSize: 20, weight: .medium)
         textField.alignment = .center
-        textField.placeholderString = "Ask..."
+        textField.placeholderString = "Ask Toro Libre"
         textField.delegate = context.coordinator
         textField.lineBreakMode = .byTruncatingTail
         return textField

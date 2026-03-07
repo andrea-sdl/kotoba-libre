@@ -1,12 +1,47 @@
 import AppKit
-import ApplicationServices
-import CoreGraphics
 import SwiftUI
 import ToroLibreCore
 
-private let defaultLauncherWindowSize = NSSize(width: 800, height: 64)
+private enum LauncherPanelMetrics {
+    static let preferredWidth: CGFloat = 860
+    static let minimumWidth: CGFloat = 560
+    static let preferredHeight: CGFloat = 138
+    static let horizontalInset: CGFloat = 32
+    static let topInset: CGFloat = 88
+    static let bottomInset: CGFloat = 24
+}
 
 final class LauncherPanel: NSPanel {
+    init() {
+        super.init(
+            contentRect: NSRect(
+                origin: .zero,
+                size: NSSize(width: LauncherPanelMetrics.preferredWidth, height: LauncherPanelMetrics.preferredHeight)
+            ),
+            styleMask: [.nonactivatingPanel, .titled, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+
+        title = "Toro Libre Launcher"
+        isFloatingPanel = false
+        level = .floating
+        collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary, .transient, .ignoresCycle]
+        isReleasedWhenClosed = false
+        isOpaque = false
+        backgroundColor = .clear
+        hasShadow = true
+        hidesOnDeactivate = false
+        isMovableByWindowBackground = false
+        titleVisibility = .hidden
+        titlebarAppearsTransparent = true
+        animationBehavior = .utilityWindow
+
+        standardWindowButton(.closeButton)?.isHidden = true
+        standardWindowButton(.miniaturizeButton)?.isHidden = true
+        standardWindowButton(.zoomButton)?.isHidden = true
+    }
+
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
 }
@@ -26,28 +61,11 @@ final class LauncherWindowController: NSWindowController, NSWindowDelegate {
         self.appController = appController
         self.viewModel = LauncherViewModel(appController: appController)
 
-        let window = LauncherPanel(
-            contentRect: NSRect(origin: .zero, size: defaultLauncherWindowSize),
-            styleMask: [.borderless],
-            backing: .buffered,
-            defer: false
-        )
-        window.title = "Librechat Spotlight"
-        window.center()
-        window.isOpaque = false
-        window.backgroundColor = .clear
-        window.hasShadow = false
-        window.isFloatingPanel = true
-        window.hidesOnDeactivate = false
-        window.becomesKeyOnlyIfNeeded = false
-        window.level = .floating
-        window.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary, .transient, .ignoresCycle]
+        let panel = LauncherPanel()
+        super.init(window: panel)
 
-        super.init(window: window)
-        self.window?.delegate = self
-        self.window?.contentViewController = NSHostingController(
-            rootView: LauncherRootView(viewModel: viewModel)
-        )
+        panel.delegate = self
+        panel.contentView = NSHostingView(rootView: LauncherRootView(viewModel: viewModel))
         installKeyboardMonitor()
     }
 
@@ -65,14 +83,11 @@ final class LauncherWindowController: NSWindowController, NSWindowDelegate {
         previouslyFrontmostApplication = frontmostApplication == NSRunningApplication.current ? nil : frontmostApplication
 
         viewModel.refresh()
-        window?.alphaValue = CGFloat(appController?.settings.launcherOpacity ?? 0.95)
+        positionPanelOnActiveDisplay()
         NSApp.activate(ignoringOtherApps: true)
-        DispatchQueue.main.async { [weak self] in
-            self?.updateFrameForActiveScreen()
-            self?.window?.orderFrontRegardless()
-            self?.window?.makeKeyAndOrderFront(nil)
-            self?.viewModel.focusToken = UUID()
-        }
+        window?.orderFrontRegardless()
+        window?.makeKeyAndOrderFront(nil)
+        viewModel.focusToken = UUID()
     }
 
     func hide() {
@@ -82,10 +97,18 @@ final class LauncherWindowController: NSWindowController, NSWindowDelegate {
     }
 
     func windowDidResignKey(_ notification: Notification) {
+        guard isVisible else {
+            return
+        }
+
         hide()
     }
 
     func windowDidResignMain(_ notification: Notification) {
+        guard isVisible else {
+            return
+        }
+
         hide()
     }
 
@@ -123,148 +146,40 @@ final class LauncherWindowController: NSWindowController, NSWindowDelegate {
         }
     }
 
-    private func updateFrameForActiveScreen() {
+    private func positionPanelOnActiveDisplay() {
         guard let window else {
             return
         }
 
-        let screen = targetScreenForLauncher(window: window)
-        let visibleFrame = screen?.visibleFrame ?? .zero
-        guard visibleFrame.width > 0, visibleFrame.height > 0 else {
-            window.setContentSize(defaultLauncherWindowSize)
-            window.center()
-            return
-        }
-
-        let width = defaultLauncherWindowSize.width
-        let height = defaultLauncherWindowSize.height
-        let origin = NSPoint(
-            x: visibleFrame.midX - (width / 2),
-            y: visibleFrame.midY - (height / 2)
-        )
-        window.setFrame(NSRect(origin: origin, size: NSSize(width: width, height: height)), display: false)
+        let targetScreen = screenContainingMouse() ?? window.screen ?? NSScreen.main
+        let frame = frameForPresentation(on: targetScreen)
+        window.setFrame(frame, display: false)
     }
 
-    private func targetScreenForLauncher(window: NSWindow) -> NSScreen? {
-        if let frontmostApplication = previouslyFrontmostApplication ?? NSWorkspace.shared.frontmostApplication,
-           let screen = screenForFrontmostApplicationUsingAccessibility(frontmostApplication) ?? screenForFrontmostApplication(frontmostApplication) {
-            return screen
-        }
-
-        if let screen = window.screen {
-            return screen
-        }
-
+    private func screenContainingMouse() -> NSScreen? {
         let mouseLocation = NSEvent.mouseLocation
-        return NSScreen.screens.first(where: { NSMouseInRect(mouseLocation, $0.frame, false) }) ?? NSScreen.main
+        return NSScreen.screens.first { NSMouseInRect(mouseLocation, $0.frame, false) }
     }
 
-    private func screenForFrontmostApplication(_ application: NSRunningApplication) -> NSScreen? {
-        let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
-        guard let windowList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
-            return nil
-        }
+    private func frameForPresentation(on screen: NSScreen?) -> NSRect {
+        let fallbackVisibleFrame = NSRect(x: 0, y: 0, width: LauncherPanelMetrics.preferredWidth, height: 900)
+        let visibleFrame = screen?.visibleFrame ?? fallbackVisibleFrame
 
-        let pid = application.processIdentifier
-        let candidateBounds = windowList.lazy
-            .filter { windowInfo in
-                guard let ownerPID = windowInfo[kCGWindowOwnerPID as String] as? pid_t else {
-                    return false
-                }
+        let availableWidth = visibleFrame.width - (LauncherPanelMetrics.horizontalInset * 2)
+        let minimumWidth = min(LauncherPanelMetrics.minimumWidth, visibleFrame.width)
+        let width = min(
+            LauncherPanelMetrics.preferredWidth,
+            max(minimumWidth, availableWidth)
+        )
+        let height = LauncherPanelMetrics.preferredHeight
 
-                let layer = windowInfo[kCGWindowLayer as String] as? Int ?? 0
-                let alpha = windowInfo[kCGWindowAlpha as String] as? Double ?? 1
-                let width = (windowInfo[kCGWindowBounds as String] as? [String: Any]).flatMap { $0["Width"] as? Double } ?? 0
-                let height = (windowInfo[kCGWindowBounds as String] as? [String: Any]).flatMap { $0["Height"] as? Double } ?? 0
-
-                return ownerPID == pid && layer == 0 && alpha > 0 && width > 0 && height > 0
-            }
-            .compactMap { windowInfo -> CGRect? in
-                guard let boundsDictionary = windowInfo[kCGWindowBounds as String] as? NSDictionary else {
-                    return nil
-                }
-
-                return CGRect(dictionaryRepresentation: boundsDictionary)
-            }
-            .first
-
-        guard let candidateBounds else {
-            return nil
-        }
-
-        let midpoint = NSPoint(x: candidateBounds.midX, y: candidateBounds.midY)
-        return NSScreen.screens.first(where: { NSMouseInRect(midpoint, $0.frame, false) })
-    }
-
-    private func screenForFrontmostApplicationUsingAccessibility(_ application: NSRunningApplication) -> NSScreen? {
-        let appElement = AXUIElementCreateApplication(application.processIdentifier)
-
-        var focusedWindowValue: CFTypeRef?
-        let focusedWindowResult = AXUIElementCopyAttributeValue(
-            appElement,
-            kAXFocusedWindowAttribute as CFString,
-            &focusedWindowValue
+        let originX = visibleFrame.midX - (width / 2)
+        let originY = max(
+            visibleFrame.minY + LauncherPanelMetrics.bottomInset,
+            visibleFrame.maxY - LauncherPanelMetrics.topInset - height
         )
 
-        guard focusedWindowResult == .success,
-              let windowElement = focusedWindowValue else {
-            return nil
-        }
-
-        let windowAXElement = unsafeDowncast(windowElement, to: AXUIElement.self)
-
-        guard let position = axPoint(for: windowAXElement, attribute: kAXPositionAttribute),
-              let size = axSize(for: windowAXElement, attribute: kAXSizeAttribute) else {
-            return nil
-        }
-
-        let bounds = CGRect(origin: position, size: size)
-        let midpoint = NSPoint(x: bounds.midX, y: bounds.midY)
-        return NSScreen.screens.first(where: { NSMouseInRect(midpoint, $0.frame, false) })
-    }
-
-    private func axPoint(for element: AXUIElement, attribute: String) -> CGPoint? {
-        var value: CFTypeRef?
-        let result = AXUIElementCopyAttributeValue(element, attribute as CFString, &value)
-        guard result == .success,
-              let axValue = value,
-              CFGetTypeID(axValue) == AXValueGetTypeID() else {
-            return nil
-        }
-
-        let typedValue = unsafeDowncast(axValue, to: AXValue.self)
-        guard AXValueGetType(typedValue) == .cgPoint else {
-            return nil
-        }
-
-        var point = CGPoint.zero
-        guard AXValueGetValue(typedValue, .cgPoint, &point) else {
-            return nil
-        }
-
-        return point
-    }
-
-    private func axSize(for element: AXUIElement, attribute: String) -> CGSize? {
-        var value: CFTypeRef?
-        let result = AXUIElementCopyAttributeValue(element, attribute as CFString, &value)
-        guard result == .success,
-              let axValue = value,
-              CFGetTypeID(axValue) == AXValueGetTypeID() else {
-            return nil
-        }
-
-        let typedValue = unsafeDowncast(axValue, to: AXValue.self)
-        guard AXValueGetType(typedValue) == .cgSize else {
-            return nil
-        }
-
-        var size = CGSize.zero
-        guard AXValueGetValue(typedValue, .cgSize, &size) else {
-            return nil
-        }
-
-        return size
+        return NSRect(x: originX, y: originY, width: width, height: height)
     }
 }
 
