@@ -77,9 +77,22 @@ public final class AppDataStore: @unchecked Sendable {
         return try encoder.encode(payload)
     }
 
+    public func resetConfiguration() throws {
+        try removeItemIfPresent(at: settingsURL)
+        try removeItemIfPresent(at: presetsURL)
+    }
+
     private func ensureBaseDirectory() throws {
         if !fileManager.fileExists(atPath: baseDirectory.path) {
             try fileManager.createDirectory(at: baseDirectory, withIntermediateDirectories: true)
         }
+    }
+
+    private func removeItemIfPresent(at url: URL) throws {
+        guard fileManager.fileExists(atPath: url.path) else {
+            return
+        }
+
+        try fileManager.removeItem(at: url)
     }
 }

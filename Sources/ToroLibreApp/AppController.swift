@@ -72,12 +72,7 @@ final class AppController: NSObject, ObservableObject {
         registerGlobalShortcutIfPossible(promptForPermission: false)
         refreshMainWindowContent(openHomeIfNeeded: settings.instanceBaseUrl != nil)
         launcherWindowController.prepare()
-
-        if settings.instanceBaseUrl == nil {
-            showSettingsWindow()
-        } else {
-            mainWindowController.showAndFocus()
-        }
+        mainWindowController.showAndFocus()
     }
 
     func restoreOrOpenPrimaryWindow() {
@@ -87,7 +82,8 @@ final class AppController: NSObject, ObservableObject {
         }
 
         if settings.instanceBaseUrl == nil {
-            settingsWindowController.showAndFocus()
+            refreshMainWindowContent(openHomeIfNeeded: false)
+            mainWindowController.showAndFocus()
             return
         }
 
@@ -169,6 +165,44 @@ final class AppController: NSObject, ObservableObject {
         if normalized.instanceBaseUrl != nil {
             mainWindowController.showAndFocus()
         }
+    }
+
+    func completeOnboarding(instanceBaseURL: String, shortcut: String) throws {
+        var updated = settings
+        updated.instanceBaseUrl = instanceBaseURL
+        updated.globalShortcut = shortcut
+
+        try saveSettings(updated)
+        settingsWindowController.hide()
+        mainWindowController.resetToDefaultSize()
+        mainWindowController.showAndFocus()
+    }
+
+    func resetConfiguration() throws {
+        hideLauncherWindow()
+        closeAllSecondaryWindows()
+        try store.resetConfiguration()
+
+        settings = AppSettings()
+        presets = []
+        shortcutDraft = AppSettings.defaultShortcut
+        isRecordingShortcut = false
+        settingsWindowController.hide()
+
+        do {
+            try syncAutostart(enabled: false)
+        } catch {
+            registerGlobalShortcutIfPossible(promptForPermission: false)
+            refreshMainWindowContent(openHomeIfNeeded: false)
+            mainWindowController.resetToDefaultSize()
+            mainWindowController.showAndFocus()
+            throw error
+        }
+
+        registerGlobalShortcutIfPossible(promptForPermission: false)
+        refreshMainWindowContent(openHomeIfNeeded: false)
+        mainWindowController.resetToDefaultSize()
+        mainWindowController.showAndFocus()
     }
 
     func setDefaultPreset(id: String?) throws {
@@ -398,6 +432,14 @@ final class AppController: NSObject, ObservableObject {
         shortcutDraft = previous.globalShortcut
     }
 
+    private func closeAllSecondaryWindows() {
+        for controller in Array(secondaryWindows.values) {
+            controller.close()
+        }
+        secondaryWindows.removeAll()
+        windowCleanupDelegates.removeAll()
+    }
+
     private func suspendGlobalShortcut() {
         shortcutRegistrar.unregisterCurrentShortcut()
         shortcutRegistrationIssue = nil
@@ -448,7 +490,7 @@ final class AppController: NSObject, ObservableObject {
 
     private func refreshMainWindowContent(openHomeIfNeeded: Bool) {
         if settings.instanceBaseUrl == nil {
-            mainWindowController.showFirstRun()
+            mainWindowController.showOnboarding()
             return
         }
 

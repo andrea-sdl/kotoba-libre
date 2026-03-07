@@ -1,45 +1,41 @@
-# Toro Libre Swift Rewrite Notes
+# Toro Libre Plan
 
-Last updated: March 6, 2026
+Last updated: March 8, 2026
 
-## Current Architecture
+This file is the lightweight product and engineering plan for the current native macOS implementation.
 
-- `ToroLibreCore`
-  - Shared data models
-  - Settings and preset persistence
-  - Deep-link parsing
-  - URL validation and host restriction
-  - Preset import/export helpers
-  - Query template expansion
-- `ToroLibreApp`
-  - AppKit lifecycle and menu
-  - SwiftUI settings, launcher, and first-run UI
-  - `WKWebView` main window and secondary chat windows
-  - Native global shortcut registration
-  - Launch-at-login synchronization
-- `ToroLibreSelfTest`
-  - Runnable validation suite for the ported core logic
+## Current Baseline
 
-## Preserved Behavior
+Toro Libre now ships as a Swift Package Manager app with:
 
-- `torolibre://open?url=...`
-- `torolibre://preset/<presetId>?query=...`
-- `torolibre://settings`
-- Settings and presets JSON schema
-- HTTPS-only destinations
-- Optional host restriction tied to the configured instance URL
-- Query placeholder replacement and `prompt`/`submit=true` fallback
-- Launcher default preset behavior
-- Same-host SPA-first navigation before full page load fallback
+- Native onboarding for first launch and config reset
+- A tabbed settings window for instance configuration, agents, shortcuts, and app information
+- A floating launcher panel driven by a global shortcut
+- Embedded LibreChat web content through `WKWebView`
+- JSON-backed settings and preset persistence
+- Unsigned packaging and GitHub release automation
 
-## Build and Packaging
+## Near-Term Priorities
 
-- Development compile: `swift build`
-- Local validation: `swift run ToroLibreSelfTest`
-- App bundle + unsigned artifacts: `./scripts/build-app.sh`
-- Release version source: `VERSION`
+1. Harden first-run and reset UX with broader manual smoke testing around permissions and launcher behavior.
+2. Expand regression coverage in `ToroLibreSelfTest` for onboarding-adjacent persistence and preset defaults.
+3. Improve documentation and release confidence for internal distribution on fresh macOS machines.
 
-## Known Environment Note
+## Medium-Term Opportunities
 
-- The current local Command Line Tools installation does not expose a usable SwiftPM test framework module (`Testing` or `XCTest`) to `swift test`.
-- Because of that, this repo validates the migrated logic through `ToroLibreSelfTest` in this environment.
+1. Add richer launcher ergonomics, such as recent prompts or preset search.
+2. Improve settings validation feedback and permission guidance for global shortcuts.
+3. Add a more formal automated UI verification path if the environment permits it.
+
+## Constraints
+
+- The project is macOS-only.
+- The distribution flow is unsigned and not notarized.
+- Local verification currently relies on `swift run ToroLibreSelfTest` instead of `swift test` in this environment.
+
+## Canonical References
+
+- Product and technical overview: [README.md](/Users/andreagrassi/WebstormProjects/toro-libre/README.md)
+- Architecture: [docs/architecture.md](/Users/andreagrassi/WebstormProjects/toro-libre/docs/architecture.md)
+- Development workflow: [docs/development.md](/Users/andreagrassi/WebstormProjects/toro-libre/docs/development.md)
+- Release workflow: [docs/release.md](/Users/andreagrassi/WebstormProjects/toro-libre/docs/release.md)
