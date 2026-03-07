@@ -1,84 +1,154 @@
-# Toro Libre (SwiftPM, macOS-native)
+# Toro Libre
 
-Native macOS wrapper for a self-hosted Toro Libre instance, built with Swift, AppKit, SwiftUI, WebKit, and `swift build`.
+Toro Libre is a macOS-native launcher and web wrapper for LibreChat, built with Swift Package Manager, AppKit, SwiftUI, and WebKit.
 
-## Core Features
+The app gives LibreChat a focused desktop shell with:
 
-- Native macOS app lifecycle and windows
-- Main webview for the remote Toro Libre instance
-- Separate native settings and launcher windows
-- Custom deep links:
-  - `torolibre://open?url=<encoded_url>`
-  - `torolibre://preset/<presetId>?query=<encoded>`
-  - `torolibre://settings`
-- Local preset management with JSON import/export
-- Global shortcut launcher
-- Same-host SPA-first navigation in the main webview, with full-load fallback
+- Guided onboarding for first launch
+- A native settings window for instance configuration, agents, and shortcuts
+- A Spotlight-style launcher opened through a global keyboard shortcut
+- Deep links for opening settings, presets, and direct destinations
+- JSON import/export for agent presets
 - Unsigned `.app`, `.dmg`, and `.zip` packaging for internal distribution
 
-## Project Layout
+## Current Stack
 
-- `Package.swift`: SwiftPM manifest
-- `Sources/ToroLibreCore`: shared models, validation, deep-link, storage, and template logic
-- `Sources/ToroLibreApp`: AppKit/SwiftUI/WebKit macOS app
-- `Sources/ToroLibreSelfTest`: runnable self-test executable for the migrated core behaviors
-- `scripts/build-app.sh`: release build + `.app` assembly + unsigned artifact packaging
-- `scripts/create-unsigned-dmg.sh`: creates unsigned `.dmg` and `.zip` from the built app bundle
+- Swift 6.2
+- Swift Package Manager
+- AppKit app lifecycle and window management
+- SwiftUI for onboarding, settings, and launcher UI
+- WebKit for the embedded LibreChat experience
+- GitHub Actions for unsigned release automation
 
-## Development
+## Repository Layout
+
+```text
+.
+|-- Package.swift
+|-- Sources
+|   |-- ToroLibreApp
+|   |-- ToroLibreCore
+|   `-- ToroLibreSelfTest
+|-- docs
+|   |-- architecture.md
+|   |-- development.md
+|   |-- release.md
+|   `-- plans
+|-- scripts
+|   |-- build-app.sh
+|   |-- create-unsigned-dmg.sh
+|   `-- ci/validate-version.sh
+`-- VERSION
+```
+
+## Modules
+
+- `Sources/ToroLibreApp`
+  Native macOS executable. Owns the app lifecycle, windows, onboarding flow, settings UI, shortcut registration, and embedded `WKWebView`.
+- `Sources/ToroLibreCore`
+  Shared models and business logic: settings, preset normalization, deep links, URL validation, host restriction, import/export, and storage helpers.
+- `Sources/ToroLibreSelfTest`
+  Runnable regression suite for core behavior in environments where `swift test` is not available.
+
+## Developer Workflow
+
+Build the project:
 
 ```bash
 swift build
+```
+
+Run the self-test suite:
+
+```bash
 swift run ToroLibreSelfTest
 ```
 
-To launch the debug executable directly from SwiftPM:
+Launch the app directly from SwiftPM:
 
 ```bash
 swift run ToroLibreApp
 ```
 
-## Build (Unsigned Internal)
+Build the distributable app bundle and unsigned artifacts:
 
 ```bash
 ./scripts/build-app.sh
 ```
 
-Artifacts:
+Generated artifacts:
 
 - `dist-artifacts/Toro Libre.app`
 - `dist-artifacts/Toro Libre-unsigned.dmg`
 - `dist-artifacts/Toro Libre-unsigned-app.zip`
 
-## Versioning
+## Key User Flows
 
-The canonical app version lives in `VERSION`.
+### First launch
 
-Validate it before releasing:
+If no settings exist, the main window opens a two-step onboarding flow:
+
+1. Enter the LibreChat base URL
+2. Confirm or record the global launcher shortcut
+
+After setup completes, Toro Libre saves configuration and opens the main web view in an `800x600` default window.
+
+### Settings management
+
+The settings window includes tabs for:
+
+- Agents
+- Settings
+- Shortcuts
+- About
+
+The Settings tab also includes a destructive reset action that clears config and returns the app to onboarding.
+
+### Launcher
+
+The launcher is a floating panel that:
+
+- Opens with the configured global shortcut
+- Lets the user pick a preset
+- Passes prompt text into LibreChat URLs
+- Falls back gracefully when no instance or presets are configured
+
+## Deep Links
+
+Toro Libre currently supports:
+
+- `torolibre://open?url=<encoded_url>`
+- `torolibre://preset/<presetId>?query=<encoded_query>`
+- `torolibre://settings`
+- `https://.../app/open?url=<encoded_url>`
+- `https://.../app/preset/<presetId>?query=<encoded_query>`
+- `https://.../app/settings`
+
+See [docs/architecture.md](/Users/andreagrassi/WebstormProjects/toro-libre/docs/architecture.md) for behavior details.
+
+## Data Storage
+
+App data is stored under the user Application Support directory in:
+
+- `settings.json`
+- `presets.json`
+
+The files are managed through `AppDataStore` and recreated automatically when needed.
+
+## Releases
+
+The canonical version lives in `VERSION`.
+
+Validate the version before release:
 
 ```bash
 ./scripts/ci/validate-version.sh v0.1.0
 ```
 
-## Automated Releases
+Unsigned release automation is defined in `.github/workflows/release.yml`.
 
-The GitHub Actions workflow at `.github/workflows/release.yml`:
+More detail:
 
-1. Validates the requested version against `VERSION`
-2. Builds the release SwiftPM executable
-3. Assembles the macOS `.app`
-4. Packages unsigned `.dmg` and `.zip` artifacts
-5. Publishes a GitHub release with checksums
-
-## Data Storage
-
-The Swift app uses fresh app-owned JSON files under the macOS Application Support directory:
-
-- `settings.json`
-- `presets.json`
-
-## Notes
-
-- This repo is now macOS-only.
-- The app remains unsigned and not notarized, so Gatekeeper prompts are expected for internal distribution.
-- The local validation runner is `swift run ToroLibreSelfTest`; `swift test` is not usable in the current Command Line Tools environment because the packaged test frameworks are unavailable there.
+- [Architecture](/Users/andreagrassi/WebstormProjects/toro-libre/docs/architecture.md)
+- [Development](/Users/andreagrassi/WebstormProjects/toro-libre/docs/development.md)
+- [Release](/Users/andreagrassi/WebstormProjects/toro-libre/docs/release.md)

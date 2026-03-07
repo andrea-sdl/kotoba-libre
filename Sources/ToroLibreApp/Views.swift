@@ -2,27 +2,269 @@ import AppKit
 import SwiftUI
 import ToroLibreCore
 
-struct FirstRunView: View {
-    let openSettings: () -> Void
+private enum OnboardingStep: Int, CaseIterable {
+    case instance
+    case shortcut
+
+    var title: String {
+        switch self {
+        case .instance:
+            return "LibreChat Instance"
+        case .shortcut:
+            return "Launcher Shortcut"
+        }
+    }
+}
+
+private enum OnboardingField: Hashable {
+    case instanceBaseURL
+}
+
+struct OnboardingFlowView: View {
+    @ObservedObject var appController: AppController
+    @State private var currentStep: OnboardingStep = .instance
+    @State private var instanceBaseURL = ""
+    @State private var statusMessage = ""
+    @State private var statusIsError = false
+    @FocusState private var focusedField: OnboardingField?
 
     var body: some View {
-        VStack(spacing: 20) {
-            AppLogoView()
-            Text("Set up your instance to get started.")
-                .font(.title3)
-                .foregroundStyle(.secondary)
-            Button("Open Settings", action: openSettings)
+        VStack(alignment: .leading, spacing: 28) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 12) {
+                    AppLogoView()
+                    Text("Set up Toro Libre once, then launch LibreChat from anywhere.")
+                        .font(.title3)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+
+                HStack(spacing: 10) {
+                    ForEach(OnboardingStep.allCases, id: \.rawValue) { step in
+                        let symbolName = if currentStep.rawValue > step.rawValue {
+                            "checkmark.circle.fill"
+                        } else if currentStep == step {
+                            "circle.fill"
+                        } else {
+                            "circle"
+                        }
+
+                        HStack(spacing: 8) {
+                            Image(systemName: symbolName)
+                            Text(step.title)
+                        }
+                        .font(.footnote.weight(.semibold))
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(
+                            Capsule(style: .continuous)
+                                .fill(currentStep == step ? Color.accentColor.opacity(0.16) : Color.secondary.opacity(0.10))
+                        )
+                        .foregroundStyle(currentStep.rawValue >= step.rawValue ? Color.accentColor : .secondary)
+                    }
+                }
+            }
+
+            Group {
+                switch currentStep {
+                case .instance:
+                    onboardingInstanceStep
+                case .shortcut:
+                    onboardingShortcutStep
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+
+            if !statusMessage.isEmpty {
+                Text(statusMessage)
+                    .font(.footnote)
+                    .foregroundStyle(statusIsError ? Color.red : .secondary)
+            }
+
+            HStack {
+                if currentStep == .shortcut {
+                    Button("Back") {
+                        withAnimation(.easeInOut(duration: 0.18)) {
+                            currentStep = .instance
+                        }
+                    }
+                }
+
+                Spacer()
+
+                Button(currentStep == .instance ? "Continue" : "Finish Setup") {
+                    submitCurrentStep()
+                }
                 .buttonStyle(.borderedProminent)
+                .disabled(currentStep == .instance && !instanceValidation.valid)
+            }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(40)
+        .padding(32)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(
             LinearGradient(
-                colors: [Color(nsColor: .windowBackgroundColor), Color.blue.opacity(0.12)],
+                colors: [Color(nsColor: .windowBackgroundColor), Color.accentColor.opacity(0.12)],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
             )
         )
+        .onAppear {
+            instanceBaseURL = appController.settings.instanceBaseUrl ?? ""
+            focusedField = .instanceBaseURL
+        }
+        .onChange(of: currentStep) { nextStep in
+            focusedField = nextStep == .instance ? .instanceBaseURL : nil
+        }
+    }
+
+    private var onboardingInstanceStep: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            Text("Where is your LibreChat instance running?")
+                .font(.system(size: 28, weight: .bold, design: .rounded))
+            Text("Enter the base URL for the hosted or self-hosted LibreChat instance you want Toro Libre to open.")
+                .foregroundStyle(.secondary)
+
+            VStack(alignment: .leading, spacing: 10) {
+                TextField("https://chat.example.com", text: $instanceBaseURL)
+                    .textFieldStyle(.roundedBorder)
+                    .disableAutocorrection(true)
+                    .focused($focusedField, equals: OnboardingField.instanceBaseURL)
+                    .onSubmit {
+                        if instanceValidation.valid {
+                            submitCurrentStep()
+                        }
+                    }
+
+                Text(instanceValidation.valid ? "Looks good. We’ll keep navigation pinned to this host by default." : (instanceValidation.reason ?? "Enter a valid HTTPS URL."))
+                    .font(.footnote)
+                    .foregroundStyle(instanceValidation.valid ? .secondary : Color.red)
+            }
+
+            Spacer()
+        }
+    }
+
+    private var onboardingShortcutStep: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            Text("Choose the shortcut that opens the launcher.")
+                .font(.system(size: 28, weight: .bold, design: .rounded))
+            Text("Record a new shortcut now, or keep the default if it already works for you. You can change it later from Settings.")
+                .foregroundStyle(.secondary)
+
+            VStack(alignment: .leading, spacing: 14) {
+                Text("Current Shortcut")
+                    .font(.headline)
+
+                ShortcutPreviewView(shortcut: appController.shortcutDraft)
+
+                HStack {
+                    Button(appController.isRecordingShortcut ? "Stop Recording" : "Record Shortcut") {
+                        if appController.isRecordingShortcut {
+                            appController.stopShortcutRecording()
+                            setStatus("Shortcut capture canceled.", isError: false)
+                        } else {
+                            appController.beginShortcutRecording()
+                            setStatus("Press the shortcut you want to use. Press Esc to cancel.", isError: false)
+                        }
+                    }
+
+                    Button("Use Default") {
+                        appController.resetShortcutDraft()
+                        setStatus("Shortcut reset to \(AppSettings.defaultShortcut).", isError: false)
+                    }
+                }
+
+                if appController.isRecordingShortcut {
+                    Text("Listening for a shortcut...")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                } else if let registrationIssue = appController.shortcutRegistrationIssue {
+                    Text(registrationIssue)
+                        .font(.footnote)
+                        .foregroundStyle(Color.red)
+                }
+            }
+
+            Spacer()
+        }
+    }
+
+    private var instanceValidation: ValidationResult {
+        let candidate = instanceBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !candidate.isEmpty else {
+            return ValidationResult(valid: false, reason: "Enter your LibreChat base URL to continue.")
+        }
+
+        do {
+            _ = try ToroLibreCore.parseInstanceBaseURL(AppSettings(instanceBaseUrl: candidate))
+            return ValidationResult(valid: true)
+        } catch {
+            return ValidationResult(valid: false, reason: error.localizedDescription)
+        }
+    }
+
+    private func submitCurrentStep() {
+        switch currentStep {
+        case .instance:
+            guard instanceValidation.valid else {
+                setStatus(instanceValidation.reason ?? "Enter a valid LibreChat URL.", isError: true)
+                return
+            }
+
+            withAnimation(.easeInOut(duration: 0.18)) {
+                currentStep = .shortcut
+            }
+            setStatus("", isError: false)
+        case .shortcut:
+            do {
+                try appController.completeOnboarding(
+                    instanceBaseURL: instanceBaseURL,
+                    shortcut: appController.shortcutDraft
+                )
+                setStatus("", isError: false)
+            } catch {
+                setStatus(error.localizedDescription, isError: true)
+            }
+        }
+    }
+
+    private func setStatus(_ message: String, isError: Bool) {
+        statusMessage = message
+        statusIsError = isError
+    }
+}
+
+private struct ShortcutPreviewView: View {
+    let shortcut: String
+
+    var body: some View {
+        HStack(spacing: 8) {
+            ForEach(shortcutDisplayParts(shortcut), id: \.self) { part in
+                Text(part)
+                    .font(.system(.body, design: .rounded).weight(.semibold))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(Capsule().fill(Color.secondary.opacity(0.14)))
+            }
+        }
+    }
+}
+
+private func shortcutDisplayParts(_ shortcut: String) -> [String] {
+    shortcut.split(separator: "+").map { token in
+        switch token {
+        case "CmdOrCtrl":
+            return "⌘"
+        case "Ctrl":
+            return "⌃"
+        case "Alt":
+            return "⌥"
+        case "Shift":
+            return "⇧"
+        default:
+            return token.replacingOccurrences(of: "Key", with: "").replacingOccurrences(of: "Digit", with: "")
+        }
     }
 }
 
@@ -119,7 +361,7 @@ struct AgentManagerView: View {
                     let validation = ToroLibreCore.validateURLTemplate(draft.urlTemplate)
                     Text(validation.valid ? "Template looks valid." : (validation.reason ?? "Invalid URL template."))
                         .font(.footnote)
-                        .foregroundColor(validation.valid ? .secondary : .red)
+                        .foregroundStyle(validation.valid ? .secondary : Color.red)
 
                     HStack {
                         Button("Save Agent") { savePreset() }
@@ -137,7 +379,7 @@ struct AgentManagerView: View {
 
             if !statusMessage.isEmpty {
                 Text(statusMessage)
-                    .foregroundColor(statusIsError ? .red : .secondary)
+                    .foregroundStyle(statusIsError ? Color.red : .secondary)
             }
         }
         .onAppear { resetDraft() }
@@ -236,16 +478,17 @@ struct SettingsPanelView: View {
     @State private var launcherOpacity = 95.0
     @State private var statusMessage = ""
     @State private var statusIsError = false
+    @State private var isShowingResetConfirmation = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Instance Settings")
                 .font(.largeTitle.bold())
-            Text("Choose the Toro Libre instance this app should target.")
+            Text("Choose the LibreChat instance this app should target.")
                 .foregroundStyle(.secondary)
 
             Form {
-                TextField("Toro Libre Instance URL", text: $instanceBaseURL)
+                TextField("LibreChat Instance URL", text: $instanceBaseURL)
                 Toggle("Restrict URLs to the configured instance host", isOn: $restrictHost)
                 Toggle("Open presets in a new window", isOn: $openInNewWindow)
                 Toggle("Launch Toro Libre at login", isOn: $autostartEnabled)
@@ -263,15 +506,30 @@ struct SettingsPanelView: View {
             }
             .formStyle(.grouped)
 
-            Button("Save Settings") { saveSettings() }
-                .buttonStyle(.borderedProminent)
+            HStack {
+                Button("Save Settings") { saveSettings() }
+                    .buttonStyle(.borderedProminent)
+
+                Button("Reset Config", role: .destructive) {
+                    isShowingResetConfirmation = true
+                }
+            }
 
             if !statusMessage.isEmpty {
                 Text(statusMessage)
-                    .foregroundColor(statusIsError ? .red : .secondary)
+                    .foregroundStyle(statusIsError ? Color.red : .secondary)
             }
         }
         .onAppear(perform: reload)
+        .confirmationDialog("Reset configuration?", isPresented: $isShowingResetConfirmation, titleVisibility: .visible) {
+            Button("Reset Configuration", role: .destructive) {
+                resetConfiguration()
+            }
+            Button("Cancel", role: .cancel) {
+            }
+        } message: {
+            Text("This removes the saved LibreChat instance, agents, and shortcut so onboarding appears again.")
+        }
     }
 
     private func reload() {
@@ -311,6 +569,14 @@ struct SettingsPanelView: View {
         statusMessage = message
         statusIsError = isError
     }
+
+    private func resetConfiguration() {
+        do {
+            try appController.resetConfiguration()
+        } catch {
+            setStatus(error.localizedDescription, isError: true)
+        }
+    }
 }
 
 struct ShortcutPanelView: View {
@@ -328,15 +594,7 @@ struct ShortcutPanelView: View {
             VStack(alignment: .leading, spacing: 12) {
                 Text("Global Shortcut")
                     .font(.headline)
-                HStack(spacing: 8) {
-                    ForEach(displayParts(for: appController.shortcutDraft), id: \.self) { part in
-                        Text(part)
-                            .font(.system(.body, design: .rounded).weight(.semibold))
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 6)
-                            .background(Capsule().fill(Color.secondary.opacity(0.14)))
-                    }
-                }
+                ShortcutPreviewView(shortcut: appController.shortcutDraft)
 
                 HStack {
                     Button(appController.isRecordingShortcut ? "Stop" : "Record Shortcut") {
@@ -385,30 +643,13 @@ struct ShortcutPanelView: View {
 
             if !statusMessage.isEmpty {
                 Text(statusMessage)
-                    .foregroundColor(statusIsError ? .red : .secondary)
+                    .foregroundStyle(statusIsError ? Color.red : .secondary)
             } else if let registrationIssue = appController.shortcutRegistrationIssue {
                 Text(registrationIssue)
-                    .foregroundColor(.red)
+                    .foregroundStyle(Color.red)
             }
 
             Spacer()
-        }
-    }
-
-    private func displayParts(for shortcut: String) -> [String] {
-        shortcut.split(separator: "+").map { token in
-            switch token {
-            case "CmdOrCtrl":
-                return "⌘"
-            case "Ctrl":
-                return "⌃"
-            case "Alt":
-                return "⌥"
-            case "Shift":
-                return "⇧"
-            default:
-                return token.replacingOccurrences(of: "Key", with: "").replacingOccurrences(of: "Digit", with: "")
-            }
         }
     }
 

@@ -133,9 +133,13 @@ struct ToroLibreSelfTest {
         expect(FileManager.default.fileExists(atPath: store.presetsURL.path), "storeWritesPresets")
         expect(try store.loadSettings().instanceBaseUrl == "https://chat.example.com", "storeLoadsSettings")
         expect(try store.loadPresets().count == 1, "storeLoadsPresets")
+        try store.resetConfiguration()
+        expect(!FileManager.default.fileExists(atPath: store.settingsURL.path), "storeResetRemovesSettings")
+        expect(try store.loadSettings() == AppSettings(), "storeResetLoadsDefaultSettings")
+        expect(try store.loadPresets().isEmpty, "storeResetLoadsEmptyPresets")
 
         if failures.isEmpty {
-            print("ToroLibreSelfTest: all checks passed (\(27) assertions)")
+            print("ToroLibreSelfTest: all checks passed (\(30) assertions)")
             return
         }
 

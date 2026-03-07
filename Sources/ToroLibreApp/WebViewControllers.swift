@@ -3,28 +3,30 @@ import SwiftUI
 import ToroLibreCore
 import WebKit
 
-private let defaultChatWindowSize = NSSize(width: 1600, height: 1040)
-private let minimumChatWindowSize = NSSize(width: 1280, height: 860)
+private let defaultMainWindowSize = NSSize(width: 800, height: 600)
+private let minimumMainWindowSize = NSSize(width: 800, height: 600)
 
 @MainActor
 final class MainWindowController: NSWindowController, NSWindowDelegate {
     private weak var appController: AppController?
     private var webController: WebContentViewController?
+    private var eventMonitor: Any?
 
     init(appController: AppController) {
         let window = NSWindow(
-            contentRect: NSRect(origin: .zero, size: defaultChatWindowSize),
+            contentRect: NSRect(origin: .zero, size: defaultMainWindowSize),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
         window.title = appDisplayName
         window.center()
-        window.minSize = minimumChatWindowSize
+        window.minSize = minimumMainWindowSize
         window.setFrameAutosaveName("ToroLibreMainWindow")
         super.init(window: window)
         self.appController = appController
         self.window?.delegate = self
+        installShortcutMonitor()
     }
 
     @available(*, unavailable)
@@ -32,17 +34,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         fatalError("init(coder:) has not been implemented")
     }
 
-    func showFirstRun() {
+    func showOnboarding() {
         guard let appController else {
             return
         }
 
         let hostingController = NSHostingController(
-            rootView: FirstRunView {
-                appController.showSettingsWindow()
-            }
+            rootView: OnboardingFlowView(appController: appController)
         )
         window?.contentViewController = hostingController
+        resetToDefaultSize()
     }
 
     func showWebView(settings: AppSettings) {
@@ -52,7 +53,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
     func navigateToHome(settings: AppSettings) {
         guard let homeURL = try? ToroLibreCore.parseInstanceBaseURL(settings) else {
-            showFirstRun()
+            showOnboarding()
             return
         }
 
@@ -77,6 +78,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         NSApp.activate(ignoringOtherApps: true)
     }
 
+    func resetToDefaultSize() {
+        window?.setContentSize(defaultMainWindowSize)
+        window?.center()
+    }
+
     func windowShouldClose(_ sender: NSWindow) -> Bool {
         sender.orderOut(nil)
         return false
@@ -95,6 +101,21 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         webController = created
         return created
     }
+
+    private func installShortcutMonitor() {
+        eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard
+                let self,
+                let window = self.window,
+                event.window == window,
+                self.appController?.handleShortcutKeyEvent(event) == true
+            else {
+                return event
+            }
+
+            return nil
+        }
+    }
 }
 
 @MainActor
@@ -103,14 +124,14 @@ final class SecondaryWebWindowController: NSWindowController {
 
     init(url: URL, settings: AppSettings, instanceHost: String?, onExternalOpen: @escaping (URL) -> Void) {
         let window = NSWindow(
-            contentRect: NSRect(origin: .zero, size: defaultChatWindowSize),
+            contentRect: NSRect(origin: .zero, size: defaultMainWindowSize),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
         window.title = appDisplayName
         window.center()
-        window.minSize = minimumChatWindowSize
+        window.minSize = minimumMainWindowSize
 
         self.webController = WebContentViewController(debugEnabled: settings.debugInWebview)
         super.init(window: window)
