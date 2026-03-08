@@ -243,7 +243,11 @@ final class LauncherViewModel: ObservableObject {
         }
 
         do {
-            try appController.openPreset(id: targetID, query: query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : query)
+            try appController.openPreset(
+                id: targetID,
+                query: query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : query,
+                preferMainWindow: true
+            )
             reset()
         } catch {
             setStatus(error.localizedDescription, isError: true)
