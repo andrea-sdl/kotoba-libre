@@ -291,7 +291,7 @@ struct SettingsRootView: View {
                 .tag(3)
         }
         .padding(20)
-        .frame(minWidth: 980, minHeight: 720)
+        .frame(minWidth: 980, minHeight: 500)
     }
 }
 
