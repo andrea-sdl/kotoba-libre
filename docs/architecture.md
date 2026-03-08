@@ -1,12 +1,12 @@
 # Architecture
 
-Toro Libre is a native macOS desktop wrapper for LibreChat. The project is organized as a Swift Package Manager workspace with clear separation between shared logic and the AppKit host.
+Kotoba Libre is a native macOS desktop wrapper for LibreChat. The project is organized as a Swift Package Manager workspace with clear separation between shared logic and the AppKit host.
 
 ## Targets
 
-### `ToroLibreCore`
+### `KotobaLibreCore`
 
-`ToroLibreCore` contains the shared domain and infrastructure logic:
+`KotobaLibreCore` contains the shared domain and infrastructure logic:
 
 - `AppSettings`, `Preset`, and related models
 - URL normalization and validation
@@ -18,9 +18,9 @@ Toro Libre is a native macOS desktop wrapper for LibreChat. The project is organ
 
 This target is intentionally UI-free so behavior can be validated in the self-test executable.
 
-### `ToroLibreApp`
+### `KotobaLibreApp`
 
-`ToroLibreApp` is the native executable and owns:
+`KotobaLibreApp` is the native executable and owns:
 
 - `NSApplication` bootstrap
 - App menu and lifecycle
@@ -37,9 +37,9 @@ The UI stack is mixed by design:
 - SwiftUI renders onboarding, settings, and launcher content
 - WebKit renders LibreChat content inside `WKWebView`
 
-### `ToroLibreSelfTest`
+### `KotobaLibreSelfTest`
 
-`ToroLibreSelfTest` is a standalone executable used to validate core behavior without relying on `swift test`.
+`KotobaLibreSelfTest` is a standalone executable used to validate core behavior without relying on `swift test`.
 
 It focuses on:
 
@@ -52,7 +52,7 @@ It focuses on:
 
 ## Window Model
 
-Toro Libre uses three main native window types:
+Kotoba Libre uses three main native window types:
 
 ### Main window
 
@@ -66,6 +66,7 @@ Toro Libre uses three main native window types:
 - Separate management surface for agents, settings, shortcuts, and about information
 - Hidden instead of destroyed when closed
 - Used after onboarding for ongoing configuration
+- Warns before switching tabs when the current page has unsaved changes
 
 ### Launcher panel
 
@@ -90,6 +91,8 @@ If `settings.json` does not exist or does not contain an instance URL:
 
 The Settings tab exposes a reset action with confirmation.
 
+When the configured LibreChat host changes while host restriction is enabled, the app re-validates saved agents against the new host, offers export before save, and removes incompatible agents once the user confirms the change.
+
 Reset clears:
 
 - `settings.json`
@@ -113,7 +116,7 @@ This design keeps common shortcuts working while still supporting cases that nee
 
 ## Navigation Model
 
-Toro Libre opens URLs in one of two ways:
+Kotoba Libre opens URLs in one of two ways:
 
 - Same-host LibreChat URLs go into the embedded web view
 - Other hosts open externally in the default browser
@@ -135,11 +138,11 @@ Files:
 
 Supported custom-scheme and HTTPS-mapped routes include:
 
-- `torolibre://open?url=...`
-- `torolibre://preset/<presetId>?query=...`
-- `torolibre://settings`
+- `kotobalibre://open?url=...`
+- `kotobalibre://preset/<presetId>?query=...`
+- `kotobalibre://settings`
 - `/app/open?url=...`
 - `/app/preset/<presetId>?query=...`
 - `/app/settings`
 
-The shared parsing logic lives in `ToroLibreCore`.
+The shared parsing logic lives in `KotobaLibreCore`.

@@ -5,7 +5,7 @@ import Carbon
 import Foundation
 import IOKit
 import IOKit.hidsystem
-import ToroLibreCore
+import KotobaLibreCore
 
 final class GlobalShortcutRegistrar {
     private enum RegistrationBackend {
@@ -46,7 +46,7 @@ final class GlobalShortcutRegistrar {
     }
 
     static func isShortcutSupportedBySystemPolicy(_ shortcut: String) -> Bool {
-        let modifierTokens = ToroLibreCore.normalizeShortcutValue(shortcut)
+        let modifierTokens = KotobaLibreCore.normalizeShortcutValue(shortcut)
             .split(separator: "+")
             .map(String.init)
             .filter { ["CmdOrCtrl", "Ctrl", "Alt", "Shift"].contains($0) }
@@ -145,7 +145,7 @@ final class GlobalShortcutRegistrar {
             parts.append("Shift")
         }
         parts.append(key)
-        return ToroLibreCore.normalizeShortcutValue(parts.joined(separator: "+"))
+        return KotobaLibreCore.normalizeShortcutValue(parts.joined(separator: "+"))
     }
 
     private func installCarbonHotKey(descriptor: ShortcutDescriptor) throws {
@@ -416,7 +416,7 @@ private struct ShortcutDescriptor {
     let requiredEventFlags: CGEventFlags
 
     init(shortcut: String) throws {
-        let normalized = ToroLibreCore.normalizeShortcutValue(shortcut)
+        let normalized = KotobaLibreCore.normalizeShortcutValue(shortcut)
         let tokens = normalized.split(separator: "+").map(String.init)
         guard !tokens.isEmpty else {
             throw ShortcutRegistrationError.invalidShortcut(shortcut)
@@ -532,9 +532,9 @@ enum ShortcutRegistrationError: LocalizedError {
         case let .unsupportedBySystemPolicy(value):
             return "macOS does not allow '\(value)' as a global shortcut. Use a shortcut that includes Control or Command."
         case let .accessibilityPermissionRequired(value):
-            return "Toro Libre needs Accessibility permission to use '\(value)' when Carbon registration is unavailable. Allow Toro Libre in System Settings > Privacy & Security > Accessibility, then relaunch the app if macOS asks for it."
+            return "Kotoba Libre needs Accessibility permission to use '\(value)' when Carbon registration is unavailable. Allow Kotoba Libre in System Settings > Privacy & Security > Accessibility, then relaunch the app if macOS asks for it."
         case let .inputMonitoringPermissionRequired(value):
-            return "Toro Libre needs Input Monitoring permission to use '\(value)' while the app is in the background. Allow Toro Libre in System Settings > Privacy & Security > Input Monitoring, then relaunch the app if macOS asks for it."
+            return "Kotoba Libre needs Input Monitoring permission to use '\(value)' while the app is in the background. Allow Kotoba Libre in System Settings > Privacy & Security > Input Monitoring, then relaunch the app if macOS asks for it."
         }
     }
 }

@@ -1,6 +1,6 @@
 import AppKit
 import SwiftUI
-import ToroLibreCore
+import KotobaLibreCore
 import WebKit
 
 private let defaultMainWindowSize = NSSize(width: 800, height: 600)
@@ -22,7 +22,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         window.title = appDisplayName
         window.center()
         window.minSize = minimumMainWindowSize
-        window.setFrameAutosaveName("ToroLibreMainWindow")
+        window.setFrameAutosaveName("KotobaLibreMainWindow")
         super.init(window: window)
         self.appController = appController
         self.window?.delegate = self
@@ -47,23 +47,23 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     }
 
     func showWebView(settings: AppSettings) {
-        let controller = ensureWebController(debugEnabled: settings.debugInWebview)
+        let controller = ensureWebController()
         window?.contentViewController = controller
     }
 
     func navigateToHome(settings: AppSettings) {
-        guard let homeURL = try? ToroLibreCore.parseInstanceBaseURL(settings) else {
+        guard let homeURL = try? KotobaLibreCore.parseInstanceBaseURL(settings) else {
             showOnboarding()
             return
         }
 
-        let controller = ensureWebController(debugEnabled: settings.debugInWebview)
+        let controller = ensureWebController()
         window?.contentViewController = controller
         controller.load(url: homeURL)
     }
 
     func open(url: URL, settings: AppSettings, instanceHost: String?, forceEmbedAllHosts: Bool = false) {
-        let controller = ensureWebController(debugEnabled: settings.debugInWebview)
+        let controller = ensureWebController()
         window?.contentViewController = controller
         controller.open(
             url: url,
@@ -89,13 +89,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         return false
     }
 
-    private func ensureWebController(debugEnabled: Bool) -> WebContentViewController {
+    private func ensureWebController() -> WebContentViewController {
         if let webController {
-            webController.updateDebug(enabled: debugEnabled)
             return webController
         }
 
-        let created = WebContentViewController(debugEnabled: debugEnabled)
+        let created = WebContentViewController()
         created.externalNavigationHandler = { [weak appController] url in
             appController?.openExternally(url)
         }
@@ -120,34 +119,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 }
 
 @MainActor
-final class SecondaryWebWindowController: NSWindowController {
-    private let webController: WebContentViewController
-
-    init(url: URL, settings: AppSettings, instanceHost: String?, onExternalOpen: @escaping (URL) -> Void) {
-        let window = NSWindow(
-            contentRect: NSRect(origin: .zero, size: defaultMainWindowSize),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable],
-            backing: .buffered,
-            defer: false
-        )
-        window.title = appDisplayName
-        window.center()
-        window.minSize = minimumMainWindowSize
-
-        self.webController = WebContentViewController(debugEnabled: settings.debugInWebview)
-        super.init(window: window)
-        self.window?.contentViewController = webController
-        self.webController.externalNavigationHandler = onExternalOpen
-        self.webController.open(url: url, settings: settings, instanceHost: instanceHost)
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-}
-
-@MainActor
 final class WebContentViewController: NSViewController, WKNavigationDelegate {
     private enum ExternalNavigationPolicy {
         case singleHost(String?)
@@ -159,14 +130,13 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate {
     private var hasLoadedRemoteContent = false
     private var externalNavigationPolicy: ExternalNavigationPolicy = .singleHost(nil)
 
-    init(debugEnabled: Bool) {
+    init() {
         let configuration = WKWebViewConfiguration()
         configuration.allowsAirPlayForMediaPlayback = false
         self.webView = WKWebView(frame: .zero, configuration: configuration)
         super.init(nibName: nil, bundle: nil)
         self.webView.navigationDelegate = self
         self.webView.allowsBackForwardNavigationGestures = true
-        updateDebug(enabled: debugEnabled)
     }
 
     @available(*, unavailable)
@@ -176,13 +146,6 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate {
 
     override func loadView() {
         view = webView
-    }
-
-    func updateDebug(enabled: Bool) {
-        webView.configuration.preferences.setValue(enabled, forKey: "developerExtrasEnabled")
-        if #available(macOS 13.3, *) {
-            webView.isInspectable = enabled
-        }
     }
 
     func load(url: URL) {
@@ -197,10 +160,9 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate {
             externalNavigationPolicy = .singleHost(embeddedHost(for: url, instanceHost: instanceHost, settings: settings))
         }
 
-        if ToroLibreCore.canUseSPANavigation(instanceHost: instanceHost, url: url), hasLoadedRemoteContent {
+        if KotobaLibreCore.canUseSPANavigation(instanceHost: instanceHost, url: url), hasLoadedRemoteContent {
             let script = spaNavigationScript(
                 destination: url.absoluteString,
-                debugEnabled: settings.debugInWebview,
                 useRouteReload: settings.useRouteReloadForLauncherChats
             )
             webView.evaluateJavaScript(script) { [weak self] _, error in
@@ -259,10 +221,9 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate {
         return host
     }
 
-    private func spaNavigationScript(destination: String, debugEnabled: Bool, useRouteReload: Bool) -> String {
+    private func spaNavigationScript(destination: String, useRouteReload: Bool) -> String {
         let payloadData = try? JSONEncoder().encode(destination)
         let payload = payloadData.flatMap { String(data: $0, encoding: .utf8) } ?? "\"\(destination)\""
-        let debugValue = debugEnabled ? "true" : "false"
         let routeReloadValue = useRouteReload ? "true" : "false"
 
         return """
@@ -270,12 +231,7 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate {
           try {
             const next = new URL(\(payload));
             const target = `${next.pathname}${next.search}${next.hash}`;
-            const debug = \(debugValue);
             const useRouteReloadForLauncherChats = \(routeReloadValue);
-            const debugLog = (...args) => {
-              if (!debug) return;
-              try { console.log("[Toro Libre Debug]", ...args); } catch (_) {}
-            };
             const shouldAutoSubmitFromQuery =
               (next.searchParams.get("submit") ?? "").toLowerCase() === "true" &&
               (next.searchParams.has("prompt") || next.searchParams.has("q"));
@@ -355,8 +311,7 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate {
                 current.search = next.search;
                 window.history.replaceState(window.history.state, "", `${current.pathname}${current.search}${current.hash}`);
                 window.dispatchEvent(new PopStateEvent("popstate", { state: window.history.state }));
-              } catch (error) {
-                debugLog("replaceState failed", error);
+              } catch (_) {
               }
               await delay(80);
               clickFirstMatching([
@@ -391,8 +346,7 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate {
             }
             if (shouldAutoSubmitFromQuery) return;
             window.location.assign(next.href);
-          } catch (error) {
-            try { console.log("[Toro Libre Debug] navigation exception", error); } catch (_) {}
+          } catch (_) {
           }
         })();
         """

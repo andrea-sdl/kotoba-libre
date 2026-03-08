@@ -3,7 +3,7 @@ import Combine
 import Foundation
 import ServiceManagement
 import SwiftUI
-import ToroLibreCore
+import KotobaLibreCore
 
 @MainActor
 final class AppController: NSObject, ObservableObject {
@@ -15,6 +15,15 @@ final class AppController: NSObject, ObservableObject {
         let accessibilityGranted: Bool
         let inputMonitoringGranted: Bool
         let lastCarbonStatusDescription: String
+    }
+
+    struct SettingsChangePreview {
+        let normalizedSettings: AppSettings
+        let incompatiblePresets: [Preset]
+    }
+
+    struct SettingsSaveResult {
+        let removedPresets: [Preset]
     }
 
     @Published private(set) var settings: AppSettings = AppSettings()
@@ -32,15 +41,11 @@ final class AppController: NSObject, ObservableObject {
     @Published var shortcutDraft: String = AppSettings.defaultShortcut
     @Published var isRecordingShortcut = false
 
-    let accentColorNames = ["blue", "purple", "pink", "red", "orange", "green", "teal", "graphite"]
-
     private let store: AppDataStore
     private let shortcutRegistrar = GlobalShortcutRegistrar()
     private lazy var mainWindowController = MainWindowController(appController: self)
     private lazy var settingsWindowController = SettingsWindowController(appController: self)
     private lazy var launcherWindowController = LauncherWindowController(appController: self)
-    private var secondaryWindows: [UUID: SecondaryWebWindowController] = [:]
-    private var windowCleanupDelegates: [UUID: WindowCleanupDelegate] = [:]
 
     override init() {
         self.store = try! AppDataStore()
@@ -126,7 +131,7 @@ final class AppController: NSObject, ObservableObject {
     }
 
     func makeEmptyPreset(kind: PresetKind = .agent) -> Preset {
-        let marker = ToroLibreCore.nowMarker()
+        let marker = KotobaLibreCore.nowMarker()
         return Preset(
             id: "",
             name: "",
@@ -144,27 +149,59 @@ final class AppController: NSObject, ObservableObject {
         }
     }
 
-    func saveSettings(_ nextSettings: AppSettings) throws {
-        let previous = settings
-        var normalized = ToroLibreCore.normalizeSettings(nextSettings)
-        normalized = try ToroLibreCore.normalizeInstanceBaseURL(normalized)
+    func previewSettingsChange(_ nextSettings: AppSettings) throws -> SettingsChangePreview {
+        let previousHost = try KotobaLibreCore.settingsInstanceHost(settings)
+        var normalized = KotobaLibreCore.normalizeSettings(nextSettings)
+        normalized = try KotobaLibreCore.normalizeInstanceBaseURL(normalized)
+        let nextHost = try KotobaLibreCore.settingsInstanceHost(normalized)
+        let shouldRevalidatePresets =
+            normalized.restrictHostToInstanceHost &&
+            (
+                settings.restrictHostToInstanceHost != normalized.restrictHostToInstanceHost ||
+                !hostsMatch(previousHost, nextHost)
+            )
+        let incompatiblePresets = shouldRevalidatePresets
+            ? try KotobaLibreCore.incompatiblePresets(presets, settings: normalized)
+            : []
+        return SettingsChangePreview(
+            normalizedSettings: normalized,
+            incompatiblePresets: incompatiblePresets
+        )
+    }
 
+    func saveSettings(_ nextSettings: AppSettings) throws -> SettingsSaveResult {
+        let previousSettings = settings
+        let previousPresets = presets
+        let preview = try previewSettingsChange(nextSettings)
+        var normalized = preview.normalizedSettings
+        let removedPresetIDs = Set(preview.incompatiblePresets.map(\.id))
+        if !removedPresetIDs.isEmpty {
+            presets.removeAll { removedPresetIDs.contains($0.id) }
+            if let defaultPresetID = normalized.defaultPresetId, removedPresetIDs.contains(defaultPresetID) {
+                normalized.defaultPresetId = nil
+            }
+        }
         settings = normalized
         shortcutDraft = normalized.globalShortcut
         do {
             try persistSettings()
+            if !removedPresetIDs.isEmpty {
+                try persistPresets()
+            }
             try syncAutostart(enabled: normalized.autostartEnabled)
         } catch {
-            restoreTransientSettingsState(previous)
+            restoreTransientState(settings: previousSettings, presets: previousPresets)
             registerGlobalShortcutIfPossible(promptForPermission: false)
             throw error
         }
 
         registerGlobalShortcutIfPossible(promptForPermission: true)
-        refreshMainWindowContent(openHomeIfNeeded: previous.instanceBaseUrl != normalized.instanceBaseUrl)
+        refreshMainWindowContent(openHomeIfNeeded: previousSettings.instanceBaseUrl != normalized.instanceBaseUrl)
         if normalized.instanceBaseUrl != nil {
             mainWindowController.showAndFocus()
         }
+
+        return SettingsSaveResult(removedPresets: preview.incompatiblePresets)
     }
 
     func completeOnboarding(instanceBaseURL: String, shortcut: String) throws {
@@ -172,7 +209,7 @@ final class AppController: NSObject, ObservableObject {
         updated.instanceBaseUrl = instanceBaseURL
         updated.globalShortcut = shortcut
 
-        try saveSettings(updated)
+        _ = try saveSettings(updated)
         settingsWindowController.hide()
         mainWindowController.resetToDefaultSize()
         mainWindowController.showAndFocus()
@@ -180,7 +217,6 @@ final class AppController: NSObject, ObservableObject {
 
     func resetConfiguration() throws {
         hideLauncherWindow()
-        closeAllSecondaryWindows()
         try store.resetConfiguration()
 
         settings = AppSettings()
@@ -208,18 +244,25 @@ final class AppController: NSObject, ObservableObject {
     func setDefaultPreset(id: String?) throws {
         var updated = settings
         updated.defaultPresetId = id
-        try saveSettings(updated)
+        _ = try saveSettings(updated)
     }
 
     func saveShortcutDraft() throws {
         var updated = settings
         updated.globalShortcut = shortcutDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-        try saveSettings(updated)
+        _ = try saveSettings(updated)
     }
 
     func resetShortcutDraft() {
         shortcutDraft = AppSettings.defaultShortcut
         isRecordingShortcut = false
+    }
+
+    func discardShortcutDraftChanges() {
+        shortcutDraft = settings.globalShortcut
+        if isRecordingShortcut {
+            stopShortcutRecording()
+        }
     }
 
     func beginShortcutRecording() {
@@ -240,15 +283,23 @@ final class AppController: NSObject, ObservableObject {
 
     func upsertPreset(_ preset: Preset) throws -> Preset {
         let existing = presets.first(where: { $0.id == preset.id })
-        let normalized = ToroLibreCore.normalizePreset(preset, existing: existing)
+        let normalized = KotobaLibreCore.normalizePreset(preset, existing: existing)
 
         guard !normalized.name.isEmpty else {
-            throw ToroLibreError.invalidDestination("Preset name cannot be empty")
+            throw KotobaLibreError.invalidDestination("Preset name cannot be empty")
         }
 
-        let validation = ToroLibreCore.validateURLTemplate(normalized.urlTemplate)
+        let validation = KotobaLibreCore.validateURLTemplate(normalized.urlTemplate)
         guard validation.valid else {
-            throw ToroLibreError.invalidDestination(validation.reason ?? "Invalid URL template")
+            throw KotobaLibreError.invalidDestination(validation.reason ?? "Invalid URL template")
+        }
+
+        if
+            settings.restrictHostToInstanceHost,
+            let allowedHost = try KotobaLibreCore.settingsInstanceHost(settings),
+            let issue = KotobaLibreCore.validatePresetCompatibility(normalized, allowedHost: allowedHost)
+        {
+            throw KotobaLibreError.invalidDestination("Agent '\(normalized.name)' \(issue)")
         }
 
         if let index = presets.firstIndex(where: { $0.id == normalized.id }) {
@@ -265,21 +316,21 @@ final class AppController: NSObject, ObservableObject {
         let originalCount = presets.count
         presets.removeAll { $0.id == id }
         guard presets.count != originalCount else {
-            throw ToroLibreError.invalidDestination("Preset not found")
+            throw KotobaLibreError.invalidDestination("Preset not found")
         }
 
         if settings.defaultPresetId == id {
             var updated = settings
             updated.defaultPresetId = nil
-            try saveSettings(updated)
+            _ = try saveSettings(updated)
         } else {
             try persistPresets()
         }
     }
 
     func importPresetsFromPanel() throws -> ImportPresetsResult {
-        guard let allowedHost = try ToroLibreCore.settingsInstanceHost(settings) else {
-            throw ToroLibreError.invalidDestination("Set your Toro Libre instance URL in Settings before importing agents")
+        guard let allowedHost = try KotobaLibreCore.settingsInstanceHost(settings) else {
+            throw KotobaLibreError.invalidDestination("Set your Kotoba Libre instance URL in Settings before importing agents")
         }
 
         let panel = NSOpenPanel()
@@ -292,15 +343,15 @@ final class AppController: NSObject, ObservableObject {
         }
 
         let data = try Data(contentsOf: url)
-        let candidates = try ToroLibreCore.importCandidates(from: data)
+        let candidates = try KotobaLibreCore.importCandidates(from: data)
         var existingIDs = Set(presets.map(\.id))
         var imported = 0
         var errors: [String] = []
 
         for (index, preset) in candidates.enumerated() {
-            var normalized = ToroLibreCore.normalizePreset(preset)
+            var normalized = KotobaLibreCore.normalizePreset(preset)
             let row = index + 1
-            if let error = ToroLibreCore.validateImportCompatibility(normalized, allowedHost: allowedHost, row: row) {
+            if let error = KotobaLibreCore.validateImportCompatibility(normalized, allowedHost: allowedHost, row: row) {
                 errors.append(error)
                 continue
             }
@@ -328,7 +379,7 @@ final class AppController: NSObject, ObservableObject {
 
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.json]
-        panel.nameFieldStringValue = "torolibre-agents-\(Self.exportStamp()).json"
+        panel.nameFieldStringValue = "kotobalibre-agents-\(Self.exportStamp()).json"
 
         guard panel.runModal() == .OK, let url = panel.url else {
             return 0
@@ -345,15 +396,15 @@ final class AppController: NSObject, ObservableObject {
 
     func openPreset(id: String, query: String?, preferMainWindow: Bool = false) throws {
         guard let preset = presets.first(where: { $0.id == id }) else {
-            throw ToroLibreError.invalidDestination("Preset '\(id)' not found")
+            throw KotobaLibreError.invalidDestination("Preset '\(id)' not found")
         }
 
-        let destination = ToroLibreCore.expandTemplate(preset.urlTemplate, query: query)
+        let destination = KotobaLibreCore.expandTemplate(preset.urlTemplate, query: query)
         try openURLString(destination, preferMainWindow: preferMainWindow)
     }
 
     func openURLString(_ destination: String, preferMainWindow: Bool = false) throws {
-        let target = try ToroLibreCore.enforceDestination(destination, settings: settings)
+        let target = try KotobaLibreCore.enforceDestination(destination, settings: settings)
         try openResolvedURL(target, preferMainWindow: preferMainWindow)
     }
 
@@ -376,7 +427,7 @@ final class AppController: NSObject, ObservableObject {
     }
 
     private func handleDeepLink(_ rawURL: String) throws {
-        switch try ToroLibreCore.parseDeepLink(rawURL) {
+        switch try KotobaLibreCore.parseDeepLink(rawURL) {
         case let .openURL(destination):
             try openURLString(destination)
         case let .openPreset(presetID, query):
@@ -387,35 +438,13 @@ final class AppController: NSObject, ObservableObject {
     }
 
     private func openResolvedURL(_ url: URL, preferMainWindow: Bool = false) throws {
-        let instanceHost = try ToroLibreCore.settingsInstanceHost(settings)
-
-        if settings.openInNewWindow && !preferMainWindow {
-            let identifier = UUID()
-            let controller = SecondaryWebWindowController(
-                url: url,
-                settings: settings,
-                instanceHost: instanceHost,
-                onExternalOpen: { [weak self] target in
-                    self?.openExternally(target)
-                }
-            )
-            secondaryWindows[identifier] = controller
-            controller.showWindow(nil)
-            controller.window?.isReleasedWhenClosed = false
-            let cleanupDelegate = WindowCleanupDelegate { [weak self] in
-                self?.secondaryWindows.removeValue(forKey: identifier)
-                self?.windowCleanupDelegates.removeValue(forKey: identifier)
-            }
-            windowCleanupDelegates[identifier] = cleanupDelegate
-            controller.window?.delegate = cleanupDelegate
-        } else {
-            mainWindowController.open(
-                url: url,
-                settings: settings,
-                instanceHost: instanceHost,
-                forceEmbedAllHosts: preferMainWindow
-            )
-        }
+        let instanceHost = try KotobaLibreCore.settingsInstanceHost(settings)
+        mainWindowController.open(
+            url: url,
+            settings: settings,
+            instanceHost: instanceHost,
+            forceEmbedAllHosts: preferMainWindow
+        )
 
         hideLauncherWindow()
     }
@@ -428,17 +457,10 @@ final class AppController: NSObject, ObservableObject {
         try store.savePresets(presets)
     }
 
-    private func restoreTransientSettingsState(_ previous: AppSettings) {
-        settings = previous
-        shortcutDraft = previous.globalShortcut
-    }
-
-    private func closeAllSecondaryWindows() {
-        for controller in Array(secondaryWindows.values) {
-            controller.close()
-        }
-        secondaryWindows.removeAll()
-        windowCleanupDelegates.removeAll()
+    private func restoreTransientState(settings previousSettings: AppSettings, presets previousPresets: [Preset]) {
+        settings = previousSettings
+        presets = previousPresets
+        shortcutDraft = previousSettings.globalShortcut
     }
 
     private func suspendGlobalShortcut() {
@@ -569,16 +591,15 @@ final class AppController: NSObject, ObservableObject {
         formatter.dateFormat = "yyyy-MM-dd"
         return formatter.string(from: Date())
     }
-}
 
-final class WindowCleanupDelegate: NSObject, NSWindowDelegate {
-    private let onClose: () -> Void
-
-    init(onClose: @escaping () -> Void) {
-        self.onClose = onClose
-    }
-
-    func windowWillClose(_ notification: Notification) {
-        onClose()
+    private func hostsMatch(_ lhs: String?, _ rhs: String?) -> Bool {
+        switch (lhs, rhs) {
+        case let (lhs?, rhs?):
+            return lhs.caseInsensitiveCompare(rhs) == .orderedSame
+        case (nil, nil):
+            return true
+        default:
+            return false
+        }
     }
 }

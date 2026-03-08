@@ -3,38 +3,38 @@
 import PackageDescription
 
 let package = Package(
-    name: "ToroLibre",
+    name: "KotobaLibre",
     platforms: [
         .macOS(.v13)
     ],
     products: [
         .library(
-            name: "ToroLibreCore",
-            targets: ["ToroLibreCore"]
+            name: "KotobaLibreCore",
+            targets: ["KotobaLibreCore"]
         ),
         .executable(
-            name: "ToroLibreApp",
-            targets: ["ToroLibreApp"]
+            name: "KotobaLibreApp",
+            targets: ["KotobaLibreApp"]
         ),
         .executable(
-            name: "ToroLibreSelfTest",
-            targets: ["ToroLibreSelfTest"]
+            name: "KotobaLibreSelfTest",
+            targets: ["KotobaLibreSelfTest"]
         )
     ],
     targets: [
         .target(
-            name: "ToroLibreCore",
+            name: "KotobaLibreCore",
             resources: [
                 .process("Resources")
             ]
         ),
         .executableTarget(
-            name: "ToroLibreApp",
-            dependencies: ["ToroLibreCore"]
+            name: "KotobaLibreApp",
+            dependencies: ["KotobaLibreCore"]
         ),
         .executableTarget(
-            name: "ToroLibreSelfTest",
-            dependencies: ["ToroLibreCore"],
+            name: "KotobaLibreSelfTest",
+            dependencies: ["KotobaLibreCore"],
         )
     ]
 )

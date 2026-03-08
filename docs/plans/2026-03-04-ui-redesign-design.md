@@ -25,9 +25,9 @@ The active UI is native and implemented with SwiftUI inside AppKit windows:
 
 Relevant implementation files:
 
-- [Views.swift](/Users/andreagrassi/WebstormProjects/toro-libre/Sources/ToroLibreApp/Views.swift)
-- [WebViewControllers.swift](/Users/andreagrassi/WebstormProjects/toro-libre/Sources/ToroLibreApp/WebViewControllers.swift)
-- [LauncherWindowController.swift](/Users/andreagrassi/WebstormProjects/toro-libre/Sources/ToroLibreApp/LauncherWindowController.swift)
+- [Views.swift](/Users/andreagrassi/WebstormProjects/toro-libre/Sources/KotobaLibreApp/Views.swift)
+- [WebViewControllers.swift](/Users/andreagrassi/WebstormProjects/toro-libre/Sources/KotobaLibreApp/WebViewControllers.swift)
+- [LauncherWindowController.swift](/Users/andreagrassi/WebstormProjects/toro-libre/Sources/KotobaLibreApp/LauncherWindowController.swift)
 
 ## Canonical Replacements
 

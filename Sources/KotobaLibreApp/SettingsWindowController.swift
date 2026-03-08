@@ -1,6 +1,6 @@
 import AppKit
 import SwiftUI
-import ToroLibreCore
+import KotobaLibreCore
 
 @MainActor
 final class SettingsWindowController: NSWindowController, NSWindowDelegate {
@@ -14,9 +14,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             backing: .buffered,
             defer: false
         )
-        window.title = "\(appDisplayName) - Agent Manager"
+        window.title = "\(appDisplayName) Settings"
         window.center()
-        window.setFrameAutosaveName("ToroLibreSettingsWindow")
+        window.setFrameAutosaveName("KotobaLibreSettingsWindow")
         super.init(window: window)
         self.appController = appController
         self.window?.delegate = self

@@ -1,6 +1,6 @@
 # Release
 
-Toro Libre currently ships unsigned macOS artifacts for internal distribution.
+Kotoba Libre currently ships unsigned macOS artifacts for internal distribution.
 
 ## Version Source
 
@@ -32,8 +32,8 @@ You can also pass an explicit version:
 
 The build script:
 
-1. Builds `ToroLibreApp` in release mode
-2. Creates `dist-artifacts/Toro Libre.app`
+1. Builds `KotobaLibreApp` in release mode
+2. Creates `dist-artifacts/Kotoba Libre.app`
 3. Copies bundled resources, including the app icon
 4. Writes `Info.plist`
 5. Applies an ad-hoc signature
@@ -43,9 +43,9 @@ The build script:
 
 After a successful packaging run, expect:
 
-- `dist-artifacts/Toro Libre.app`
-- `dist-artifacts/Toro Libre-unsigned.dmg`
-- `dist-artifacts/Toro Libre-unsigned-app.zip`
+- `dist-artifacts/Kotoba Libre.app`
+- `dist-artifacts/Kotoba Libre-unsigned.dmg`
+- `dist-artifacts/Kotoba Libre-unsigned-app.zip`
 
 ## GitHub Release Workflow
 

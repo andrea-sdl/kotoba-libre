@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-APP_NAME="${1:-Toro Libre}"
+APP_NAME="${1:-Kotoba Libre}"
 APP_PATH="dist-artifacts/${APP_NAME}.app"
 OUT_DIR="dist-artifacts"
 DMG_PATH="${OUT_DIR}/${APP_NAME}-unsigned.dmg"
