@@ -21,9 +21,15 @@ public final class AppDataStore: @unchecked Sendable {
                 appropriateFor: nil,
                 create: true
             )
-            self.baseDirectory = appSupport
+            let resolvedBaseDirectory = appSupport
                 .appendingPathComponent(appDisplayName, isDirectory: true)
                 .appendingPathComponent("config", isDirectory: true)
+            try Self.migrateLegacyBaseDirectoryIfNeeded(
+                in: appSupport,
+                to: resolvedBaseDirectory,
+                fileManager: fileManager
+            )
+            self.baseDirectory = resolvedBaseDirectory
         }
 
         self.settingsURL = self.baseDirectory.appendingPathComponent(settingsFileName, isDirectory: false)
@@ -42,12 +48,12 @@ public final class AppDataStore: @unchecked Sendable {
 
         let data = try Data(contentsOf: settingsURL)
         let decoded = try decoder.decode(AppSettings.self, from: data)
-        return ToroLibreCore.normalizeSettings(decoded)
+        return KotobaLibreCore.normalizeSettings(decoded)
     }
 
     public func saveSettings(_ settings: AppSettings) throws {
         try ensureBaseDirectory()
-        let normalized = try ToroLibreCore.normalizeInstanceBaseURL(ToroLibreCore.normalizeSettings(settings))
+        let normalized = try KotobaLibreCore.normalizeInstanceBaseURL(KotobaLibreCore.normalizeSettings(settings))
         let data = try encoder.encode(normalized)
         try data.write(to: settingsURL, options: .atomic)
     }
@@ -59,7 +65,7 @@ public final class AppDataStore: @unchecked Sendable {
 
         let data = try Data(contentsOf: presetsURL)
         let decoded = try decoder.decode([Preset].self, from: data)
-        let normalized = ToroLibreCore.normalizeLoadedPresets(decoded)
+        let normalized = KotobaLibreCore.normalizeLoadedPresets(decoded)
         if normalized != decoded {
             try savePresets(normalized)
         }
@@ -73,7 +79,7 @@ public final class AppDataStore: @unchecked Sendable {
     }
 
     public func exportPresets(settings: AppSettings, presets: [Preset]) throws -> Data {
-        let payload = ToroLibreCore.exportPayload(settings: settings, presets: presets)
+        let payload = KotobaLibreCore.exportPayload(settings: settings, presets: presets)
         return try encoder.encode(payload)
     }
 
@@ -94,5 +100,39 @@ public final class AppDataStore: @unchecked Sendable {
         }
 
         try fileManager.removeItem(at: url)
+    }
+
+    private static func migrateLegacyBaseDirectoryIfNeeded(
+        in appSupport: URL,
+        to newBaseDirectory: URL,
+        fileManager: FileManager
+    ) throws {
+        guard !fileManager.fileExists(atPath: newBaseDirectory.path) else {
+            return
+        }
+
+        let legacyBaseDirectory = appSupport
+            .appendingPathComponent(legacyAppDisplayName(), isDirectory: true)
+            .appendingPathComponent("config", isDirectory: true)
+
+        guard fileManager.fileExists(atPath: legacyBaseDirectory.path) else {
+            return
+        }
+
+        let newAppDirectory = newBaseDirectory.deletingLastPathComponent()
+        if !fileManager.fileExists(atPath: newAppDirectory.path) {
+            try fileManager.createDirectory(at: newAppDirectory, withIntermediateDirectories: true)
+        }
+
+        try fileManager.moveItem(at: legacyBaseDirectory, to: newBaseDirectory)
+
+        let legacyAppDirectory = legacyBaseDirectory.deletingLastPathComponent()
+        if let remainingContents = try? fileManager.contentsOfDirectory(atPath: legacyAppDirectory.path), remainingContents.isEmpty {
+            try? fileManager.removeItem(at: legacyAppDirectory)
+        }
+    }
+
+    private static func legacyAppDisplayName() -> String {
+        ["Toro", "Libre"].joined(separator: " ")
     }
 }

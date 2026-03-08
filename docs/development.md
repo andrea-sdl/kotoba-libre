@@ -19,13 +19,13 @@ swift build
 Run the native app:
 
 ```bash
-swift run ToroLibreApp
+swift run KotobaLibreApp
 ```
 
 Run the regression suite:
 
 ```bash
-swift run ToroLibreSelfTest
+swift run KotobaLibreSelfTest
 ```
 
 Build the distributable app and unsigned archives:
@@ -37,40 +37,40 @@ Build the distributable app and unsigned archives:
 ## Day-to-Day Workflow
 
 1. Make code changes in `Sources/`.
-2. Run `swift run ToroLibreSelfTest` after touching core behavior.
-3. Run `swift run ToroLibreApp` when you need a manual UI or system-integration check.
+2. Run `swift run KotobaLibreSelfTest` after touching core behavior.
+3. Run `swift run KotobaLibreApp` when you need a manual UI or system-integration check.
 4. Run `./scripts/build-app.sh` before finishing work.
 
 ## Where To Make Changes
 
 ### App lifecycle and orchestration
 
-- `Sources/ToroLibreApp/AppDelegate.swift`
-- `Sources/ToroLibreApp/AppController.swift`
+- `Sources/KotobaLibreApp/AppDelegate.swift`
+- `Sources/KotobaLibreApp/AppController.swift`
 
 ### Native UI
 
-- `Sources/ToroLibreApp/Views.swift`
-- `Sources/ToroLibreApp/SettingsWindowController.swift`
-- `Sources/ToroLibreApp/LauncherWindowController.swift`
-- `Sources/ToroLibreApp/WebViewControllers.swift`
+- `Sources/KotobaLibreApp/Views.swift`
+- `Sources/KotobaLibreApp/SettingsWindowController.swift`
+- `Sources/KotobaLibreApp/LauncherWindowController.swift`
+- `Sources/KotobaLibreApp/WebViewControllers.swift`
 
 ### Shared behavior and storage
 
-- `Sources/ToroLibreCore/ToroLibreCore.swift`
-- `Sources/ToroLibreCore/AppDataStore.swift`
+- `Sources/KotobaLibreCore/KotobaLibreCore.swift`
+- `Sources/KotobaLibreCore/AppDataStore.swift`
 
 ### Shortcut integration
 
-- `Sources/ToroLibreApp/GlobalShortcutRegistrar.swift`
+- `Sources/KotobaLibreApp/GlobalShortcutRegistrar.swift`
 
 ### Regression checks
 
-- `Sources/ToroLibreSelfTest/main.swift`
+- `Sources/KotobaLibreSelfTest/main.swift`
 
 ## Testing Guidance
 
-Use `ToroLibreSelfTest` as the first line of regression coverage for:
+Use `KotobaLibreSelfTest` as the first line of regression coverage for:
 
 - Deep-link parsing
 - URL validation
@@ -107,4 +107,4 @@ Recommended docs to review:
 
 ## Notes About `swift test`
 
-The current repo uses `swift run ToroLibreSelfTest` instead of `swift test` as the practical local validation path for this environment. Keep the self-test maintained and fast.
+The current repo uses `swift run KotobaLibreSelfTest` instead of `swift test` as the practical local validation path for this environment. Keep the self-test maintained and fast.

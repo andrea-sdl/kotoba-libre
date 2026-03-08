@@ -1,6 +1,6 @@
-# Toro Libre
+# Kotoba Libre
 
-Toro Libre is a macOS-native launcher and web wrapper for LibreChat, built with Swift Package Manager, AppKit, SwiftUI, and WebKit.
+Kotoba Libre is a macOS-native launcher and web wrapper for LibreChat, built with Swift Package Manager, AppKit, SwiftUI, and WebKit.
 
 The app gives LibreChat a focused desktop shell with:
 
@@ -26,9 +26,9 @@ The app gives LibreChat a focused desktop shell with:
 .
 |-- Package.swift
 |-- Sources
-|   |-- ToroLibreApp
-|   |-- ToroLibreCore
-|   `-- ToroLibreSelfTest
+|   |-- KotobaLibreApp
+|   |-- KotobaLibreCore
+|   `-- KotobaLibreSelfTest
 |-- docs
 |   |-- architecture.md
 |   |-- development.md
@@ -43,11 +43,11 @@ The app gives LibreChat a focused desktop shell with:
 
 ## Modules
 
-- `Sources/ToroLibreApp`
+- `Sources/KotobaLibreApp`
   Native macOS executable. Owns the app lifecycle, windows, onboarding flow, settings UI, shortcut registration, and embedded `WKWebView`.
-- `Sources/ToroLibreCore`
+- `Sources/KotobaLibreCore`
   Shared models and business logic: settings, preset normalization, deep links, URL validation, host restriction, import/export, and storage helpers.
-- `Sources/ToroLibreSelfTest`
+- `Sources/KotobaLibreSelfTest`
   Runnable regression suite for core behavior in environments where `swift test` is not available.
 
 ## Developer Workflow
@@ -61,13 +61,13 @@ swift build
 Run the self-test suite:
 
 ```bash
-swift run ToroLibreSelfTest
+swift run KotobaLibreSelfTest
 ```
 
 Launch the app directly from SwiftPM:
 
 ```bash
-swift run ToroLibreApp
+swift run KotobaLibreApp
 ```
 
 Build the distributable app bundle and unsigned artifacts:
@@ -78,9 +78,9 @@ Build the distributable app bundle and unsigned artifacts:
 
 Generated artifacts:
 
-- `dist-artifacts/Toro Libre.app`
-- `dist-artifacts/Toro Libre-unsigned.dmg`
-- `dist-artifacts/Toro Libre-unsigned-app.zip`
+- `dist-artifacts/Kotoba Libre.app`
+- `dist-artifacts/Kotoba Libre-unsigned.dmg`
+- `dist-artifacts/Kotoba Libre-unsigned-app.zip`
 
 ## Key User Flows
 
@@ -91,7 +91,7 @@ If no settings exist, the main window opens a two-step onboarding flow:
 1. Enter the LibreChat base URL
 2. Confirm or record the global launcher shortcut
 
-After setup completes, Toro Libre saves configuration and opens the main web view in an `800x600` default window.
+After setup completes, Kotoba Libre saves configuration and opens the main web view in an `800x600` default window.
 
 ### Settings management
 
@@ -101,6 +101,10 @@ The settings window includes tabs for:
 - Settings
 - Shortcuts
 - About
+
+The settings UI warns before you leave a tab with unsaved changes.
+
+When host restriction is enabled and you change the configured LibreChat instance to a different host, Kotoba Libre re-validates saved agents, offers an export step first, and removes any incompatible agents after you confirm the change.
 
 The Settings tab also includes a destructive reset action that clears config and returns the app to onboarding.
 
@@ -115,11 +119,11 @@ The launcher is a floating panel that:
 
 ## Deep Links
 
-Toro Libre currently supports:
+Kotoba Libre currently supports:
 
-- `torolibre://open?url=<encoded_url>`
-- `torolibre://preset/<presetId>?query=<encoded_query>`
-- `torolibre://settings`
+- `kotobalibre://open?url=<encoded_url>`
+- `kotobalibre://preset/<presetId>?query=<encoded_query>`
+- `kotobalibre://settings`
 - `https://.../app/open?url=<encoded_url>`
 - `https://.../app/preset/<presetId>?query=<encoded_query>`
 - `https://.../app/settings`

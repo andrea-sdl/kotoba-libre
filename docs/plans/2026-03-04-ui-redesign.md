@@ -8,7 +8,7 @@ The original contents described a Tauri, TypeScript, and CSS implementation plan
 
 ## Current Reality
 
-Toro Libre is now a native macOS Swift Package Manager app built with:
+Kotoba Libre is now a native macOS Swift Package Manager app built with:
 
 - AppKit
 - SwiftUI
@@ -16,10 +16,10 @@ Toro Libre is now a native macOS Swift Package Manager app built with:
 
 The onboarding, settings, and shortcut experience referenced by the original redesign plan now live in:
 
-- [Views.swift](/Users/andreagrassi/WebstormProjects/toro-libre/Sources/ToroLibreApp/Views.swift)
-- [AppController.swift](/Users/andreagrassi/WebstormProjects/toro-libre/Sources/ToroLibreApp/AppController.swift)
-- [SettingsWindowController.swift](/Users/andreagrassi/WebstormProjects/toro-libre/Sources/ToroLibreApp/SettingsWindowController.swift)
-- [LauncherWindowController.swift](/Users/andreagrassi/WebstormProjects/toro-libre/Sources/ToroLibreApp/LauncherWindowController.swift)
+- [Views.swift](/Users/andreagrassi/WebstormProjects/toro-libre/Sources/KotobaLibreApp/Views.swift)
+- [AppController.swift](/Users/andreagrassi/WebstormProjects/toro-libre/Sources/KotobaLibreApp/AppController.swift)
+- [SettingsWindowController.swift](/Users/andreagrassi/WebstormProjects/toro-libre/Sources/KotobaLibreApp/SettingsWindowController.swift)
+- [LauncherWindowController.swift](/Users/andreagrassi/WebstormProjects/toro-libre/Sources/KotobaLibreApp/LauncherWindowController.swift)
 
 ## Use These Docs Instead
 

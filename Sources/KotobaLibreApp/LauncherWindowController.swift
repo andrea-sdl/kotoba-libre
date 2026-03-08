@@ -1,6 +1,6 @@
 import AppKit
 import SwiftUI
-import ToroLibreCore
+import KotobaLibreCore
 
 private enum LauncherPanelMetrics {
     static let preferredWidth: CGFloat = 860
@@ -23,7 +23,7 @@ final class LauncherPanel: NSPanel {
             defer: false
         )
 
-        title = "Toro Libre Launcher"
+        title = "Kotoba Libre Launcher"
         isFloatingPanel = false
         level = .floating
         collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary, .transient, .ignoresCycle]

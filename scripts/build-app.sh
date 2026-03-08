@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-APP_NAME="Toro Libre"
-BUNDLE_IDENTIFIER="com.andreagrassi.torolibre"
+APP_NAME="Kotoba Libre"
+BUNDLE_IDENTIFIER="com.andreagrassi.kotobalibre"
 VERSION="${1:-$(tr -d '[:space:]' < VERSION)}"
 OUT_DIR="dist-artifacts"
 APP_DIR="${OUT_DIR}/${APP_NAME}.app"
@@ -15,9 +15,9 @@ if [[ ! "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-
   exit 1
 fi
 
-swift build -c release --product ToroLibreApp
+swift build -c release --product KotobaLibreApp
 BIN_PATH="$(swift build -c release --show-bin-path)"
-EXECUTABLE_PATH="${BIN_PATH}/ToroLibreApp"
+EXECUTABLE_PATH="${BIN_PATH}/KotobaLibreApp"
 
 if [[ ! -x "${EXECUTABLE_PATH}" ]]; then
   echo "Built executable not found at ${EXECUTABLE_PATH}" >&2
@@ -27,11 +27,11 @@ fi
 rm -rf "${APP_DIR}"
 mkdir -p "${MACOS_DIR}" "${RESOURCES_DIR}"
 
-cp "${EXECUTABLE_PATH}" "${MACOS_DIR}/ToroLibreApp"
+cp "${EXECUTABLE_PATH}" "${MACOS_DIR}/KotobaLibreApp"
 find "${BIN_PATH}" -maxdepth 1 -type d -name '*.bundle' -exec cp -R {} "${RESOURCES_DIR}/" \;
 
-if [[ -f "Sources/ToroLibreCore/Resources/AppIcon.icns" ]]; then
-  cp "Sources/ToroLibreCore/Resources/AppIcon.icns" "${RESOURCES_DIR}/AppIcon.icns"
+if [[ -f "Sources/KotobaLibreCore/Resources/AppIcon.icns" ]]; then
+  cp "Sources/KotobaLibreCore/Resources/AppIcon.icns" "${RESOURCES_DIR}/AppIcon.icns"
 fi
 
 cat > "${CONTENTS_DIR}/Info.plist" <<EOF
@@ -44,7 +44,7 @@ cat > "${CONTENTS_DIR}/Info.plist" <<EOF
   <key>CFBundleDisplayName</key>
   <string>${APP_NAME}</string>
   <key>CFBundleExecutable</key>
-  <string>ToroLibreApp</string>
+  <string>KotobaLibreApp</string>
   <key>CFBundleIconFile</key>
   <string>AppIcon</string>
   <key>CFBundleIdentifier</key>
@@ -68,7 +68,7 @@ cat > "${CONTENTS_DIR}/Info.plist" <<EOF
       <string>${BUNDLE_IDENTIFIER}</string>
       <key>CFBundleURLSchemes</key>
       <array>
-        <string>torolibre</string>
+        <string>kotobalibre</string>
       </array>
     </dict>
   </array>

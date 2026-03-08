@@ -1,7 +1,7 @@
 import Foundation
 
-public let appBundleIdentifier = "com.andreagrassi.torolibre"
-public let appDisplayName = "Toro Libre"
+public let appBundleIdentifier = "com.andreagrassi.kotobalibre"
+public let appDisplayName = "Kotoba Libre"
 public let settingsFileName = "settings.json"
 public let presetsFileName = "presets.json"
 
@@ -44,35 +44,26 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var instanceBaseUrl: String?
     public var globalShortcut: String
     public var autostartEnabled: Bool
-    public var openInNewWindow: Bool
     public var restrictHostToInstanceHost: Bool
     public var defaultPresetId: String?
-    public var debugInWebview: Bool
     public var useRouteReloadForLauncherChats: Bool
-    public var accentColor: String
     public var launcherOpacity: Double
 
     public init(
         instanceBaseUrl: String? = nil,
         globalShortcut: String = AppSettings.defaultShortcut,
         autostartEnabled: Bool = false,
-        openInNewWindow: Bool = false,
         restrictHostToInstanceHost: Bool = true,
         defaultPresetId: String? = nil,
-        debugInWebview: Bool = false,
         useRouteReloadForLauncherChats: Bool = false,
-        accentColor: String = "blue",
         launcherOpacity: Double = 0.95
     ) {
         self.instanceBaseUrl = instanceBaseUrl
         self.globalShortcut = globalShortcut
         self.autostartEnabled = autostartEnabled
-        self.openInNewWindow = openInNewWindow
         self.restrictHostToInstanceHost = restrictHostToInstanceHost
         self.defaultPresetId = defaultPresetId
-        self.debugInWebview = debugInWebview
         self.useRouteReloadForLauncherChats = useRouteReloadForLauncherChats
-        self.accentColor = accentColor
         self.launcherOpacity = launcherOpacity
     }
 }
@@ -119,7 +110,7 @@ public struct PresetExportPayload: Codable, Equatable, Sendable {
     }
 }
 
-public enum ToroLibreCore {
+public enum KotobaLibreCore {
     public static func nowMarker(date: Date = Date()) -> String {
         "unix-ms-\(Int(date.timeIntervalSince1970 * 1_000))"
     }
@@ -190,9 +181,6 @@ public enum ToroLibreCore {
         }
 
         normalized.launcherOpacity = min(max(normalized.launcherOpacity, 0.5), 1.0)
-        if normalized.accentColor.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            normalized.accentColor = "blue"
-        }
 
         return normalized
     }
@@ -291,7 +279,7 @@ public enum ToroLibreCore {
     public static func parseURLTemplateCandidate(_ urlTemplate: String) throws -> URL {
         let candidate = urlTemplate.replacingOccurrences(of: "{query}", with: "example")
         guard let url = URL(string: candidate) else {
-            throw ToroLibreError.invalidURLTemplate("Invalid URL template: malformed URL")
+            throw KotobaLibreError.invalidURLTemplate("Invalid URL template: malformed URL")
         }
         return url
     }
@@ -302,21 +290,21 @@ public enum ToroLibreCore {
         }
 
         guard let url = URL(string: raw), var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
-            throw ToroLibreError.invalidInstanceURL("Invalid instance URL: malformed URL")
+            throw KotobaLibreError.invalidInstanceURL("Invalid instance URL: malformed URL")
         }
 
         guard components.scheme?.lowercased() == "https" else {
-            throw ToroLibreError.invalidInstanceURL("Toro Libre instance URL must start with https://")
+            throw KotobaLibreError.invalidInstanceURL("Kotoba Libre instance URL must start with https://")
         }
 
         guard components.host != nil else {
-            throw ToroLibreError.invalidInstanceURL("Toro Libre instance URL must include a host")
+            throw KotobaLibreError.invalidInstanceURL("Kotoba Libre instance URL must include a host")
         }
 
         components.query = nil
         components.fragment = nil
         guard let normalized = components.url else {
-            throw ToroLibreError.invalidInstanceURL("Invalid instance URL: malformed URL")
+            throw KotobaLibreError.invalidInstanceURL("Invalid instance URL: malformed URL")
         }
 
         return normalized
@@ -336,24 +324,60 @@ public enum ToroLibreCore {
         try parseInstanceBaseURL(settings)?.host?.lowercased()
     }
 
+    public static func presetTemplateHost(_ preset: Preset) throws -> String? {
+        try parseURLTemplateCandidate(preset.urlTemplate).host?.lowercased()
+    }
+
+    public static func validatePresetCompatibility(_ preset: Preset, allowedHost: String) -> String? {
+        if preset.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return "name cannot be empty"
+        }
+
+        let validation = validateURLTemplate(preset.urlTemplate)
+        if !validation.valid {
+            return validation.reason ?? "Invalid URL template"
+        }
+
+        do {
+            let host = try presetTemplateHost(preset) ?? ""
+            if host.caseInsensitiveCompare(allowedHost) != .orderedSame {
+                return "host '\(host)' is not compatible with configured LibreChat host '\(allowedHost)'"
+            }
+        } catch {
+            return error.localizedDescription
+        }
+
+        return nil
+    }
+
+    public static func incompatiblePresets(_ presets: [Preset], settings: AppSettings) throws -> [Preset] {
+        guard settings.restrictHostToInstanceHost, let allowedHost = try settingsInstanceHost(settings) else {
+            return []
+        }
+
+        return presets.filter { preset in
+            validatePresetCompatibility(preset, allowedHost: allowedHost) != nil
+        }
+    }
+
     public static func enforceDestination(_ urlString: String, settings: AppSettings) throws -> URL {
         guard let url = URL(string: urlString), let scheme = url.scheme?.lowercased() else {
-            throw ToroLibreError.invalidDestination("Invalid destination URL: malformed URL")
+            throw KotobaLibreError.invalidDestination("Invalid destination URL: malformed URL")
         }
 
         guard scheme == "https" else {
-            throw ToroLibreError.invalidDestination("Only https URLs are supported")
+            throw KotobaLibreError.invalidDestination("Only https URLs are supported")
         }
 
         if settings.restrictHostToInstanceHost {
             let allowedHost = try settingsInstanceHost(settings).flatMap { $0.isEmpty ? nil : $0 }
             guard let allowedHost else {
-                throw ToroLibreError.invalidDestination("Set your Toro Libre instance URL in Settings before opening destinations")
+                throw KotobaLibreError.invalidDestination("Set your Kotoba Libre instance URL in Settings before opening destinations")
             }
 
             let host = (url.host ?? "").lowercased()
             guard host == allowedHost else {
-                throw ToroLibreError.invalidDestination("Destination host '\(host)' is blocked by current policy")
+                throw KotobaLibreError.invalidDestination("Destination host '\(host)' is blocked by current policy")
             }
         }
 
@@ -361,24 +385,11 @@ public enum ToroLibreCore {
     }
 
     public static func validateImportCompatibility(_ preset: Preset, allowedHost: String, row: Int) -> String? {
-        if preset.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return "Row \(row): name cannot be empty"
-        }
-
-        let validation = validateURLTemplate(preset.urlTemplate)
-        if !validation.valid {
-            let reason = validation.reason ?? "Invalid URL template"
-            return "Row \(row) ('\(preset.name)'): \(reason)"
-        }
-
-        do {
-            let url = try parseURLTemplateCandidate(preset.urlTemplate)
-            let host = url.host ?? ""
-            if host.caseInsensitiveCompare(allowedHost) != .orderedSame {
-                return "Row \(row) ('\(preset.name)'): host '\(host)' is not compatible with configured LibreChat host '\(allowedHost)'"
+        if let issue = validatePresetCompatibility(preset, allowedHost: allowedHost) {
+            if preset.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return "Row \(row): \(issue)"
             }
-        } catch {
-            return "Row \(row) ('\(preset.name)'): \(error.localizedDescription)"
+            return "Row \(row) ('\(preset.name)'): \(issue)"
         }
 
         return nil
@@ -441,16 +452,16 @@ public enum ToroLibreCore {
 
     public static func parseDeepLink(_ raw: String) throws -> DeepLinkAction {
         guard let url = URL(string: raw), let scheme = url.scheme?.lowercased() else {
-            throw ToroLibreError.invalidDeepLink("Invalid deep link URL: malformed URL")
+            throw KotobaLibreError.invalidDeepLink("Invalid deep link URL: malformed URL")
         }
 
         switch scheme {
-        case "torolibre":
+        case "kotobalibre":
             return try parseCustomScheme(url)
         case "https":
             return try parseWebLink(url)
         default:
-            throw ToroLibreError.invalidDeepLink("Unsupported deep link scheme")
+            throw KotobaLibreError.invalidDeepLink("Unsupported deep link scheme")
         }
     }
 
@@ -465,21 +476,21 @@ public enum ToroLibreCore {
         switch url.host?.lowercased() {
         case "open":
             guard let destination = queryValue(url, key: "url") else {
-                throw ToroLibreError.invalidDeepLink("Missing ?url= parameter")
+                throw KotobaLibreError.invalidDeepLink("Missing ?url= parameter")
             }
             return .openURL(destination)
         case "preset":
             let presetID = url.pathComponents.dropFirst().first ?? ""
             guard !presetID.isEmpty else {
-                throw ToroLibreError.invalidDeepLink("Missing preset id in deep link")
+                throw KotobaLibreError.invalidDeepLink("Missing preset id in deep link")
             }
             return .openPreset(presetID: presetID, query: queryValue(url, key: "query"))
         case "settings":
             return .openSettings
         case let host?:
-            throw ToroLibreError.invalidDeepLink("Unsupported deep link host: \(host)")
+            throw KotobaLibreError.invalidDeepLink("Unsupported deep link host: \(host)")
         case nil:
-            throw ToroLibreError.invalidDeepLink("Invalid deep link host")
+            throw KotobaLibreError.invalidDeepLink("Invalid deep link host")
         }
     }
 
@@ -487,7 +498,7 @@ public enum ToroLibreCore {
         switch url.path {
         case "/app/open":
             guard let destination = queryValue(url, key: "url") else {
-                throw ToroLibreError.invalidDeepLink("Missing ?url= parameter")
+                throw KotobaLibreError.invalidDeepLink("Missing ?url= parameter")
             }
             return .openURL(destination)
         case "/app/settings":
@@ -496,16 +507,16 @@ public enum ToroLibreCore {
             if url.path.hasPrefix("/app/preset/") {
                 let presetID = String(url.path.dropFirst("/app/preset/".count))
                 guard !presetID.isEmpty else {
-                    throw ToroLibreError.invalidDeepLink("Missing preset id in deep link")
+                    throw KotobaLibreError.invalidDeepLink("Missing preset id in deep link")
                 }
                 return .openPreset(presetID: presetID, query: queryValue(url, key: "query"))
             }
-            throw ToroLibreError.invalidDeepLink("Unsupported web deep-link path")
+            throw KotobaLibreError.invalidDeepLink("Unsupported web deep-link path")
         }
     }
 }
 
-public enum ToroLibreError: LocalizedError, Equatable {
+public enum KotobaLibreError: LocalizedError, Equatable {
     case invalidURLTemplate(String)
     case invalidInstanceURL(String)
     case invalidDestination(String)

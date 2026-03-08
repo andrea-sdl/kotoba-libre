@@ -1,6 +1,6 @@
 import AppKit
 import SwiftUI
-import ToroLibreCore
+import KotobaLibreCore
 
 private enum OnboardingStep: Int, CaseIterable {
     case instance
@@ -33,7 +33,7 @@ struct OnboardingFlowView: View {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 12) {
                     AppLogoView()
-                    Text("Set up Toro Libre once, then launch LibreChat from anywhere.")
+                    Text("Set up Kotoba Libre once, then launch LibreChat from anywhere.")
                         .font(.title3)
                         .foregroundStyle(.secondary)
                 }
@@ -122,7 +122,7 @@ struct OnboardingFlowView: View {
         VStack(alignment: .leading, spacing: 18) {
             Text("Where is your LibreChat instance running?")
                 .font(.system(size: 28, weight: .bold, design: .rounded))
-            Text("Enter the base URL for the hosted or self-hosted LibreChat instance you want Toro Libre to open.")
+            Text("Enter the base URL for the hosted or self-hosted LibreChat instance you want Kotoba Libre to open.")
                 .foregroundStyle(.secondary)
 
             VStack(alignment: .leading, spacing: 10) {
@@ -197,7 +197,7 @@ struct OnboardingFlowView: View {
         }
 
         do {
-            _ = try ToroLibreCore.parseInstanceBaseURL(AppSettings(instanceBaseUrl: candidate))
+            _ = try KotobaLibreCore.parseInstanceBaseURL(AppSettings(instanceBaseUrl: candidate))
             return ValidationResult(valid: true)
         } catch {
             return ValidationResult(valid: false, reason: error.localizedDescription)
@@ -268,39 +268,121 @@ private func shortcutDisplayParts(_ shortcut: String) -> [String] {
     }
 }
 
+private enum SettingsTab: Int, Hashable {
+    case agents
+    case settings
+    case shortcuts
+    case about
+}
+
+@MainActor
+private final class SettingsNavigationGuard: ObservableObject {
+    private var dirtyTabs = Set<SettingsTab>()
+    private var discardHandlers: [SettingsTab: () -> Void] = [:]
+
+    func registerDiscardHandler(for tab: SettingsTab, handler: @escaping () -> Void) {
+        discardHandlers[tab] = handler
+    }
+
+    func setDirty(_ dirty: Bool, for tab: SettingsTab) {
+        if dirty {
+            dirtyTabs.insert(tab)
+        } else {
+            dirtyTabs.remove(tab)
+        }
+    }
+
+    func isDirty(_ tab: SettingsTab) -> Bool {
+        dirtyTabs.contains(tab)
+    }
+
+    func discardChanges(for tab: SettingsTab) {
+        discardHandlers[tab]?()
+        dirtyTabs.remove(tab)
+    }
+}
+
 struct SettingsRootView: View {
     @ObservedObject var appController: AppController
-    @State private var selectedTab = 0
+    @StateObject private var navigationGuard = SettingsNavigationGuard()
+    @State private var selectedTab: SettingsTab = .agents
+    @State private var committedTab: SettingsTab = .agents
+    @State private var pendingTab: SettingsTab?
+    @State private var isShowingUnsavedChangesAlert = false
+    @State private var isIgnoringNextSelectionChange = false
 
     var body: some View {
         TabView(selection: $selectedTab) {
             AgentManagerView(appController: appController)
+                .environmentObject(navigationGuard)
                 .tabItem { Text("Agents") }
-                .tag(0)
+                .tag(SettingsTab.agents)
 
             SettingsPanelView(appController: appController)
+                .environmentObject(navigationGuard)
                 .tabItem { Text("Settings") }
-                .tag(1)
+                .tag(SettingsTab.settings)
 
             ShortcutPanelView(appController: appController)
+                .environmentObject(navigationGuard)
                 .tabItem { Text("Shortcuts") }
-                .tag(2)
+                .tag(SettingsTab.shortcuts)
 
             AboutPanelView(openSettings: appController.showSettingsWindow)
                 .tabItem { Text("About") }
-                .tag(3)
+                .tag(SettingsTab.about)
         }
         .padding(20)
         .frame(minWidth: 980, minHeight: 500)
+        .onChange(of: selectedTab) { nextTab in
+            guard !isIgnoringNextSelectionChange else {
+                isIgnoringNextSelectionChange = false
+                return
+            }
+
+            guard nextTab != committedTab else {
+                return
+            }
+
+            if navigationGuard.isDirty(committedTab) {
+                pendingTab = nextTab
+                isIgnoringNextSelectionChange = true
+                selectedTab = committedTab
+                isShowingUnsavedChangesAlert = true
+                return
+            }
+
+            committedTab = nextTab
+        }
+        .alert("Discard unsaved changes?", isPresented: $isShowingUnsavedChangesAlert) {
+            Button("Discard Changes", role: .destructive) {
+                navigationGuard.discardChanges(for: committedTab)
+                guard let pendingTab else {
+                    return
+                }
+
+                committedTab = pendingTab
+                isIgnoringNextSelectionChange = true
+                selectedTab = pendingTab
+                self.pendingTab = nil
+            }
+            Button("Stay Here", role: .cancel) {
+                pendingTab = nil
+            }
+        } message: {
+            Text("Save or discard the current page before switching to another settings section.")
+        }
     }
 }
 
 struct AgentManagerView: View {
     @ObservedObject var appController: AppController
+    @EnvironmentObject private var navigationGuard: SettingsNavigationGuard
     @State private var selectedPresetID: String?
     @State private var draft = Preset(id: "", name: "", urlTemplate: "https://", kind: .agent, tags: [], createdAt: "", updatedAt: "")
     @State private var statusMessage = ""
     @State private var statusIsError = false
+    @State private var didLoadInitialDraft = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -308,7 +390,7 @@ struct AgentManagerView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Agents")
                         .font(.largeTitle.bold())
-                    Text("Manage and configure your Toro Libre agents. Star sets default.")
+                    Text("Manage and configure your Kotoba Libre agents. Star sets default.")
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
@@ -358,7 +440,7 @@ struct AgentManagerView: View {
                         set: { draft.tags = $0.split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) } }
                     ))
 
-                    let validation = ToroLibreCore.validateURLTemplate(draft.urlTemplate)
+                    let validation = KotobaLibreCore.validateURLTemplate(draft.urlTemplate)
                     Text(validation.valid ? "Template looks valid." : (validation.reason ?? "Invalid URL template."))
                         .font(.footnote)
                         .foregroundStyle(validation.valid ? .secondary : Color.red)
@@ -382,13 +464,32 @@ struct AgentManagerView: View {
                     .foregroundStyle(statusIsError ? Color.red : .secondary)
             }
         }
-        .onAppear { resetDraft() }
+        .onAppear {
+            navigationGuard.registerDiscardHandler(for: .agents, handler: discardChanges)
+            guard !didLoadInitialDraft else {
+                updateDirtyState()
+                return
+            }
+
+            didLoadInitialDraft = true
+            resetDraft()
+        }
+        .onChange(of: selectedPresetID) { _ in
+            updateDirtyState()
+        }
+        .onChange(of: draftSnapshot) { _ in
+            updateDirtyState()
+        }
+        .onChange(of: appController.settings.instanceBaseUrl) { _ in
+            updateDirtyState()
+        }
     }
 
     private func resetDraft() {
         selectedPresetID = nil
         draft = appController.makeEmptyPreset()
         setStatus("Creating new agent.", isError: false)
+        updateDirtyState()
     }
 
     private func savePreset() {
@@ -464,21 +565,59 @@ struct AgentManagerView: View {
         statusMessage = message
         statusIsError = isError
     }
+
+    private var draftSnapshot: PresetDraftState {
+        PresetDraftState(preset: draft)
+    }
+
+    private var baselineSnapshot: PresetDraftState {
+        if let selectedPresetID, let preset = appController.presets.first(where: { $0.id == selectedPresetID }) {
+            return PresetDraftState(preset: preset)
+        }
+        return PresetDraftState(preset: appController.makeEmptyPreset())
+    }
+
+    private func discardChanges() {
+        if let selectedPresetID, let preset = appController.presets.first(where: { $0.id == selectedPresetID }) {
+            draft = preset
+        } else {
+            draft = appController.makeEmptyPreset()
+        }
+        updateDirtyState()
+    }
+
+    private func updateDirtyState() {
+        navigationGuard.setDirty(draftSnapshot != baselineSnapshot, for: .agents)
+    }
+}
+
+private struct PresetDraftState: Equatable {
+    let name: String
+    let urlTemplate: String
+    let kind: PresetKind
+    let tags: [String]
+
+    init(preset: Preset) {
+        self.name = preset.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.urlTemplate = preset.urlTemplate.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.kind = preset.kind
+        self.tags = KotobaLibreCore.normalizeTags(preset.tags)
+    }
 }
 
 struct SettingsPanelView: View {
     @ObservedObject var appController: AppController
+    @EnvironmentObject private var navigationGuard: SettingsNavigationGuard
     @State private var instanceBaseURL = ""
-    @State private var openInNewWindow = false
     @State private var autostartEnabled = false
     @State private var restrictHost = true
-    @State private var debugInWebview = false
     @State private var useRouteReloadForLauncherChats = false
-    @State private var accentColor = "blue"
     @State private var launcherOpacity = 95.0
     @State private var statusMessage = ""
     @State private var statusIsError = false
     @State private var isShowingResetConfirmation = false
+    @State private var isShowingCompatibilityConfirmation = false
+    @State private var pendingCleanupPreview: AppController.SettingsChangePreview?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -490,21 +629,25 @@ struct SettingsPanelView: View {
             Form {
                 TextField("LibreChat Instance URL", text: $instanceBaseURL)
                 Toggle("Restrict URLs to the configured instance host", isOn: $restrictHost)
-                Toggle("Open presets in a new window", isOn: $openInNewWindow)
-                Toggle("Launch Toro Libre at login", isOn: $autostartEnabled)
-                Toggle("Debug In-Webview", isOn: $debugInWebview)
+                Toggle("Launch Kotoba Libre at login", isOn: $autostartEnabled)
                 Toggle("Use route reload for launcher chats", isOn: $useRouteReloadForLauncherChats)
-                Picker("Accent Color", selection: $accentColor) {
-                    ForEach(appController.accentColorNames, id: \.self) { colorName in
-                        Text(colorName.capitalized).tag(colorName)
-                    }
-                }
                 VStack(alignment: .leading) {
                     Text("Launcher Opacity \(Int(launcherOpacity))%")
                     Slider(value: $launcherOpacity, in: 50...100, step: 5)
                 }
             }
             .formStyle(.grouped)
+
+            if let compatibilityMessage {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text(compatibilityMessage)
+                        .font(.footnote)
+                        .foregroundStyle(Color.red)
+                    Button("Export Agents Before Saving") {
+                        exportAgents()
+                    }
+                }
+            }
 
             HStack {
                 Button("Save Settings") { saveSettings() }
@@ -520,7 +663,17 @@ struct SettingsPanelView: View {
                     .foregroundStyle(statusIsError ? Color.red : .secondary)
             }
         }
-        .onAppear(perform: reload)
+        .onAppear {
+            navigationGuard.registerDiscardHandler(for: .settings, handler: discardChanges)
+            reload()
+            updateDirtyState()
+        }
+        .onChange(of: draftState) { _ in
+            updateDirtyState()
+        }
+        .onChange(of: appController.settings) { _ in
+            updateDirtyState()
+        }
         .confirmationDialog("Reset configuration?", isPresented: $isShowingResetConfirmation, titleVisibility: .visible) {
             Button("Reset Configuration", role: .destructive) {
                 resetConfiguration()
@@ -530,36 +683,43 @@ struct SettingsPanelView: View {
         } message: {
             Text("This removes the saved LibreChat instance, agents, and shortcut so onboarding appears again.")
         }
+        .confirmationDialog("Remove incompatible agents?", isPresented: $isShowingCompatibilityConfirmation, titleVisibility: .visible) {
+            Button("Export and Save") {
+                exportAndSave()
+            }
+            if let pendingCleanupPreview {
+                Button("Save and Remove \(pendingCleanupPreview.incompatiblePresets.count) Agents", role: .destructive) {
+                    commitSettings()
+                }
+            }
+            Button("Cancel", role: .cancel) {
+                pendingCleanupPreview = nil
+            }
+        } message: {
+            if let pendingCleanupPreview {
+                Text(cleanupMessage(for: pendingCleanupPreview.incompatiblePresets))
+            }
+        }
     }
 
     private func reload() {
         instanceBaseURL = appController.settings.instanceBaseUrl ?? ""
-        openInNewWindow = appController.settings.openInNewWindow
         autostartEnabled = appController.settings.autostartEnabled
         restrictHost = appController.settings.restrictHostToInstanceHost
-        debugInWebview = appController.settings.debugInWebview
         useRouteReloadForLauncherChats = appController.settings.useRouteReloadForLauncherChats
-        accentColor = appController.settings.accentColor
         launcherOpacity = (appController.settings.launcherOpacity * 100).rounded()
     }
 
     private func saveSettings() {
         do {
-            try appController.saveSettings(
-                AppSettings(
-                    instanceBaseUrl: instanceBaseURL,
-                    globalShortcut: appController.shortcutDraft,
-                    autostartEnabled: autostartEnabled,
-                    openInNewWindow: openInNewWindow,
-                    restrictHostToInstanceHost: restrictHost,
-                    defaultPresetId: appController.settings.defaultPresetId,
-                    debugInWebview: debugInWebview,
-                    useRouteReloadForLauncherChats: useRouteReloadForLauncherChats,
-                    accentColor: accentColor,
-                    launcherOpacity: launcherOpacity / 100
-                )
-            )
-            setStatus("Settings saved.", isError: false)
+            let preview = try appController.previewSettingsChange(draftSettings)
+            if !preview.incompatiblePresets.isEmpty {
+                pendingCleanupPreview = preview
+                isShowingCompatibilityConfirmation = true
+                return
+            }
+
+            commitSettings()
         } catch {
             setStatus(error.localizedDescription, isError: true)
         }
@@ -577,10 +737,120 @@ struct SettingsPanelView: View {
             setStatus(error.localizedDescription, isError: true)
         }
     }
+
+    private func discardChanges() {
+        reload()
+        updateDirtyState()
+    }
+
+    private var draftSettings: AppSettings {
+        AppSettings(
+            instanceBaseUrl: instanceBaseURL,
+            globalShortcut: appController.settings.globalShortcut,
+            autostartEnabled: autostartEnabled,
+            restrictHostToInstanceHost: restrictHost,
+            defaultPresetId: appController.settings.defaultPresetId,
+            useRouteReloadForLauncherChats: useRouteReloadForLauncherChats,
+            launcherOpacity: launcherOpacity / 100
+        )
+    }
+
+    private var draftState: SettingsDraftState {
+        SettingsDraftState(
+            instanceBaseURL: instanceBaseURL,
+            autostartEnabled: autostartEnabled,
+            restrictHost: restrictHost,
+            useRouteReloadForLauncherChats: useRouteReloadForLauncherChats,
+            launcherOpacity: launcherOpacity
+        )
+    }
+
+    private var savedState: SettingsDraftState {
+        SettingsDraftState(
+            instanceBaseURL: appController.settings.instanceBaseUrl ?? "",
+            autostartEnabled: appController.settings.autostartEnabled,
+            restrictHost: appController.settings.restrictHostToInstanceHost,
+            useRouteReloadForLauncherChats: appController.settings.useRouteReloadForLauncherChats,
+            launcherOpacity: (appController.settings.launcherOpacity * 100).rounded()
+        )
+    }
+
+    private var compatibilityMessage: String? {
+        guard let preview = try? appController.previewSettingsChange(draftSettings), !preview.incompatiblePresets.isEmpty else {
+            return nil
+        }
+
+        return cleanupMessage(for: preview.incompatiblePresets)
+    }
+
+    private func cleanupMessage(for incompatiblePresets: [Preset]) -> String {
+        let names = incompatiblePresets.prefix(3).map(\.name)
+        let suffix = incompatiblePresets.count > 3 ? " and \(incompatiblePresets.count - 3) more" : ""
+        let namesText = names.isEmpty ? "" : " Affected agents: \(names.joined(separator: ", "))\(suffix)."
+        return "\(incompatiblePresets.count) configured agent\(incompatiblePresets.count == 1 ? "" : "s") no longer match this LibreChat host while host restriction is enabled. Export them before saving if you want a backup.\(namesText)"
+    }
+
+    private func exportAgents() {
+        do {
+            let count = try appController.exportPresetsFromPanel()
+            if count > 0 {
+                setStatus("Exported \(count) agents.", isError: false)
+            }
+        } catch {
+            setStatus("Export failed: \(error.localizedDescription)", isError: true)
+        }
+    }
+
+    private func exportAndSave() {
+        do {
+            let count = try appController.exportPresetsFromPanel()
+            guard count > 0 else {
+                setStatus("Export canceled. Settings were not changed.", isError: false)
+                pendingCleanupPreview = nil
+                return
+            }
+            commitSettings(exportedCount: count)
+        } catch {
+            setStatus("Export failed: \(error.localizedDescription)", isError: true)
+        }
+    }
+
+    private func commitSettings(exportedCount: Int? = nil) {
+        do {
+            let result = try appController.saveSettings(draftSettings)
+            reload()
+            updateDirtyState()
+            pendingCleanupPreview = nil
+
+            let removedCount = result.removedPresets.count
+            if let exportedCount, removedCount > 0 {
+                setStatus("Exported \(exportedCount) agents. Settings saved and removed \(removedCount) incompatible agents.", isError: false)
+            } else if removedCount > 0 {
+                setStatus("Settings saved. Removed \(removedCount) incompatible agents.", isError: false)
+            } else {
+                setStatus("Settings saved.", isError: false)
+            }
+        } catch {
+            setStatus(error.localizedDescription, isError: true)
+        }
+    }
+
+    private func updateDirtyState() {
+        navigationGuard.setDirty(draftState != savedState, for: .settings)
+    }
+}
+
+private struct SettingsDraftState: Equatable {
+    let instanceBaseURL: String
+    let autostartEnabled: Bool
+    let restrictHost: Bool
+    let useRouteReloadForLauncherChats: Bool
+    let launcherOpacity: Double
 }
 
 struct ShortcutPanelView: View {
     @ObservedObject var appController: AppController
+    @EnvironmentObject private var navigationGuard: SettingsNavigationGuard
     @State private var statusMessage = ""
     @State private var statusIsError = false
 
@@ -625,20 +895,6 @@ struct ShortcutPanelView: View {
                     Text("Listening for a shortcut...")
                         .foregroundStyle(.secondary)
                 }
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Runtime Diagnostics")
-                        .font(.headline)
-                    Text("Backend: \(appController.shortcutDiagnostics.backend)")
-                    Text("Active shortcut: \(appController.shortcutDiagnostics.activeShortcut)")
-                    Text("Carbon registered: \(yesNo(appController.shortcutDiagnostics.carbonRegistered))")
-                    Text("Event tap installed: \(yesNo(appController.shortcutDiagnostics.eventTapInstalled))")
-                    Text("Accessibility: \(yesNo(appController.shortcutDiagnostics.accessibilityGranted))")
-                    Text("Input Monitoring: \(yesNo(appController.shortcutDiagnostics.inputMonitoringGranted))")
-                    Text("Last Carbon status: \(appController.shortcutDiagnostics.lastCarbonStatusDescription)")
-                }
-                .font(.footnote)
-                .foregroundStyle(.secondary)
             }
 
             if !statusMessage.isEmpty {
@@ -651,6 +907,19 @@ struct ShortcutPanelView: View {
 
             Spacer()
         }
+        .onAppear {
+            navigationGuard.registerDiscardHandler(for: .shortcuts, handler: discardChanges)
+            updateDirtyState()
+        }
+        .onChange(of: appController.shortcutDraft) { _ in
+            updateDirtyState()
+        }
+        .onChange(of: appController.isRecordingShortcut) { _ in
+            updateDirtyState()
+        }
+        .onChange(of: appController.settings) { _ in
+            updateDirtyState()
+        }
     }
 
     private func setStatus(_ message: String, isError: Bool) {
@@ -658,8 +927,14 @@ struct ShortcutPanelView: View {
         statusIsError = isError
     }
 
-    private func yesNo(_ value: Bool) -> String {
-        value ? "Yes" : "No"
+    private func discardChanges() {
+        appController.discardShortcutDraftChanges()
+        updateDirtyState()
+    }
+
+    private func updateDirtyState() {
+        let isDirty = appController.shortcutDraft != appController.settings.globalShortcut || appController.isRecordingShortcut
+        navigationGuard.setDirty(isDirty, for: .shortcuts)
     }
 }
 
@@ -670,7 +945,7 @@ struct AboutPanelView: View {
         VStack(alignment: .leading, spacing: 16) {
             Text("About")
                 .font(.largeTitle.bold())
-            Text("Quick launcher wrapper for self-hosted Toro Libre instances.")
+            Text("Quick launcher wrapper for self-hosted LibreChat instances.")
                 .foregroundStyle(.secondary)
 
             VStack(alignment: .leading, spacing: 8) {
@@ -779,7 +1054,7 @@ private struct LauncherSearchField: NSViewRepresentable {
         textField.focusRingType = .none
         textField.font = .systemFont(ofSize: 20, weight: .medium)
         textField.alignment = .center
-        textField.placeholderString = "Ask Toro Libre"
+        textField.placeholderString = "Ask Kotoba Libre"
         textField.delegate = context.coordinator
         textField.lineBreakMode = .byTruncatingTail
         return textField
