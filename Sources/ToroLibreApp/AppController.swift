@@ -343,18 +343,18 @@ final class AppController: NSObject, ObservableObject {
         try openURLString(urlString)
     }
 
-    func openPreset(id: String, query: String?) throws {
+    func openPreset(id: String, query: String?, preferMainWindow: Bool = false) throws {
         guard let preset = presets.first(where: { $0.id == id }) else {
             throw ToroLibreError.invalidDestination("Preset '\(id)' not found")
         }
 
         let destination = ToroLibreCore.expandTemplate(preset.urlTemplate, query: query)
-        try openURLString(destination)
+        try openURLString(destination, preferMainWindow: preferMainWindow)
     }
 
-    func openURLString(_ destination: String) throws {
+    func openURLString(_ destination: String, preferMainWindow: Bool = false) throws {
         let target = try ToroLibreCore.enforceDestination(destination, settings: settings)
-        try openResolvedURL(target)
+        try openResolvedURL(target, preferMainWindow: preferMainWindow)
     }
 
     func handleShortcutKeyEvent(_ event: NSEvent) -> Bool {
@@ -386,14 +386,10 @@ final class AppController: NSObject, ObservableObject {
         }
     }
 
-    private func openResolvedURL(_ url: URL) throws {
+    private func openResolvedURL(_ url: URL, preferMainWindow: Bool = false) throws {
         let instanceHost = try ToroLibreCore.settingsInstanceHost(settings)
-        if let instanceHost, let host = url.host, host.caseInsensitiveCompare(instanceHost) != .orderedSame {
-            openExternally(url)
-            return
-        }
 
-        if settings.openInNewWindow {
+        if settings.openInNewWindow && !preferMainWindow {
             let identifier = UUID()
             let controller = SecondaryWebWindowController(
                 url: url,
@@ -413,7 +409,12 @@ final class AppController: NSObject, ObservableObject {
             windowCleanupDelegates[identifier] = cleanupDelegate
             controller.window?.delegate = cleanupDelegate
         } else {
-            mainWindowController.open(url: url, settings: settings, instanceHost: instanceHost)
+            mainWindowController.open(
+                url: url,
+                settings: settings,
+                instanceHost: instanceHost,
+                forceEmbedAllHosts: preferMainWindow
+            )
         }
 
         hideLauncherWindow()

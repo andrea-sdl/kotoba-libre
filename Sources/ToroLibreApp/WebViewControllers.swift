@@ -62,13 +62,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         controller.load(url: homeURL)
     }
 
-    func open(url: URL, settings: AppSettings, instanceHost: String?) {
+    func open(url: URL, settings: AppSettings, instanceHost: String?, forceEmbedAllHosts: Bool = false) {
         let controller = ensureWebController(debugEnabled: settings.debugInWebview)
         window?.contentViewController = controller
         controller.open(
             url: url,
             settings: settings,
-            instanceHost: instanceHost
+            instanceHost: instanceHost,
+            forceEmbedAllHosts: forceEmbedAllHosts
         )
         showAndFocus()
     }
@@ -148,10 +149,15 @@ final class SecondaryWebWindowController: NSWindowController {
 
 @MainActor
 final class WebContentViewController: NSViewController, WKNavigationDelegate {
+    private enum ExternalNavigationPolicy {
+        case singleHost(String?)
+        case embedAllHosts
+    }
+
     let webView: WKWebView
     var externalNavigationHandler: ((URL) -> Void)?
     private var hasLoadedRemoteContent = false
-    private var currentInstanceHost: String?
+    private var externalNavigationPolicy: ExternalNavigationPolicy = .singleHost(nil)
 
     init(debugEnabled: Bool) {
         let configuration = WKWebViewConfiguration()
@@ -184,8 +190,12 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate {
         webView.load(URLRequest(url: url))
     }
 
-    func open(url: URL, settings: AppSettings, instanceHost: String?) {
-        currentInstanceHost = instanceHost
+    func open(url: URL, settings: AppSettings, instanceHost: String?, forceEmbedAllHosts: Bool = false) {
+        if forceEmbedAllHosts {
+            externalNavigationPolicy = .embedAllHosts
+        } else {
+            externalNavigationPolicy = .singleHost(embeddedHost(for: url, instanceHost: instanceHost, settings: settings))
+        }
 
         if ToroLibreCore.canUseSPANavigation(instanceHost: instanceHost, url: url), hasLoadedRemoteContent {
             let script = spaNavigationScript(
@@ -214,10 +224,16 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate {
             return
         }
 
-        if let currentInstanceHost, let host = url.host, host.caseInsensitiveCompare(currentInstanceHost) != .orderedSame {
-            externalNavigationHandler?(url)
-            decisionHandler(.cancel)
+        switch externalNavigationPolicy {
+        case .embedAllHosts:
+            decisionHandler(.allow)
             return
+        case let .singleHost(currentEmbeddedHost):
+            if let currentEmbeddedHost, let host = url.host, host.caseInsensitiveCompare(currentEmbeddedHost) != .orderedSame {
+                externalNavigationHandler?(url)
+                decisionHandler(.cancel)
+                return
+            }
         }
 
         decisionHandler(.allow)
@@ -225,6 +241,22 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate {
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         hasLoadedRemoteContent = true
+    }
+
+    private func embeddedHost(for url: URL, instanceHost: String?, settings: AppSettings) -> String? {
+        if settings.restrictHostToInstanceHost {
+            return instanceHost
+        }
+
+        guard let host = url.host?.lowercased() else {
+            return instanceHost
+        }
+
+        if let instanceHost, host.caseInsensitiveCompare(instanceHost) == .orderedSame {
+            return instanceHost
+        }
+
+        return host
     }
 
     private func spaNavigationScript(destination: String, debugEnabled: Bool, useRouteReload: Bool) -> String {
