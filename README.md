@@ -168,6 +168,10 @@ Validate the version before release:
 Unsigned release automation is defined in `.github/workflows/release.yml`.
 The release workflow is launched manually from the default branch, creates the release tag for the selected `patch` / `minor` / `major` bump, publishes only the unsigned DMG to GitHub Releases, and then advances `VERSION` to the next `-dev` version on the default branch.
 
+## License
+
+Kotoba Libre is licensed under the GNU General Public License v2.0. See [LICENSE](/Users/andreagrassi/Documents/GitHub/tauri-a8chat/LICENSE).
+
 More detail:
 
 - [Architecture](/Users/andreagrassi/WebstormProjects/toro-libre/docs/architecture.md)
