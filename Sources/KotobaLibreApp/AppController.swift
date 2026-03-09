@@ -6,6 +6,19 @@ import KotobaLibreCore
 
 @MainActor
 final class AppController: NSObject, ObservableObject {
+    enum RuntimeMode {
+        case standard
+        case smokeTest
+
+        var shouldRegisterSystemIntegrations: Bool {
+            self == .standard
+        }
+
+        var shouldOpenExternalURLs: Bool {
+            self == .standard
+        }
+    }
+
     struct ShortcutDiagnostics {
         let activeShortcut: String
         let backend: String
@@ -25,6 +38,16 @@ final class AppController: NSObject, ObservableObject {
         let removedPresets: [Preset]
     }
 
+    struct SmokeTestSnapshot {
+        let hasInstanceBaseURL: Bool
+        let presetCount: Int
+        let defaultPresetID: String?
+        let mainWindowVisible: Bool
+        let settingsWindowVisible: Bool
+        let launcherWindowVisible: Bool
+        let mainContentKind: MainWindowController.ContentKind
+    }
+
     @Published private(set) var settings: AppSettings = AppSettings()
     @Published private(set) var presets: [Preset] = []
     @Published private(set) var shortcutRegistrationIssue: String?
@@ -41,14 +64,16 @@ final class AppController: NSObject, ObservableObject {
     @Published var isRecordingShortcut = false
 
     private let store: AppDataStore
+    private let runtimeMode: RuntimeMode
     private let shortcutRegistrar = GlobalShortcutRegistrar()
     private var statusItem: NSStatusItem?
     private lazy var mainWindowController = MainWindowController(appController: self, store: store)
     private lazy var settingsWindowController = SettingsWindowController(appController: self)
     private lazy var launcherWindowController = LauncherWindowController(appController: self)
 
-    override init() {
-        self.store = try! AppDataStore()
+    init(store: AppDataStore? = nil, runtimeMode: RuntimeMode = .standard) {
+        self.store = try! (store ?? AppDataStore())
+        self.runtimeMode = runtimeMode
         super.init()
     }
 
@@ -74,8 +99,12 @@ final class AppController: NSObject, ObservableObject {
         setupApplicationMenu()
         applyAppIcon()
         applyAppVisibilityMode(settings.appVisibilityMode)
-        try? syncAutostart(enabled: settings.autostartEnabled)
-        registerGlobalShortcutIfPossible(promptForPermission: false)
+        if runtimeMode.shouldRegisterSystemIntegrations {
+            try? syncAutostart(enabled: settings.autostartEnabled)
+            registerGlobalShortcutIfPossible(promptForPermission: false)
+        } else {
+            refreshShortcutDiagnostics()
+        }
         refreshMainWindowContent(openHomeIfNeeded: settings.instanceBaseUrl != nil)
         launcherWindowController.prepare()
         mainWindowController.showAndFocus()
@@ -128,6 +157,10 @@ final class AppController: NSObject, ObservableObject {
     }
 
     func openExternally(_ url: URL) {
+        guard runtimeMode.shouldOpenExternalURLs else {
+            return
+        }
+
         NSWorkspace.shared.open(url)
     }
 
@@ -193,15 +226,25 @@ final class AppController: NSObject, ObservableObject {
             if !removedPresetIDs.isEmpty {
                 try persistPresets()
             }
-            try syncAutostart(enabled: normalized.autostartEnabled)
+            if runtimeMode.shouldRegisterSystemIntegrations {
+                try syncAutostart(enabled: normalized.autostartEnabled)
+            }
             applyAppVisibilityMode(normalized.appVisibilityMode)
         } catch {
             restoreTransientState(settings: previousSettings, presets: previousPresets)
-            registerGlobalShortcutIfPossible(promptForPermission: false)
+            if runtimeMode.shouldRegisterSystemIntegrations {
+                registerGlobalShortcutIfPossible(promptForPermission: false)
+            } else {
+                refreshShortcutDiagnostics()
+            }
             throw error
         }
 
-        registerGlobalShortcutIfPossible(promptForPermission: true)
+        if runtimeMode.shouldRegisterSystemIntegrations {
+            registerGlobalShortcutIfPossible(promptForPermission: true)
+        } else {
+            refreshShortcutDiagnostics()
+        }
         refreshMainWindowContent(openHomeIfNeeded: previousSettings.instanceBaseUrl != normalized.instanceBaseUrl)
         if normalized.instanceBaseUrl != nil {
             mainWindowController.showAndFocus()
@@ -231,9 +274,15 @@ final class AppController: NSObject, ObservableObject {
         settingsWindowController.hide()
 
         do {
-            try syncAutostart(enabled: false)
+            if runtimeMode.shouldRegisterSystemIntegrations {
+                try syncAutostart(enabled: false)
+            }
         } catch {
-            registerGlobalShortcutIfPossible(promptForPermission: false)
+            if runtimeMode.shouldRegisterSystemIntegrations {
+                registerGlobalShortcutIfPossible(promptForPermission: false)
+            } else {
+                refreshShortcutDiagnostics()
+            }
             refreshMainWindowContent(openHomeIfNeeded: false)
             mainWindowController.resetToDefaultSize()
             mainWindowController.showAndFocus()
@@ -241,7 +290,11 @@ final class AppController: NSObject, ObservableObject {
         }
 
         applyAppVisibilityMode(settings.appVisibilityMode)
-        registerGlobalShortcutIfPossible(promptForPermission: false)
+        if runtimeMode.shouldRegisterSystemIntegrations {
+            registerGlobalShortcutIfPossible(promptForPermission: false)
+        } else {
+            refreshShortcutDiagnostics()
+        }
         refreshMainWindowContent(openHomeIfNeeded: false)
         mainWindowController.resetToDefaultSize()
         mainWindowController.showAndFocus()
@@ -453,6 +506,18 @@ final class AppController: NSObject, ObservableObject {
         )
 
         hideLauncherWindow()
+    }
+
+    func smokeTestSnapshot() -> SmokeTestSnapshot {
+        SmokeTestSnapshot(
+            hasInstanceBaseURL: settings.instanceBaseUrl != nil,
+            presetCount: presets.count,
+            defaultPresetID: settings.defaultPresetId,
+            mainWindowVisible: mainWindowController.window?.isVisible ?? false,
+            settingsWindowVisible: settingsWindowController.isVisible,
+            launcherWindowVisible: launcherWindowController.isVisible,
+            mainContentKind: mainWindowController.contentKind
+        )
     }
 
     private func persistSettings() throws {

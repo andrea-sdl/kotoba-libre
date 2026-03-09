@@ -65,6 +65,12 @@ Run the self-test suite:
 swift run KotobaLibreSelfTest
 ```
 
+Run the native GUI smoke test against an isolated temporary app-data directory:
+
+```bash
+swift run KotobaLibreApp --smoke-test
+```
+
 Launch the app directly from SwiftPM:
 
 ```bash

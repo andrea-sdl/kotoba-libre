@@ -1,12 +1,23 @@
 import AppKit
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    @MainActor private let appController: AppController
+    @MainActor private let didFinishLaunchingHandler: ((AppController) -> Void)?
+
     @MainActor
-    private lazy var appController = AppController()
+    init(
+        appController: AppController = AppController(),
+        didFinishLaunchingHandler: ((AppController) -> Void)? = nil
+    ) {
+        self.appController = appController
+        self.didFinishLaunchingHandler = didFinishLaunchingHandler
+        super.init()
+    }
 
     @MainActor
     func applicationDidFinishLaunching(_ notification: Notification) {
         appController.start()
+        didFinishLaunchingHandler?(appController)
     }
 
     @MainActor

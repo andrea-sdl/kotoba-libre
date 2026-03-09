@@ -28,6 +28,12 @@ Run the regression suite:
 swift run KotobaLibreSelfTest
 ```
 
+Run the native GUI smoke test:
+
+```bash
+swift run KotobaLibreApp --smoke-test
+```
+
 Build the distributable app and unsigned archives:
 
 ```bash
@@ -38,8 +44,9 @@ Build the distributable app and unsigned archives:
 
 1. Make code changes in `Sources/`.
 2. Run `swift run KotobaLibreSelfTest` after touching core behavior.
-3. Run `swift run KotobaLibreApp` when you need a manual UI or system-integration check.
-4. Run `./scripts/build-app.sh` before finishing work.
+3. Run `swift run KotobaLibreApp --smoke-test` for an automated native UI smoke test.
+4. Run `swift run KotobaLibreApp` when you need a manual UI or system-integration check.
+5. Run `./scripts/build-app.sh` before finishing work.
 
 ## Where To Make Changes
 
