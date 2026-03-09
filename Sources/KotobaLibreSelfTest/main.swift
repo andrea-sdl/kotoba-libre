@@ -104,6 +104,32 @@ struct KotobaLibreSelfTest {
         expect(normalizedPresets[0].tags == ["support"], "loadedPresets normalize tags")
         expect(normalizedPresets[1].updatedAt == "unix-ms-1", "loadedPresets backfill updatedAt")
 
+        let existingPreset = Preset(
+            id: "preset-1",
+            name: "Support Agent",
+            urlTemplate: "https://chat.example.com/c/new?agent_id=1",
+            kind: .agent,
+            tags: ["support"],
+            createdAt: "unix-ms-old",
+            updatedAt: "unix-ms-old"
+        )
+        let editedPreset = Preset(
+            id: "preset-1",
+            name: "Updated Support Agent",
+            urlTemplate: "https://chat.example.com/c/new?agent_id=2",
+            kind: .agent,
+            tags: ["support", "ops"],
+            createdAt: "unix-ms-ignored",
+            updatedAt: "unix-ms-ignored"
+        )
+        let normalizedEditedPreset = KotobaLibreCore.normalizePreset(
+            editedPreset,
+            existing: existingPreset,
+            now: "unix-ms-new"
+        )
+        expect(normalizedEditedPreset.createdAt == "unix-ms-old", "normalizePresetPreservesCreatedAtForExisting")
+        expect(normalizedEditedPreset.updatedAt == "unix-ms-new", "normalizePresetRefreshesUpdatedAtForExisting")
+
         let mismatchedPreset = Preset(id: "id-1", name: "Support Agent", urlTemplate: "https://other.example.com/c/new?agent_id=1", kind: .agent, tags: [], createdAt: "unix-ms-1", updatedAt: "unix-ms-2")
         expect(KotobaLibreCore.validateImportCompatibility(mismatchedPreset, allowedHost: "chat.example.com", row: 1) != nil, "importValidationRejectsHostMismatch")
 
@@ -156,7 +182,7 @@ struct KotobaLibreSelfTest {
         expect(try store.loadPresets().isEmpty, "storeResetLoadsEmptyPresets")
 
         if failures.isEmpty {
-            print("KotobaLibreSelfTest: all checks passed (\(43) assertions)")
+            print("KotobaLibreSelfTest: all checks passed (\(45) assertions)")
             return
         }
 
