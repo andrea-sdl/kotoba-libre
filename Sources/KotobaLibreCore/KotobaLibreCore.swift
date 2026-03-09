@@ -35,7 +35,6 @@ public struct Preset: Codable, Equatable, Identifiable, Sendable {
     public var name: String
     public var urlTemplate: String
     public var kind: PresetKind
-    public var tags: [String]
     public var createdAt: String
     public var updatedAt: String
 
@@ -44,7 +43,6 @@ public struct Preset: Codable, Equatable, Identifiable, Sendable {
         name: String,
         urlTemplate: String,
         kind: PresetKind,
-        tags: [String],
         createdAt: String,
         updatedAt: String
     ) {
@@ -52,7 +50,6 @@ public struct Preset: Codable, Equatable, Identifiable, Sendable {
         self.name = name
         self.urlTemplate = urlTemplate
         self.kind = kind
-        self.tags = tags
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }
@@ -274,17 +271,6 @@ public enum KotobaLibreCore {
         return normalized
     }
 
-    public static func normalizeTags(_ tags: [String]) -> [String] {
-        Array(
-            Set(
-                tags
-                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                    .filter { !$0.isEmpty }
-            )
-        )
-        .sorted()
-    }
-
     public static func normalizePreset(_ preset: Preset, existing: Preset? = nil, now: String = nowMarker()) -> Preset {
         // Existing presets keep their original creation time. New saves always refresh updatedAt.
         let presetID = preset.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -314,7 +300,6 @@ public enum KotobaLibreCore {
             name: preset.name.trimmingCharacters(in: .whitespacesAndNewlines),
             urlTemplate: preset.urlTemplate.trimmingCharacters(in: .whitespacesAndNewlines),
             kind: preset.kind,
-            tags: normalizeTags(preset.tags),
             createdAt: createdAt,
             updatedAt: updatedAt
         )
@@ -336,7 +321,6 @@ public enum KotobaLibreCore {
 
             current.name = current.name.trimmingCharacters(in: .whitespacesAndNewlines)
             current.urlTemplate = current.urlTemplate.trimmingCharacters(in: .whitespacesAndNewlines)
-            current.tags = normalizeTags(current.tags)
 
             let trimmedCreatedAt = current.createdAt.trimmingCharacters(in: .whitespacesAndNewlines)
             let trimmedUpdatedAt = current.updatedAt.trimmingCharacters(in: .whitespacesAndNewlines)

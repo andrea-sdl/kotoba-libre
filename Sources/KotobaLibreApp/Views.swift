@@ -342,7 +342,7 @@ struct SettingsRootView: View {
                 .tag(SettingsTab.about)
         }
         .padding(20)
-        .frame(minWidth: 980, alignment: .topLeading)
+        .frame(minWidth: 980, minHeight: 560, alignment: .topLeading)
         .onChange(of: selectedTab) { nextTab in
             guard !isIgnoringNextSelectionChange else {
                 isIgnoringNextSelectionChange = false
@@ -397,11 +397,6 @@ struct AgentEditorFields: View {
             }
         }
         TextField("Configured URL", text: $draft.urlTemplate)
-        TextField("Tags", text: Binding(
-            get: { draft.tags.joined(separator: ", ") },
-            // The text field edits one comma-separated string, but the model stores an array.
-            set: { draft.tags = $0.split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) } }
-        ))
 
         let validation = KotobaLibreCore.validateURLTemplate(draft.urlTemplate)
         Text(validation.valid ? "Template looks valid." : (validation.reason ?? "Invalid URL template."))
@@ -415,7 +410,7 @@ struct AgentManagerView: View {
     @ObservedObject var appController: AppController
     @EnvironmentObject private var navigationGuard: SettingsNavigationGuard
     @State private var selectedPresetID: String?
-    @State private var draft = Preset(id: "", name: "", urlTemplate: "https://", kind: .agent, tags: [], createdAt: "", updatedAt: "")
+    @State private var draft = Preset(id: "", name: "", urlTemplate: "https://", kind: .agent, createdAt: "", updatedAt: "")
     @State private var statusMessage = ""
     @State private var statusIsError = false
     @State private var didLoadInitialDraft = false
@@ -484,6 +479,7 @@ struct AgentManagerView: View {
                     .foregroundStyle(statusIsError ? Color.red : .secondary)
             }
         }
+        .frame(minHeight: 520, alignment: .topLeading)
         .onAppear {
             navigationGuard.registerDiscardHandler(for: .agents, handler: discardChanges)
             guard !didLoadInitialDraft else {
@@ -660,18 +656,16 @@ private struct EmptyAgentStateView: View {
     }
 }
 
-// Draft state strips whitespace and tag ordering so the dirty check compares user intent, not formatting.
+// Draft state strips whitespace so the dirty check compares user intent, not formatting.
 private struct PresetDraftState: Equatable {
     let name: String
     let urlTemplate: String
     let kind: PresetKind
-    let tags: [String]
 
     init(preset: Preset) {
         self.name = preset.name.trimmingCharacters(in: .whitespacesAndNewlines)
         self.urlTemplate = preset.urlTemplate.trimmingCharacters(in: .whitespacesAndNewlines)
         self.kind = preset.kind
-        self.tags = KotobaLibreCore.normalizeTags(preset.tags)
     }
 }
 

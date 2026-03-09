@@ -3,7 +3,7 @@ import SwiftUI
 import KotobaLibreCore
 
 // These bounds keep the settings window comfortably readable while still fitting on smaller displays.
-private let minimumSettingsContentSize = NSSize(width: 980, height: 420)
+private let minimumSettingsContentSize = NSSize(width: 980, height: 560)
 
 // AutoSizingHostingController reports SwiftUI's fitted size back to AppKit so the window can follow it.
 @MainActor
