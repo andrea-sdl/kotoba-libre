@@ -8,6 +8,12 @@ private let minimumMainWindowSize = NSSize(width: 800, height: 600)
 
 @MainActor
 final class MainWindowController: NSWindowController, NSWindowDelegate {
+    enum ContentKind: String {
+        case onboarding
+        case web
+        case unknown
+    }
+
     private weak var appController: AppController?
     private let store: AppDataStore
     private var webController: WebContentViewController?
@@ -107,6 +113,22 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
     func persistStateForTermination() {
         persistWindowFrame()
+    }
+
+    var contentKind: ContentKind {
+        guard let contentViewController = window?.contentViewController else {
+            return .unknown
+        }
+
+        if contentViewController is WebContentViewController {
+            return .web
+        }
+
+        if contentViewController is NSHostingController<OnboardingFlowView> {
+            return .onboarding
+        }
+
+        return .unknown
     }
 
     private func ensureWebController() -> WebContentViewController {

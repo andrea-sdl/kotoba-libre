@@ -7,6 +7,10 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private weak var appController: AppController?
     private var eventMonitor: Any?
 
+    var isVisible: Bool {
+        window?.isVisible ?? false
+    }
+
     init(appController: AppController) {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1220, height: 600),
