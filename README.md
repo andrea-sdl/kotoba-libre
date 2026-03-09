@@ -144,7 +144,7 @@ Kotoba Libre currently supports:
 - `https://.../app/preset/<presetId>?query=<encoded_query>`
 - `https://.../app/settings`
 
-See [docs/architecture.md](/Users/andreagrassi/WebstormProjects/toro-libre/docs/architecture.md) for behavior details.
+See [docs/architecture.md](docs/architecture.md) for behavior details.
 
 ## Data Storage
 
@@ -170,10 +170,10 @@ The release workflow is launched manually from the default branch, creates the r
 
 ## License
 
-Kotoba Libre is licensed under the GNU General Public License v2.0. See [LICENSE](/Users/andreagrassi/Documents/GitHub/tauri-a8chat/LICENSE).
+Kotoba Libre is licensed under the GNU General Public License v2.0. See [LICENSE](LICENSE).
 
 More detail:
 
-- [Architecture](/Users/andreagrassi/WebstormProjects/toro-libre/docs/architecture.md)
-- [Development](/Users/andreagrassi/WebstormProjects/toro-libre/docs/development.md)
-- [Release](/Users/andreagrassi/WebstormProjects/toro-libre/docs/release.md)
+- [Architecture](docs/architecture.md)
+- [Development](docs/development.md)
+- [Release](docs/release.md)

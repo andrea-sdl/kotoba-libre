@@ -35,7 +35,7 @@ Kotoba Libre now ships as a Swift Package Manager app with:
 
 ## Canonical References
 
-- Product and technical overview: [README.md](/Users/andreagrassi/WebstormProjects/toro-libre/README.md)
-- Architecture: [docs/architecture.md](/Users/andreagrassi/WebstormProjects/toro-libre/docs/architecture.md)
-- Development workflow: [docs/development.md](/Users/andreagrassi/WebstormProjects/toro-libre/docs/development.md)
-- Release workflow: [docs/release.md](/Users/andreagrassi/WebstormProjects/toro-libre/docs/release.md)
+- Product and technical overview: [README.md](./README.md)
+- Architecture: [docs/architecture.md](./docs/architecture.md)
+- Development workflow: [docs/development.md](./docs/development.md)
+- Release workflow: [docs/release.md](./docs/release.md)

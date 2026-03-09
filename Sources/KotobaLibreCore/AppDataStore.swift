@@ -1,5 +1,6 @@
 import Foundation
 
+// AppDataStore is the file-backed persistence layer for settings, presets, and window frame state.
 public final class AppDataStore: @unchecked Sendable {
     public let baseDirectory: URL
     public let settingsURL: URL
@@ -16,6 +17,7 @@ public final class AppDataStore: @unchecked Sendable {
         if let baseDirectory {
             self.baseDirectory = baseDirectory
         } else {
+            // Real app data lives in Application Support under the current app display name.
             let appSupport = try fileManager.url(
                 for: .applicationSupportDirectory,
                 in: .userDomainMask,
@@ -48,6 +50,7 @@ public final class AppDataStore: @unchecked Sendable {
             return AppSettings()
         }
 
+        // Loaded settings are normalized so older files still produce current defaults.
         let data = try Data(contentsOf: settingsURL)
         let decoded = try decoder.decode(AppSettings.self, from: data)
         return KotobaLibreCore.normalizeSettings(decoded)
@@ -65,6 +68,7 @@ public final class AppDataStore: @unchecked Sendable {
             return []
         }
 
+        // Loading can repair duplicate ids and missing timestamps from older exports.
         let data = try Data(contentsOf: presetsURL)
         let decoded = try decoder.decode([Preset].self, from: data)
         let normalized = KotobaLibreCore.normalizeLoadedPresets(decoded)
@@ -101,6 +105,7 @@ public final class AppDataStore: @unchecked Sendable {
     }
 
     public func resetConfiguration() throws {
+        // Reset removes only generated config files. The directory itself can stay in place.
         try removeItemIfPresent(at: settingsURL)
         try removeItemIfPresent(at: presetsURL)
         try removeItemIfPresent(at: mainWindowStateURL)
@@ -125,6 +130,7 @@ public final class AppDataStore: @unchecked Sendable {
         to newBaseDirectory: URL,
         fileManager: FileManager
     ) throws {
+        // The app was renamed. This migration keeps older installs from losing their saved config.
         guard !fileManager.fileExists(atPath: newBaseDirectory.path) else {
             return
         }

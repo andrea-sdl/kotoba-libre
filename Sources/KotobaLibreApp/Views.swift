@@ -2,6 +2,8 @@ import AppKit
 import SwiftUI
 import KotobaLibreCore
 
+// This file holds the SwiftUI surface of the app:
+// onboarding, settings tabs, and the floating launcher UI.
 private enum OnboardingStep: Int, CaseIterable {
     case instance
     case shortcut
@@ -20,6 +22,7 @@ private enum OnboardingField: Hashable {
     case instanceBaseURL
 }
 
+// OnboardingFlowView is the first-run experience shown when no instance URL exists yet.
 struct OnboardingFlowView: View {
     @ObservedObject var appController: AppController
     @State private var currentStep: OnboardingStep = .instance
@@ -191,6 +194,7 @@ struct OnboardingFlowView: View {
     }
 
     private var instanceValidation: ValidationResult {
+        // Validation delegates to the core URL rules, so onboarding matches later save behavior.
         let candidate = instanceBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !candidate.isEmpty else {
             return ValidationResult(valid: false, reason: "Enter your LibreChat base URL to continue.")
@@ -205,6 +209,7 @@ struct OnboardingFlowView: View {
     }
 
     private func submitCurrentStep() {
+        // The first step validates locally. The second step performs the real persisted save.
         switch currentStep {
         case .instance:
             guard instanceValidation.valid else {
@@ -235,6 +240,7 @@ struct OnboardingFlowView: View {
     }
 }
 
+// The preview renders stored shortcut tokens as small keycaps.
 private struct ShortcutPreviewView: View {
     let shortcut: String
 
@@ -251,6 +257,7 @@ private struct ShortcutPreviewView: View {
     }
 }
 
+// Stored shortcut tokens use web-style names. This helper turns them into Mac glyphs.
 private func shortcutDisplayParts(_ shortcut: String) -> [String] {
     shortcut.split(separator: "+").map { token in
         switch token {
@@ -275,6 +282,7 @@ private enum SettingsTab: Int, Hashable {
     case about
 }
 
+// SettingsNavigationGuard tracks which tab has unsaved edits and how to discard them.
 @MainActor
 private final class SettingsNavigationGuard: ObservableObject {
     private var dirtyTabs = Set<SettingsTab>()
@@ -302,6 +310,7 @@ private final class SettingsNavigationGuard: ObservableObject {
     }
 }
 
+// SettingsRootView hosts the tab shell and prevents tab switches when the current tab is dirty.
 struct SettingsRootView: View {
     @ObservedObject var appController: AppController
     @StateObject private var navigationGuard = SettingsNavigationGuard()
@@ -345,6 +354,7 @@ struct SettingsRootView: View {
             }
 
             if navigationGuard.isDirty(committedTab) {
+                // The selection is reverted first, then the alert decides whether the switch can continue.
                 pendingTab = nextTab
                 isIgnoringNextSelectionChange = true
                 selectedTab = committedTab
@@ -375,6 +385,7 @@ struct SettingsRootView: View {
     }
 }
 
+// AgentManagerView edits the preset list used by the launcher and deep links.
 struct AgentManagerView: View {
     @ObservedObject var appController: AppController
     @EnvironmentObject private var navigationGuard: SettingsNavigationGuard
@@ -419,6 +430,7 @@ struct AgentManagerView: View {
                     }
                 }
                 .onChange(of: selectedPresetID) { newValue in
+                    // Selecting a row replaces the editable draft with the saved preset.
                     guard let newValue, let preset = appController.presets.first(where: { $0.id == newValue }) else {
                         return
                     }
@@ -435,6 +447,7 @@ struct AgentManagerView: View {
                     TextField("Configured URL", text: $draft.urlTemplate)
                     TextField("Tags", text: Binding(
                         get: { draft.tags.joined(separator: ", ") },
+                        // The text field edits one comma-separated string, but the model stores an array.
                         set: { draft.tags = $0.split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) } }
                     ))
 
@@ -569,6 +582,7 @@ struct AgentManagerView: View {
     }
 
     private var baselineSnapshot: PresetDraftState {
+        // The dirty check compares the form against the selected preset, or against a fresh empty preset.
         if let selectedPresetID, let preset = appController.presets.first(where: { $0.id == selectedPresetID }) {
             return PresetDraftState(preset: preset)
         }
@@ -589,6 +603,7 @@ struct AgentManagerView: View {
     }
 }
 
+// The star button lives inside the row so default selection stays discoverable next to each preset.
 private struct AgentListRow: View {
     let preset: Preset
     let isDefault: Bool
@@ -617,6 +632,7 @@ private struct AgentListRow: View {
     }
 }
 
+// Empty state copy explains why the launcher may currently have nothing to run.
 private struct EmptyAgentStateView: View {
     var body: some View {
         VStack(spacing: 10) {
@@ -635,6 +651,7 @@ private struct EmptyAgentStateView: View {
     }
 }
 
+// Draft state strips whitespace and tag ordering so the dirty check compares user intent, not formatting.
 private struct PresetDraftState: Equatable {
     let name: String
     let urlTemplate: String
@@ -649,6 +666,7 @@ private struct PresetDraftState: Equatable {
     }
 }
 
+// These labels are written for the settings screen, not for serialization.
 private extension AppVisibilityMode {
     var settingsLabel: String {
         switch self {
@@ -673,6 +691,7 @@ private extension AppVisibilityMode {
     }
 }
 
+// SettingsPanelView edits app-wide behavior such as host restriction, login launch, and visibility mode.
 struct SettingsPanelView: View {
     @ObservedObject var appController: AppController
     @EnvironmentObject private var navigationGuard: SettingsNavigationGuard
@@ -795,6 +814,7 @@ struct SettingsPanelView: View {
     }
 
     private func reload() {
+        // The UI edits local @State first so changes can be canceled before saving.
         instanceBaseURL = appController.settings.instanceBaseUrl ?? ""
         autostartEnabled = appController.settings.autostartEnabled
         restrictHost = appController.settings.restrictHostToInstanceHost
@@ -808,6 +828,7 @@ struct SettingsPanelView: View {
         do {
             let preview = try resolveCurrentPreview()
             if !preview.incompatiblePresets.isEmpty {
+                // Host changes can invalidate saved presets, so the user gets a cleanup confirmation first.
                 pendingCleanupPreview = preview
                 isShowingCompatibilityConfirmation = true
                 return
@@ -937,6 +958,7 @@ struct SettingsPanelView: View {
 
     private func refreshPreviewState() {
         do {
+            // Previewing here powers both the live warning text and the dirty-state tracking.
             liveCompatibilityPreview = try appController.previewSettingsChange(draftSettings)
             liveValidationIssue = nil
         } catch {
@@ -955,6 +977,7 @@ struct SettingsPanelView: View {
     }
 }
 
+// SettingsDraftState holds only the fields that belong to the Settings tab dirty check.
 private struct SettingsDraftState: Equatable {
     let instanceBaseURL: String
     let autostartEnabled: Bool
@@ -965,6 +988,7 @@ private struct SettingsDraftState: Equatable {
     let appVisibilityMode: AppVisibilityMode
 }
 
+// ShortcutPanelView lets the user record and save the global launcher shortcut.
 struct ShortcutPanelView: View {
     @ObservedObject var appController: AppController
     @EnvironmentObject private var navigationGuard: SettingsNavigationGuard
@@ -1050,11 +1074,13 @@ struct ShortcutPanelView: View {
     }
 
     private func updateDirtyState() {
+        // Recording mode counts as unsaved work because the user has started an in-progress edit.
         let isDirty = appController.shortcutDraft != appController.settings.globalShortcut || appController.isRecordingShortcut
         navigationGuard.setDirty(isDirty, for: .shortcuts)
     }
 }
 
+// AboutPanelView is intentionally simple. It acts as a quick usage guide inside the app.
 struct AboutPanelView: View {
     let openSettings: () -> Void
 
@@ -1078,6 +1104,7 @@ struct AboutPanelView: View {
     }
 }
 
+// LauncherRootView is the compact overlay shown when the global shortcut fires.
 struct LauncherRootView: View {
     @ObservedObject var viewModel: LauncherViewModel
 
@@ -1147,6 +1174,7 @@ struct LauncherRootView: View {
     }
 }
 
+// NSTextField is used here because SwiftUI's text field is harder to fine-tune inside an NSPanel.
 private struct LauncherSearchField: NSViewRepresentable {
     @Binding var text: String
     let focusToken: UUID
@@ -1180,6 +1208,7 @@ private struct LauncherSearchField: NSViewRepresentable {
         if context.coordinator.lastFocusToken != focusToken {
             context.coordinator.lastFocusToken = focusToken
             DispatchQueue.main.async {
+                // Focus is assigned asynchronously because the window may not be key yet during update.
                 guard let window = nsView.window else {
                     return
                 }
@@ -1194,6 +1223,7 @@ private struct LauncherSearchField: NSViewRepresentable {
     }
 }
 
+// The coordinator bridges AppKit text field delegate callbacks back into SwiftUI bindings.
 private final class Coordinator: NSObject, NSTextFieldDelegate {
     @Binding private var text: String
     private let onSubmit: () -> Void
@@ -1221,6 +1251,7 @@ private final class Coordinator: NSObject, NSTextFieldDelegate {
     }
 }
 
+// The app logo is reused in onboarding and settings headers.
 struct AppLogoView: View {
     private static let iconImage = AppResources.iconPNGURL.flatMap(NSImage.init(contentsOf:))
 

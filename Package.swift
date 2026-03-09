@@ -2,6 +2,8 @@
 
 import PackageDescription
 
+// This manifest describes the desktop app, the shared core module,
+// and the executable self-test suite.
 let package = Package(
     name: "KotobaLibre",
     platforms: [
@@ -24,6 +26,7 @@ let package = Package(
     targets: [
         .target(
             name: "KotobaLibreCore",
+            // Shared resources live with the core target so both the app and tests can find them.
             resources: [
                 .process("Resources")
             ]

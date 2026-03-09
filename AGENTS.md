@@ -35,11 +35,10 @@ Always run `./scripts/build-app.sh` when you finish a code change.
 
 - The app uses AppKit windows with SwiftUI content and WebKit embedding.
 - First launch and config reset should route through the native onboarding flow.
-- The main window defaults to `800x600`; avoid introducing docs or code that assume the older large-window defaults.
 - Global shortcut capture and registration rely on Carbon and accessibility/input-monitoring behavior on macOS.
+- Always document every file with short and meaningful comments to help someone reading the code.
 
 ## Documentation Expectations
 
 - Keep docs aligned with the current SwiftPM/AppKit/SwiftUI/WebKit stack.
-- Do not reintroduce Tauri, Vite, Rust, or TypeScript references unless the codebase actually adds them back.
 - Update `README.md` and any affected docs in `docs/` when changing app flows, build commands, or release behavior.

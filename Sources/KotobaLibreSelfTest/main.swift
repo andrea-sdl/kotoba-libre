@@ -1,11 +1,14 @@
 import Foundation
 import KotobaLibreCore
 
+// This is a lightweight executable regression suite for the core module.
+// The project uses it instead of `swift test` for simple local and CI validation.
 @main
 struct KotobaLibreSelfTest {
     static func main() throws {
         var failures: [String] = []
 
+        // Local helpers collect failures so the suite can report all broken behaviors in one run.
         func expect(_ condition: @autoclosure () throws -> Bool, _ message: String) {
             do {
                 if try !condition() {
@@ -24,6 +27,7 @@ struct KotobaLibreSelfTest {
             }
         }
 
+        // Most URL policy tests share the same host-restricted baseline settings.
         func settingsRestrictingHost() -> AppSettings {
             AppSettings(
                 instanceBaseUrl: "https://chat.example.com",
@@ -188,6 +192,7 @@ struct KotobaLibreSelfTest {
             return
         }
 
+        // CI and scripts read stderr on failure, so the report is printed there.
         fputs("KotobaLibreSelfTest failures:\n", stderr)
         for failure in failures {
             fputs("- \(failure)\n", stderr)
