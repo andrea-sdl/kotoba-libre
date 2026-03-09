@@ -613,22 +613,22 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate {
         decidePolicyFor navigationAction: WKNavigationAction,
         decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void
     ) {
-        guard let url = navigationAction.request.url, url.scheme?.lowercased() == "https" else {
+        guard let url = navigationAction.request.url else {
             decisionHandler(.allow)
             return
         }
 
-        switch externalNavigationPolicy {
+        let currentEmbeddedHost: String? = switch externalNavigationPolicy {
         case .embedAllHosts:
-            decisionHandler(.allow)
+            webView.url?.host?.lowercased()
+        case let .singleHost(host):
+            host ?? webView.url?.host?.lowercased()
+        }
+
+        if shouldOpenExternally(url, currentEmbeddedHost: currentEmbeddedHost) {
+            externalNavigationHandler?(url)
+            decisionHandler(.cancel)
             return
-        case let .singleHost(currentEmbeddedHost):
-            // Cross-host links are opened externally so the embedded view stays scoped to the chosen instance.
-            if let currentEmbeddedHost, let host = url.host, host.caseInsensitiveCompare(currentEmbeddedHost) != .orderedSame {
-                externalNavigationHandler?(url)
-                decisionHandler(.cancel)
-                return
-            }
         }
 
         decisionHandler(.allow)
@@ -662,6 +662,23 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate {
         }
 
         return host
+    }
+
+    private func shouldOpenExternally(_ url: URL, currentEmbeddedHost: String?) -> Bool {
+        let scheme = url.scheme?.lowercased()
+        if scheme != "https" {
+            return true
+        }
+
+        guard let currentEmbeddedHost else {
+            return false
+        }
+
+        guard let host = url.host?.lowercased() else {
+            return true
+        }
+
+        return host.caseInsensitiveCompare(currentEmbeddedHost) != .orderedSame
     }
 
     private static let loggerBootstrapScript = """
@@ -733,17 +750,13 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate {
       const readCandidate = () => {
         try {
           const url = new URL(window.location.href);
+          const currentRoutePath = routePath(url);
           const agentID = trimText(url.searchParams.get("agent_id") ?? "");
-          if (routePath(url) !== "/agents" || !agentID) {
+          if (!currentRoutePath.startsWith("/agents") || !agentID) {
             return null;
           }
-          const currentBasePath = basePath();
-          const newChatPath = currentBasePath ? `${currentBasePath}/c/new` : "/c/new";
-          const newChatURL = new URL(newChatPath, url.origin);
-          newChatURL.searchParams.set("agent_id", agentID);
           return {
             sourceURL: url.href,
-            newChatURL: newChatURL.href,
             agentID,
             agentName: trimText(document.querySelector('div[role="dialog"] h2')?.textContent ?? ""),
           };
@@ -1280,13 +1293,11 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate {
         }
 
         let sourceURLString = (dictionary["sourceURL"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        let newChatURL = (dictionary["newChatURL"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         let agentID = (dictionary["agentID"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         let agentName = (dictionary["agentName"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
 
         guard
             let sourceURL = URL(string: sourceURLString),
-            !newChatURL.isEmpty,
             !agentID.isEmpty
         else {
             return nil
@@ -1294,7 +1305,6 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate {
 
         return WebAddAgentCandidate(
             sourceURL: sourceURL,
-            newChatURL: newChatURL,
             agentID: agentID,
             agentName: agentName
         )

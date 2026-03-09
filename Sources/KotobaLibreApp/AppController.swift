@@ -7,7 +7,6 @@ import KotobaLibreCore
 // WebAddAgentCandidate captures the agent page state needed to create a local saved agent.
 struct WebAddAgentCandidate: Equatable {
     let sourceURL: URL
-    let newChatURL: String
     let agentID: String
     let agentName: String
 }
@@ -195,7 +194,7 @@ final class AppController: NSObject, ObservableObject {
         return Preset(
             id: "",
             name: "",
-            urlTemplate: suggestPresetTemplate(instanceBaseURL: settings.instanceBaseUrl),
+            urlTemplate: kind == .agent ? "" : suggestPresetTemplate(instanceBaseURL: settings.instanceBaseUrl),
             kind: kind,
             createdAt: marker,
             updatedAt: marker
@@ -206,7 +205,7 @@ final class AppController: NSObject, ObservableObject {
         var preset = makeEmptyPreset(kind: .agent)
         let trimmedName = candidate.agentName.trimmingCharacters(in: .whitespacesAndNewlines)
         preset.name = trimmedName.isEmpty ? candidate.agentID : trimmedName
-        preset.urlTemplate = candidate.newChatURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        preset.urlTemplate = candidate.agentID.trimmingCharacters(in: .whitespacesAndNewlines)
         return preset
     }
 
@@ -278,9 +277,6 @@ final class AppController: NSObject, ObservableObject {
             refreshShortcutDiagnostics()
         }
         refreshMainWindowContent(openHomeIfNeeded: previousSettings.instanceBaseUrl != normalized.instanceBaseUrl)
-        if normalized.instanceBaseUrl != nil {
-            mainWindowController.showAndFocus()
-        }
 
         return SettingsSaveResult(removedPresets: preview.incompatiblePresets)
     }
@@ -381,7 +377,7 @@ final class AppController: NSObject, ObservableObject {
             throw KotobaLibreError.invalidDestination("Preset name cannot be empty")
         }
 
-        let validation = KotobaLibreCore.validateURLTemplate(normalized.urlTemplate)
+        let validation = KotobaLibreCore.validatePresetValue(normalized.urlTemplate, kind: normalized.kind)
         guard validation.valid else {
             throw KotobaLibreError.invalidDestination(validation.reason ?? "Invalid URL template")
         }
@@ -486,8 +482,13 @@ final class AppController: NSObject, ObservableObject {
         return presets.count
     }
 
-    func openDraftURL(_ urlString: String) throws {
-        try openURLString(urlString)
+    func openDraftURL(_ preset: Preset) throws {
+        let destination = try KotobaLibreCore.destinationString(
+            for: preset,
+            instanceBaseURL: settings.instanceBaseUrl,
+            query: nil
+        )
+        try openURLString(destination)
     }
 
     func openPreset(id: String, query: String?, preferMainWindow: Bool = false) throws {
@@ -495,7 +496,11 @@ final class AppController: NSObject, ObservableObject {
             throw KotobaLibreError.invalidDestination("Preset '\(id)' not found")
         }
 
-        let destination = KotobaLibreCore.expandTemplate(preset.urlTemplate, query: query)
+        let destination = try KotobaLibreCore.destinationString(
+            for: preset,
+            instanceBaseURL: settings.instanceBaseUrl,
+            query: query
+        )
         try openURLString(destination, preferMainWindow: preferMainWindow)
     }
 
@@ -537,6 +542,12 @@ final class AppController: NSObject, ObservableObject {
 
     private func openResolvedURL(_ url: URL, preferMainWindow: Bool = false) throws {
         let instanceHost = try KotobaLibreCore.settingsInstanceHost(settings)
+        if shouldOpenExternally(url, instanceHost: instanceHost) {
+            openExternally(url)
+            hideLauncherWindow()
+            return
+        }
+
         mainWindowController.open(
             url: url,
             settings: settings,
@@ -545,6 +556,14 @@ final class AppController: NSObject, ObservableObject {
         )
 
         hideLauncherWindow()
+    }
+
+    private func shouldOpenExternally(_ url: URL, instanceHost: String?) -> Bool {
+        guard let instanceHost, let host = url.host?.lowercased() else {
+            return false
+        }
+
+        return host.caseInsensitiveCompare(instanceHost) != .orderedSame
     }
 
     func smokeTestSnapshot() -> SmokeTestSnapshot {
