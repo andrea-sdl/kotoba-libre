@@ -4,6 +4,7 @@ public final class AppDataStore: @unchecked Sendable {
     public let baseDirectory: URL
     public let settingsURL: URL
     public let presetsURL: URL
+    public let mainWindowStateURL: URL
 
     private let fileManager: FileManager
     private let encoder: JSONEncoder
@@ -34,6 +35,7 @@ public final class AppDataStore: @unchecked Sendable {
 
         self.settingsURL = self.baseDirectory.appendingPathComponent(settingsFileName, isDirectory: false)
         self.presetsURL = self.baseDirectory.appendingPathComponent(presetsFileName, isDirectory: false)
+        self.mainWindowStateURL = self.baseDirectory.appendingPathComponent(mainWindowStateFileName, isDirectory: false)
         self.encoder = JSONEncoder()
         self.encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         self.decoder = JSONDecoder()
@@ -78,6 +80,21 @@ public final class AppDataStore: @unchecked Sendable {
         try data.write(to: presetsURL, options: .atomic)
     }
 
+    public func loadMainWindowState() throws -> WindowFrameState? {
+        guard fileManager.fileExists(atPath: mainWindowStateURL.path) else {
+            return nil
+        }
+
+        let data = try Data(contentsOf: mainWindowStateURL)
+        return try decoder.decode(WindowFrameState.self, from: data)
+    }
+
+    public func saveMainWindowState(_ state: WindowFrameState) throws {
+        try ensureBaseDirectory()
+        let data = try encoder.encode(state)
+        try data.write(to: mainWindowStateURL, options: .atomic)
+    }
+
     public func exportPresets(settings: AppSettings, presets: [Preset]) throws -> Data {
         let payload = KotobaLibreCore.exportPayload(settings: settings, presets: presets)
         return try encoder.encode(payload)
@@ -86,6 +103,7 @@ public final class AppDataStore: @unchecked Sendable {
     public func resetConfiguration() throws {
         try removeItemIfPresent(at: settingsURL)
         try removeItemIfPresent(at: presetsURL)
+        try removeItemIfPresent(at: mainWindowStateURL)
     }
 
     private func ensureBaseDirectory() throws {

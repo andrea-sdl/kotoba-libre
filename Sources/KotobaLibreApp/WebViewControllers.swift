@@ -9,10 +9,15 @@ private let minimumMainWindowSize = NSSize(width: 800, height: 600)
 @MainActor
 final class MainWindowController: NSWindowController, NSWindowDelegate {
     private weak var appController: AppController?
+    private let store: AppDataStore
     private var webController: WebContentViewController?
     private var eventMonitor: Any?
+    private let savedWindowFrame: NSRect?
+    private var hasCompletedInitialFrameSetup = false
 
-    init(appController: AppController) {
+    init(appController: AppController, store: AppDataStore) {
+        self.store = store
+        self.savedWindowFrame = Self.loadSavedWindowFrame(from: store)
         let window = NSWindow(
             contentRect: NSRect(origin: .zero, size: defaultMainWindowSize),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
@@ -20,12 +25,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             defer: false
         )
         window.title = appDisplayName
-        window.center()
         window.minSize = minimumMainWindowSize
-        window.setFrameAutosaveName("KotobaLibreMainWindow")
         super.init(window: window)
         self.appController = appController
         self.window?.delegate = self
+        installScreenObserver()
+        installWindowFrameObservers()
         installShortcutMonitor()
     }
 
@@ -43,7 +48,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             rootView: OnboardingFlowView(appController: appController)
         )
         window?.contentViewController = hostingController
-        resetToDefaultSize()
     }
 
     func showWebView(settings: AppSettings) {
@@ -75,6 +79,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     }
 
     func showAndFocus() {
+        applyInitialWindowFrameIfNeeded()
+        normalizeWindowFrameToAvailableScreens(centerIfNeeded: savedWindowFrame == nil)
         window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
@@ -82,11 +88,22 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     func resetToDefaultSize() {
         window?.setContentSize(defaultMainWindowSize)
         window?.center()
+        normalizeWindowFrameToAvailableScreens(centerIfNeeded: true)
+        persistWindowFrame()
     }
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
+        persistWindowFrame()
         sender.orderOut(nil)
         return false
+    }
+
+    func windowDidChangeScreen(_ notification: Notification) {
+        normalizeWindowFrameToAvailableScreens()
+    }
+
+    func persistStateForTermination() {
+        persistWindowFrame()
     }
 
     private func ensureWebController() -> WebContentViewController {
@@ -115,6 +132,180 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
             return nil
         }
+    }
+
+    private func installScreenObserver() {
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleScreenParametersDidChange(_:)),
+            name: NSApplication.didChangeScreenParametersNotification,
+            object: nil
+        )
+    }
+
+    private func installWindowFrameObservers() {
+        guard let window else {
+            return
+        }
+
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleWindowDidResize(_:)),
+            name: NSWindow.didResizeNotification,
+            object: window
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleWindowDidMove(_:)),
+            name: NSWindow.didMoveNotification,
+            object: window
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleWindowWillClose(_:)),
+            name: NSWindow.willCloseNotification,
+            object: window
+        )
+    }
+
+    private func persistWindowFrame() {
+        guard let window, hasCompletedInitialFrameSetup else {
+            return
+        }
+
+        let state = WindowFrameState(frame: window.frame)
+        do {
+            try store.saveMainWindowState(state)
+        } catch {
+            print("KotobaLibre Window: failed to save state -> \(error.localizedDescription)")
+        }
+    }
+
+    @objc private func handleScreenParametersDidChange(_ notification: Notification) {
+        normalizeWindowFrameToAvailableScreens()
+    }
+
+    @objc private func handleWindowDidResize(_ notification: Notification) {
+        persistWindowFrame()
+    }
+
+    @objc private func handleWindowDidMove(_ notification: Notification) {
+        persistWindowFrame()
+    }
+
+    @objc private func handleWindowWillClose(_ notification: Notification) {
+        persistWindowFrame()
+    }
+
+    private func normalizeWindowFrameToAvailableScreens(centerIfNeeded: Bool = false) {
+        guard let window else {
+            return
+        }
+
+        let screens = NSScreen.screens
+        guard !screens.isEmpty else {
+            return
+        }
+
+        let currentFrame = window.frame
+        let targetScreen = bestScreen(for: currentFrame, preferredScreen: window.screen) ?? screens[0]
+        let adjustedFrame = adjustedFrame(currentFrame, in: targetScreen.visibleFrame, centerIfNeeded: centerIfNeeded)
+
+        guard !framesMatch(currentFrame, adjustedFrame) else {
+            return
+        }
+
+        window.setFrame(adjustedFrame, display: false)
+        persistWindowFrame()
+    }
+
+    private func bestScreen(for frame: NSRect, preferredScreen: NSScreen?) -> NSScreen? {
+        let screens = NSScreen.screens
+        let matchingScreen = screens.max { lhs, rhs in
+            intersectionArea(of: lhs.visibleFrame, and: frame) < intersectionArea(of: rhs.visibleFrame, and: frame)
+        }
+
+        if let matchingScreen, intersectionArea(of: matchingScreen.visibleFrame, and: frame) > 0 {
+            return matchingScreen
+        }
+
+        return preferredScreen ?? NSScreen.main
+    }
+
+    private func adjustedFrame(_ frame: NSRect, in visibleFrame: NSRect, centerIfNeeded: Bool) -> NSRect {
+        var adjustedFrame = frame.standardized
+        adjustedFrame.size.width = min(max(adjustedFrame.width, minimumMainWindowSize.width), visibleFrame.width)
+        adjustedFrame.size.height = min(max(adjustedFrame.height, minimumMainWindowSize.height), visibleFrame.height)
+
+        let needsCentering = centerIfNeeded || intersectionArea(of: visibleFrame, and: adjustedFrame) == 0
+        if needsCentering {
+            adjustedFrame.origin.x = visibleFrame.midX - (adjustedFrame.width / 2)
+            adjustedFrame.origin.y = visibleFrame.midY - (adjustedFrame.height / 2)
+        } else {
+            adjustedFrame.origin.x = min(
+                max(adjustedFrame.origin.x, visibleFrame.minX),
+                visibleFrame.maxX - adjustedFrame.width
+            )
+            adjustedFrame.origin.y = min(
+                max(adjustedFrame.origin.y, visibleFrame.minY),
+                visibleFrame.maxY - adjustedFrame.height
+            )
+        }
+
+        return adjustedFrame.integral
+    }
+
+    private func intersectionArea(of lhs: NSRect, and rhs: NSRect) -> CGFloat {
+        let intersection = lhs.intersection(rhs)
+        guard !intersection.isNull else {
+            return 0
+        }
+
+        return intersection.width * intersection.height
+    }
+
+    private func framesMatch(_ lhs: NSRect, _ rhs: NSRect) -> Bool {
+        abs(lhs.origin.x - rhs.origin.x) < 1 &&
+        abs(lhs.origin.y - rhs.origin.y) < 1 &&
+        abs(lhs.size.width - rhs.size.width) < 1 &&
+        abs(lhs.size.height - rhs.size.height) < 1
+    }
+
+    private func applyInitialWindowFrameIfNeeded() {
+        guard let window, !hasCompletedInitialFrameSetup else {
+            return
+        }
+
+        if let savedWindowFrame {
+            window.setFrame(savedWindowFrame, display: false)
+        } else {
+            window.center()
+        }
+
+        hasCompletedInitialFrameSetup = true
+    }
+
+    private static func loadSavedWindowFrame(from store: AppDataStore) -> NSRect? {
+        guard let savedState = try? store.loadMainWindowState() else {
+            return nil
+        }
+
+        return savedState.rect
+    }
+}
+
+private extension WindowFrameState {
+    init(frame: NSRect) {
+        self.init(
+            originX: frame.origin.x,
+            originY: frame.origin.y,
+            width: frame.size.width,
+            height: frame.size.height
+        )
+    }
+
+    var rect: NSRect {
+        NSRect(x: originX, y: originY, width: width, height: height)
     }
 }
 

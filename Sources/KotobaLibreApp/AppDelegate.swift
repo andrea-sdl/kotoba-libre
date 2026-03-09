@@ -20,6 +20,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         appController.handleOpen(urls: urls)
     }
 
+    @MainActor
+    func applicationWillTerminate(_ notification: Notification) {
+        appController.applicationWillTerminate()
+    }
+
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         false
     }

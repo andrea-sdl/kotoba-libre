@@ -141,13 +141,19 @@ struct KotobaLibreSelfTest {
         expect(FileManager.default.fileExists(atPath: store.presetsURL.path), "storeWritesPresets")
         expect(try store.loadSettings().instanceBaseUrl == "https://chat.example.com", "storeLoadsSettings")
         expect(try store.loadPresets().count == 1, "storeLoadsPresets")
+        let savedWindowState = WindowFrameState(originX: 120, originY: 180, width: 980, height: 760)
+        try store.saveMainWindowState(savedWindowState)
+        expect(FileManager.default.fileExists(atPath: store.mainWindowStateURL.path), "storeWritesMainWindowState")
+        expect(try store.loadMainWindowState() == savedWindowState, "storeLoadsMainWindowState")
         try store.resetConfiguration()
         expect(!FileManager.default.fileExists(atPath: store.settingsURL.path), "storeResetRemovesSettings")
+        expect(!FileManager.default.fileExists(atPath: store.mainWindowStateURL.path), "storeResetRemovesMainWindowState")
         expect(try store.loadSettings() == AppSettings(), "storeResetLoadsDefaultSettings")
+        expect(try store.loadMainWindowState() == nil, "storeResetLoadsEmptyMainWindowState")
         expect(try store.loadPresets().isEmpty, "storeResetLoadsEmptyPresets")
 
         if failures.isEmpty {
-            print("KotobaLibreSelfTest: all checks passed (\(37) assertions)")
+            print("KotobaLibreSelfTest: all checks passed (\(41) assertions)")
             return
         }
 

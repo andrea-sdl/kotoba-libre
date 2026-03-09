@@ -44,7 +44,7 @@ final class AppController: NSObject, ObservableObject {
     private let store: AppDataStore
     private let shortcutRegistrar = GlobalShortcutRegistrar()
     private var statusItem: NSStatusItem?
-    private lazy var mainWindowController = MainWindowController(appController: self)
+    private lazy var mainWindowController = MainWindowController(appController: self, store: store)
     private lazy var settingsWindowController = SettingsWindowController(appController: self)
     private lazy var launcherWindowController = LauncherWindowController(appController: self)
 
@@ -132,6 +132,10 @@ final class AppController: NSObject, ObservableObject {
         NSWorkspace.shared.open(url)
     }
 
+    func applicationWillTerminate() {
+        mainWindowController.persistStateForTermination()
+    }
+
     func makeEmptyPreset(kind: PresetKind = .agent) -> Preset {
         let marker = KotobaLibreCore.nowMarker()
         return Preset(
@@ -214,7 +218,6 @@ final class AppController: NSObject, ObservableObject {
 
         _ = try saveSettings(updated)
         settingsWindowController.hide()
-        mainWindowController.resetToDefaultSize()
         mainWindowController.showAndFocus()
     }
 
