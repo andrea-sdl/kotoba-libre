@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 import KotobaLibreCore
 
+// These numbers keep the launcher panel sized like a Spotlight-style overlay.
 private enum LauncherPanelMetrics {
     static let preferredWidth: CGFloat = 860
     static let minimumWidth: CGFloat = 560
@@ -11,6 +12,8 @@ private enum LauncherPanelMetrics {
     static let bottomInset: CGFloat = 24
 }
 
+// LauncherPanel is a custom NSPanel so the launcher can float above other apps
+// without behaving like a full app window.
 final class LauncherPanel: NSPanel {
     init() {
         super.init(
@@ -46,6 +49,7 @@ final class LauncherPanel: NSPanel {
     override var canBecomeMain: Bool { false }
 }
 
+// This controller owns the floating launcher panel and handles focus handoff between apps.
 @MainActor
 final class LauncherWindowController: NSWindowController, NSWindowDelegate {
     private weak var appController: AppController?
@@ -79,6 +83,7 @@ final class LauncherWindowController: NSWindowController, NSWindowDelegate {
     }
 
     func showAndFocus() {
+        // Remember the previous app so we can return focus after the launcher closes.
         let frontmostApplication = NSWorkspace.shared.frontmostApplication
         previouslyFrontmostApplication = frontmostApplication == NSRunningApplication.current ? nil : frontmostApplication
 
@@ -123,11 +128,13 @@ final class LauncherWindowController: NSWindowController, NSWindowDelegate {
         }
 
         DispatchQueue.main.async {
+            // Activation is deferred so AppKit finishes hiding the launcher first.
             previousApplication.activate(options: [.activateIgnoringOtherApps])
         }
     }
 
     private func installKeyboardMonitor() {
+        // The launcher handles only its own escape and submit keys.
         eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self, event.window == self.window else {
                 return event
@@ -151,6 +158,7 @@ final class LauncherWindowController: NSWindowController, NSWindowDelegate {
             return
         }
 
+        // The launcher follows the active display so the shortcut feels local to the current workspace.
         let targetScreen = screenContainingMouse() ?? window.screen ?? NSScreen.main
         let frame = frameForPresentation(on: targetScreen)
         window.setFrame(frame, display: false)
@@ -183,6 +191,7 @@ final class LauncherWindowController: NSWindowController, NSWindowDelegate {
     }
 }
 
+// The view model keeps the launcher view simple and translates UI actions into AppController calls.
 @MainActor
 final class LauncherViewModel: ObservableObject {
     @Published var query = ""
@@ -202,6 +211,7 @@ final class LauncherViewModel: ObservableObject {
             return []
         }
 
+        // The default preset is sorted first so pressing Enter does the expected thing.
         let defaultPresetID = appController.settings.defaultPresetId
         return appController.presets.sorted { lhs, rhs in
             let lhsDefault = lhs.id == defaultPresetID ? 1 : 0
@@ -221,6 +231,7 @@ final class LauncherViewModel: ObservableObject {
         statusMessage = ""
         isError = false
 
+        // The launcher can open even when setup is incomplete, so it surfaces guidance here.
         if selectedPresetID == nil {
             selectedPresetID = appController?.settings.defaultPresetId ?? presets.first?.id
         }
@@ -255,6 +266,7 @@ final class LauncherViewModel: ObservableObject {
     }
 
     func reset() {
+        // Reset after a successful launch so the next shortcut opens a clean prompt.
         query = ""
         selectedPresetID = appController?.settings.defaultPresetId ?? presets.first?.id
         statusMessage = ""

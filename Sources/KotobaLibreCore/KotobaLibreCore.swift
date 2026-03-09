@@ -1,11 +1,14 @@
 import Foundation
 
+// This file is the pure shared logic layer.
+// It defines the data model plus normalization, validation, parsing, and URL policy helpers.
 public let appBundleIdentifier = "com.andreagrassi.kotobalibre"
 public let appDisplayName = "Kotoba Libre"
 public let settingsFileName = "settings.json"
 public let presetsFileName = "presets.json"
 public let mainWindowStateFileName = "main-window-state.json"
 
+// Visibility mode affects both AppKit activation policy and whether a status item is installed.
 public enum AppVisibilityMode: String, Codable, CaseIterable, Equatable, Sendable {
     case dockAndMenuBar
     case dockOnly
@@ -20,11 +23,13 @@ public enum AppVisibilityMode: String, Codable, CaseIterable, Equatable, Sendabl
     }
 }
 
+// Presets currently cover both named agents and generic saved links.
 public enum PresetKind: String, Codable, CaseIterable, Equatable, Sendable {
     case agent
     case link
 }
 
+// Preset is the saved launcher destination shown in the Agents tab.
 public struct Preset: Codable, Equatable, Identifiable, Sendable {
     public var id: String
     public var name: String
@@ -53,6 +58,8 @@ public struct Preset: Codable, Equatable, Identifiable, Sendable {
     }
 }
 
+// AppSettings is persisted user configuration.
+// Defaults are chosen so a missing or older settings file can still decode safely.
 public struct AppSettings: Codable, Equatable, Sendable {
     public static let defaultShortcut = "CmdOrCtrl+Shift+Space"
 
@@ -102,6 +109,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
 
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        // decodeIfPresent keeps backward compatibility with older files that do not know newer keys.
         instanceBaseUrl = try container.decodeIfPresent(String.self, forKey: .instanceBaseUrl)
         globalShortcut = try container.decodeIfPresent(String.self, forKey: .globalShortcut) ?? AppSettings.defaultShortcut
         autostartEnabled = try container.decodeIfPresent(Bool.self, forKey: .autostartEnabled) ?? false
@@ -127,6 +135,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
     }
 }
 
+// WindowFrameState stores NSRect in Codable-friendly scalar values.
 public struct WindowFrameState: Codable, Equatable, Sendable {
     public var originX: Double
     public var originY: Double
@@ -141,6 +150,7 @@ public struct WindowFrameState: Codable, Equatable, Sendable {
     }
 }
 
+// ValidationResult is used by the UI to render live validation messages.
 public struct ValidationResult: Equatable, Sendable {
     public var valid: Bool
     public var reason: String?
@@ -151,6 +161,7 @@ public struct ValidationResult: Equatable, Sendable {
     }
 }
 
+// Import results report both hard failures and rows that were skipped during validation.
 public struct ImportPresetsResult: Equatable, Sendable {
     public var imported: Int
     public var skipped: Int
@@ -163,12 +174,14 @@ public struct ImportPresetsResult: Equatable, Sendable {
     }
 }
 
+// Deep links are normalized into a small action enum before the app layer routes them.
 public enum DeepLinkAction: Equatable, Sendable {
     case openURL(String)
     case openPreset(presetID: String, query: String?)
     case openSettings
 }
 
+// Export payload wraps presets with metadata so exports can evolve without changing the raw preset array format.
 public struct PresetExportPayload: Codable, Equatable, Sendable {
     public var version: Int
     public var exportedAt: String
@@ -183,12 +196,14 @@ public struct PresetExportPayload: Codable, Equatable, Sendable {
     }
 }
 
+// KotobaLibreCore is a namespace for stateless helpers used by both the app and self-test targets.
 public enum KotobaLibreCore {
     public static func nowMarker(date: Date = Date()) -> String {
         "unix-ms-\(Int(date.timeIntervalSince1970 * 1_000))"
     }
 
     public static func normalizeShortcutToken(_ token: String) -> String {
+        // User input accepts symbols, aliases, and plain keys. Storage uses one canonical token set.
         let trimmed = token.trimmingCharacters(in: .whitespacesAndNewlines)
         let lower = trimmed.lowercased()
 
@@ -221,6 +236,7 @@ public enum KotobaLibreCore {
         var seen = Set<String>()
         var tokens: [String] = []
 
+        // Dedupe keeps accidental repeated modifiers from producing invalid shortcut strings.
         for token in shortcut.split(separator: "+").map(String.init) {
             let normalized = normalizeShortcutToken(token)
             guard !normalized.isEmpty else {
@@ -270,6 +286,7 @@ public enum KotobaLibreCore {
     }
 
     public static func normalizePreset(_ preset: Preset, existing: Preset? = nil, now: String = nowMarker()) -> Preset {
+        // Existing presets keep their original creation time. New saves always refresh updatedAt.
         let presetID = preset.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             ? UUID().uuidString
             : preset.id.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -306,6 +323,7 @@ public enum KotobaLibreCore {
     public static func normalizeLoadedPresets(_ presets: [Preset], nowProvider: () -> String = { nowMarker() }) -> [Preset] {
         var seenIDs = Set<String>()
 
+        // Load-time repair keeps old exports usable by fixing empty ids, duplicate ids, and missing timestamps.
         return presets.map { preset in
             var current = preset
             let trimmedID = current.id.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -340,6 +358,7 @@ public enum KotobaLibreCore {
             return ValidationResult(valid: false, reason: "URL template cannot be empty")
         }
 
+        // Templates are validated by parsing a safe sample URL after replacing the query placeholder.
         do {
             let url = try parseURLTemplateCandidate(urlTemplate)
             guard url.scheme?.lowercased() == "https" else {
@@ -355,6 +374,7 @@ public enum KotobaLibreCore {
     }
 
     public static func parseURLTemplateCandidate(_ urlTemplate: String) throws -> URL {
+        // {query} is replaced with sample data so URL parsing can validate the overall shape.
         let candidate = urlTemplate.replacingOccurrences(of: "{query}", with: "example")
         guard let url = URL(string: candidate) else {
             throw KotobaLibreError.invalidURLTemplate("Invalid URL template: malformed URL")
@@ -367,6 +387,7 @@ public enum KotobaLibreCore {
             return nil
         }
 
+        // Query and fragment parts are stripped because the instance URL is meant to be a clean base.
         guard let url = URL(string: raw), var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
             throw KotobaLibreError.invalidInstanceURL("Invalid instance URL: malformed URL")
         }
@@ -429,6 +450,7 @@ public enum KotobaLibreCore {
     }
 
     public static func incompatiblePresets(_ presets: [Preset], settings: AppSettings) throws -> [Preset] {
+        // Compatibility filtering is only relevant when host restriction is turned on.
         guard settings.restrictHostToInstanceHost, let allowedHost = try settingsInstanceHost(settings) else {
             return []
         }
@@ -439,6 +461,7 @@ public enum KotobaLibreCore {
     }
 
     public static func enforceDestination(_ urlString: String, settings: AppSettings) throws -> URL {
+        // Every destination is checked here so launcher opens and deep links obey the same policy.
         guard let url = URL(string: urlString), let scheme = url.scheme?.lowercased() else {
             throw KotobaLibreError.invalidDestination("Invalid destination URL: malformed URL")
         }
@@ -475,6 +498,7 @@ public enum KotobaLibreCore {
 
     public static func importCandidates(from data: Data) throws -> [Preset] {
         let decoder = JSONDecoder()
+        // Imports accept either a raw preset array or the richer export payload wrapper.
         if let direct = try? decoder.decode([Preset].self, from: data) {
             return direct
         }
@@ -493,6 +517,9 @@ public enum KotobaLibreCore {
     }
 
     public static func expandTemplate(_ urlTemplate: String, query: String?) -> String {
+        // There are two modes:
+        // 1. Replace {query} when the template wants full control.
+        // 2. Append prompt and submit parameters when the template is just a destination URL.
         let hasQueryTemplate = urlTemplate.contains("{query}")
         let templated: String
         if hasQueryTemplate {
@@ -521,6 +548,7 @@ public enum KotobaLibreCore {
     }
 
     public static func canUseSPANavigation(instanceHost: String?, url: URL) -> Bool {
+        // SPA navigation is only trusted for the configured instance host.
         guard let instanceHost, let host = url.host else {
             return false
         }
@@ -551,6 +579,7 @@ public enum KotobaLibreCore {
     }
 
     private static func parseCustomScheme(_ url: URL) throws -> DeepLinkAction {
+        // kotobalibre://... deep links are used for native handoff from outside the app.
         switch url.host?.lowercased() {
         case "open":
             guard let destination = queryValue(url, key: "url") else {
@@ -573,6 +602,7 @@ public enum KotobaLibreCore {
     }
 
     private static func parseWebLink(_ url: URL) throws -> DeepLinkAction {
+        // Matching https links provide the same actions for browser-based entry points.
         switch url.path {
         case "/app/open":
             guard let destination = queryValue(url, key: "url") else {
@@ -594,6 +624,7 @@ public enum KotobaLibreCore {
     }
 }
 
+// Core errors are shared across app, deep link, and import flows, so the messages stay user-facing.
 public enum KotobaLibreError: LocalizedError, Equatable {
     case invalidURLTemplate(String)
     case invalidInstanceURL(String)

@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 import KotobaLibreCore
 
+// This controller hosts the SwiftUI settings tabs inside a standard AppKit window.
 @MainActor
 final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private weak var appController: AppController?
@@ -44,11 +45,13 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     }
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
+        // Hiding instead of destroying keeps the window fast to reopen and preserves tab state.
         sender.orderOut(nil)
         return false
     }
 
     private func installShortcutMonitor() {
+        // Returning nil tells AppKit that the key event was handled and should not continue.
         eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard
                 let self,

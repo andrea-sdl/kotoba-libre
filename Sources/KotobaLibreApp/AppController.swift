@@ -4,12 +4,15 @@ import ServiceManagement
 import SwiftUI
 import KotobaLibreCore
 
+// AppController is the main coordinator for the desktop app.
+// It owns persisted state, window controllers, global shortcuts, and app-level side effects.
 @MainActor
 final class AppController: NSObject, ObservableObject {
     enum RuntimeMode {
         case standard
         case smokeTest
 
+        // Smoke tests skip system integrations so tests stay deterministic and permission-free.
         var shouldRegisterSystemIntegrations: Bool {
             self == .standard
         }
@@ -19,6 +22,7 @@ final class AppController: NSObject, ObservableObject {
         }
     }
 
+    // These values are shown in the Shortcuts UI to explain what macOS actually accepted.
     struct ShortcutDiagnostics {
         let activeShortcut: String
         let backend: String
@@ -29,15 +33,19 @@ final class AppController: NSObject, ObservableObject {
         let lastCarbonStatusDescription: String
     }
 
+    // Saving settings can remove incompatible presets when host restriction changes.
+    // This preview lets the UI explain the cleanup before it happens.
     struct SettingsChangePreview {
         let normalizedSettings: AppSettings
         let incompatiblePresets: [Preset]
     }
 
+    // The save result tells the UI if presets were removed as a side effect.
     struct SettingsSaveResult {
         let removedPresets: [Preset]
     }
 
+    // Smoke tests read this snapshot instead of reaching into window objects directly.
     struct SmokeTestSnapshot {
         let hasInstanceBaseURL: Bool
         let presetCount: Int
@@ -48,6 +56,7 @@ final class AppController: NSObject, ObservableObject {
         let mainContentKind: MainWindowController.ContentKind
     }
 
+    // Published state here drives all SwiftUI settings and onboarding views.
     @Published private(set) var settings: AppSettings = AppSettings()
     @Published private(set) var presets: [Preset] = []
     @Published private(set) var shortcutRegistrationIssue: String?
@@ -78,6 +87,7 @@ final class AppController: NSObject, ObservableObject {
     }
 
     func start() {
+        // Startup is defensive. A bad file should reset to safe defaults instead of aborting launch.
         do {
             settings = try store.loadSettings()
         } catch {
@@ -91,6 +101,7 @@ final class AppController: NSObject, ObservableObject {
         }
 
         if settings.defaultPresetId != nil, !presets.contains(where: { $0.id == settings.defaultPresetId }) {
+            // Clear stale default references so the launcher never points at a missing preset.
             settings.defaultPresetId = nil
             try? persistSettings()
         }
@@ -111,6 +122,7 @@ final class AppController: NSObject, ObservableObject {
     }
 
     func restoreOrOpenPrimaryWindow() {
+        // The primary window is either the onboarding flow or the embedded LibreChat window.
         if let window = mainWindowController.window, window.isVisible {
             mainWindowController.showAndFocus()
             return
@@ -127,6 +139,7 @@ final class AppController: NSObject, ObservableObject {
     }
 
     func handleOpen(urls: [URL]) {
+        // Each URL is handled independently so one bad deep link does not block the rest.
         for url in urls {
             do {
                 try handleDeepLink(url.absoluteString)
@@ -169,6 +182,7 @@ final class AppController: NSObject, ObservableObject {
     }
 
     func makeEmptyPreset(kind: PresetKind = .agent) -> Preset {
+        // New presets start with a suggested template so the editor is not completely blank.
         let marker = KotobaLibreCore.nowMarker()
         return Preset(
             id: "",
@@ -192,6 +206,7 @@ final class AppController: NSObject, ObservableObject {
         var normalized = KotobaLibreCore.normalizeSettings(nextSettings)
         normalized = try KotobaLibreCore.normalizeInstanceBaseURL(normalized)
         let nextHost = try KotobaLibreCore.settingsInstanceHost(normalized)
+        // Revalidation only matters when host pinning is on and the effective host changed.
         let shouldRevalidatePresets =
             normalized.restrictHostToInstanceHost &&
             (
@@ -214,6 +229,7 @@ final class AppController: NSObject, ObservableObject {
         var normalized = preview.normalizedSettings
         let removedPresetIDs = Set(preview.incompatiblePresets.map(\.id))
         if !removedPresetIDs.isEmpty {
+            // Incompatible presets are removed before save so storage and UI stay in sync.
             presets.removeAll { removedPresetIDs.contains($0.id) }
             if let defaultPresetID = normalized.defaultPresetId, removedPresetIDs.contains(defaultPresetID) {
                 normalized.defaultPresetId = nil
@@ -240,6 +256,7 @@ final class AppController: NSObject, ObservableObject {
             throw error
         }
 
+        // Re-register after a successful save so the latest shortcut and visibility settings take effect.
         if runtimeMode.shouldRegisterSystemIntegrations {
             registerGlobalShortcutIfPossible(promptForPermission: true)
         } else {
@@ -267,6 +284,7 @@ final class AppController: NSObject, ObservableObject {
         hideLauncherWindow()
         try store.resetConfiguration()
 
+        // Resetting returns the app to the same state as a fresh install.
         settings = AppSettings()
         presets = []
         shortcutDraft = AppSettings.defaultShortcut
@@ -358,6 +376,7 @@ final class AppController: NSObject, ObservableObject {
             let allowedHost = try KotobaLibreCore.settingsInstanceHost(settings),
             let issue = KotobaLibreCore.validatePresetCompatibility(normalized, allowedHost: allowedHost)
         {
+            // Presets are blocked here before they ever reach storage.
             throw KotobaLibreError.invalidDestination("Agent '\(normalized.name)' \(issue)")
         }
 
@@ -392,6 +411,7 @@ final class AppController: NSObject, ObservableObject {
             throw KotobaLibreError.invalidDestination("Set your Kotoba Libre instance URL in Settings before importing agents")
         }
 
+        // Import uses a native file picker because this is a macOS desktop flow.
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.json]
         panel.canChooseDirectories = false
@@ -415,6 +435,7 @@ final class AppController: NSObject, ObservableObject {
                 continue
             }
 
+            // Imported IDs must be unique inside the local preset list.
             if normalized.id.isEmpty || existingIDs.contains(normalized.id) {
                 normalized.id = UUID().uuidString
             }
@@ -436,6 +457,7 @@ final class AppController: NSObject, ObservableObject {
             return 0
         }
 
+        // Export keeps the current host in the payload so another install can validate imports later.
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.json]
         panel.nameFieldStringValue = "kotobalibre-agents-\(Self.exportStamp()).json"
@@ -472,6 +494,7 @@ final class AppController: NSObject, ObservableObject {
             return false
         }
 
+        // Esc exits recording mode without changing the saved shortcut.
         if event.keyCode == 53 {
             stopShortcutRecording()
             return true
@@ -486,6 +509,7 @@ final class AppController: NSObject, ObservableObject {
     }
 
     private func handleDeepLink(_ rawURL: String) throws {
+        // Core parsing returns a small action enum so app-side routing stays simple.
         switch try KotobaLibreCore.parseDeepLink(rawURL) {
         case let .openURL(destination):
             try openURLString(destination)
@@ -535,6 +559,7 @@ final class AppController: NSObject, ObservableObject {
     }
 
     private func suspendGlobalShortcut() {
+        // While recording, the current global shortcut is turned off to avoid self-trigger loops.
         shortcutRegistrar.unregisterCurrentShortcut()
         shortcutRegistrationIssue = nil
         refreshShortcutDiagnostics()
@@ -568,6 +593,7 @@ final class AppController: NSObject, ObservableObject {
     }
 
     private func refreshShortcutDiagnostics() {
+        // The UI shows both permission state and the active backend to help debug macOS shortcut issues.
         let runtime = shortcutRegistrar.runtimeStatus()
         let activeShortcut = runtime.activeShortcut ?? settings.globalShortcut
         let carbonStatus = runtime.lastCarbonStatus.map { "\($0)" } ?? "n/a"
@@ -588,6 +614,7 @@ final class AppController: NSObject, ObservableObject {
             return
         }
 
+        // Once an instance exists, the main window always hosts the web container.
         mainWindowController.showWebView(settings: settings)
         if openHomeIfNeeded {
             mainWindowController.navigateToHome(settings: settings)
@@ -647,6 +674,7 @@ final class AppController: NSObject, ObservableObject {
             return
         }
 
+        // Activation policy controls whether the app appears in the Dock or behaves like a menu bar utility.
         _ = NSApp.setActivationPolicy(targetPolicy)
         if mode.showsDockIcon {
             NSApp.activate(ignoringOtherApps: true)
@@ -665,6 +693,7 @@ final class AppController: NSObject, ObservableObject {
             return
         }
 
+        // The status item is only created in modes that expose a menu bar affordance.
         let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         if let button = statusItem.button {
             button.image = statusItemImage()
@@ -720,6 +749,7 @@ final class AppController: NSObject, ObservableObject {
             return "https://"
         }
 
+        // The default template points at LibreChat's new-chat route relative to the configured instance.
         return URL(string: "c/new", relativeTo: baseURL)?.absoluteURL.absoluteString ?? instanceBaseURL
     }
 

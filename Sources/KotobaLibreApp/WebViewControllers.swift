@@ -3,9 +3,12 @@ import SwiftUI
 import KotobaLibreCore
 import WebKit
 
+// The main window and embedded web view live together in this file because they share one navigation flow.
 private let defaultMainWindowSize = NSSize(width: 800, height: 600)
 private let minimumMainWindowSize = NSSize(width: 800, height: 600)
 
+// MainWindowController owns the primary app window.
+// It swaps between onboarding and web content and remembers the last usable frame.
 @MainActor
 final class MainWindowController: NSWindowController, NSWindowDelegate {
     enum ContentKind: String {
@@ -57,6 +60,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     }
 
     func showWebView(settings: AppSettings) {
+        // The web controller is reused so session state and browser history survive UI switches.
         let controller = ensureWebController()
         controller.debugLoggingEnabled = settings.debugLoggingEnabled
         window?.contentViewController = controller
@@ -88,6 +92,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     }
 
     func showAndFocus() {
+        // The first show restores a saved frame. Later shows only clamp the frame to current screens.
         applyInitialWindowFrameIfNeeded()
         normalizeWindowFrameToAvailableScreens(centerIfNeeded: savedWindowFrame == nil)
         window?.makeKeyAndOrderFront(nil)
@@ -136,6 +141,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             return webController
         }
 
+        // External links are delegated back to AppController so runtime mode can decide what is allowed.
         let created = WebContentViewController()
         created.externalNavigationHandler = { [weak appController] url in
             appController?.openExternally(url)
@@ -145,6 +151,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     }
 
     private func installShortcutMonitor() {
+        // Returning nil consumes the event after shortcut recording handles it.
         eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard
                 let self,
@@ -198,6 +205,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             return
         }
 
+        // Frames are only persisted after the initial placement logic runs once.
         let state = WindowFrameState(frame: window.frame)
         do {
             try store.saveMainWindowState(state)
@@ -234,6 +242,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
         let currentFrame = window.frame
         let targetScreen = bestScreen(for: currentFrame, preferredScreen: window.screen) ?? screens[0]
+        // Screen layouts can change while the app is closed. Clamp the saved frame back onto a visible screen.
         let adjustedFrame = adjustedFrame(currentFrame, in: targetScreen.visibleFrame, centerIfNeeded: centerIfNeeded)
 
         guard !framesMatch(currentFrame, adjustedFrame) else {
@@ -301,6 +310,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             return
         }
 
+        // A saved frame wins. Otherwise the first launch starts centered with the default size.
         if let savedWindowFrame {
             window.setFrame(savedWindowFrame, display: false)
         } else {
@@ -327,6 +337,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     }
 }
 
+// WindowFrameState is stored as plain doubles. This extension converts it back to AppKit geometry.
 private extension WindowFrameState {
     init(frame: NSRect) {
         self.init(
@@ -342,6 +353,7 @@ private extension WindowFrameState {
     }
 }
 
+// WebContentViewController wraps WKWebView and contains the rules for embedded vs external navigation.
 @MainActor
 final class WebContentViewController: NSViewController, WKNavigationDelegate {
     private static let logHandlerName = "kotobaLibreLog"
@@ -351,6 +363,7 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate {
         case embedAllHosts
     }
 
+    // JavaScript posts log lines to this handler so native debug logging can see SPA-side decisions.
     private final class ScriptMessageHandler: NSObject, WKScriptMessageHandler {
         var onMessage: ((String) -> Void)?
 
@@ -373,6 +386,7 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate {
     init() {
         let configuration = WKWebViewConfiguration()
         configuration.allowsAirPlayForMediaPlayback = false
+        // These scripts are injected before the page app boots so launcher navigation can seed state early.
         configuration.userContentController.add(logMessageHandler, name: Self.logHandlerName)
         configuration.userContentController.addUserScript(
             WKUserScript(
@@ -419,6 +433,7 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate {
             externalNavigationPolicy = .singleHost(embeddedHost(for: url, instanceHost: instanceHost, settings: settings))
         }
 
+        // Same-host launches can stay inside the existing SPA once remote content has loaded at least once.
         if KotobaLibreCore.canUseSPANavigation(instanceHost: instanceHost, url: url), hasLoadedRemoteContent {
             let script = spaNavigationScript(
                 destination: url.absoluteString,
@@ -456,6 +471,7 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate {
             decisionHandler(.allow)
             return
         case let .singleHost(currentEmbeddedHost):
+            // Cross-host links are opened externally so the embedded view stays scoped to the chosen instance.
             if let currentEmbeddedHost, let host = url.host, host.caseInsensitiveCompare(currentEmbeddedHost) != .orderedSame {
                 externalNavigationHandler?(url)
                 decisionHandler(.cancel)
@@ -484,6 +500,7 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate {
             return instanceHost
         }
 
+        // When host restriction is off, embed whichever host the user intentionally opened.
         guard let host = url.host?.lowercased() else {
             return instanceHost
         }
@@ -540,6 +557,8 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate {
         let payload = payloadData.flatMap { String(data: $0, encoding: .utf8) } ?? "\"\(destination)\""
         let routeReloadValue = useRouteReload ? "true" : "false"
 
+        // The script tries several in-page navigation strategies before falling back to a full page load.
+        // That keeps launcher opens fast while still working across LibreChat route changes.
         return """
         (() => {
           void (async function() {

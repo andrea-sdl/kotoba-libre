@@ -108,9 +108,9 @@ update the docs in the same change.
 
 Recommended docs to review:
 
-- [README.md](/Users/andreagrassi/WebstormProjects/toro-libre/README.md)
-- [docs/architecture.md](/Users/andreagrassi/WebstormProjects/toro-libre/docs/architecture.md)
-- [docs/release.md](/Users/andreagrassi/WebstormProjects/toro-libre/docs/release.md)
+- [README.md](../README.md)
+- [docs/architecture.md](architecture.md)
+- [docs/release.md](release.md)
 
 ## Notes About `swift test`
 

@@ -7,12 +7,15 @@ import IOKit
 import IOKit.hidsystem
 import KotobaLibreCore
 
+// This file bridges Swift code to the older macOS APIs used for global keyboard shortcuts.
+// Carbon is the preferred backend, with Event Tap support added when permissions allow it.
 final class GlobalShortcutRegistrar {
     private enum RegistrationBackend {
         case carbonOnly
         case carbonWithEventTap
         case eventTapOnly
 
+        // The UI shows this label in shortcut diagnostics.
         var displayName: String {
             switch self {
             case .carbonOnly:
@@ -35,6 +38,7 @@ final class GlobalShortcutRegistrar {
     private var lastTriggerTime: CFAbsoluteTime = 0
     private var lastCarbonStatus: OSStatus?
 
+    // RuntimeStatus lets the settings UI explain why a shortcut did or did not register.
     struct RuntimeStatus {
         let activeShortcut: String?
         let backend: String
@@ -46,6 +50,7 @@ final class GlobalShortcutRegistrar {
     }
 
     static func isShortcutSupportedBySystemPolicy(_ shortcut: String) -> Bool {
+        // macOS rejects some modifier-only combinations as global shortcuts.
         let modifierTokens = KotobaLibreCore.normalizeShortcutValue(shortcut)
             .split(separator: "+")
             .map(String.init)
@@ -76,17 +81,21 @@ final class GlobalShortcutRegistrar {
         self.onShortcutPressed = onShortcutPressed
 
         do {
+            // Prefer Carbon because it works in the background without extra permissions on supported shortcuts.
             try installCarbonHotKey(descriptor: descriptor)
             registrationBackend = .carbonOnly
+            // If permissions already exist, the event tap is added too to catch cases Carbon can miss.
             installSupplementalEventTapIfAvailable(descriptor: descriptor)
             return
         } catch {
+            // If Carbon fails, fall back to an event tap and surface permission requirements if needed.
             try installEventTapFallback(descriptor: descriptor, promptForPermission: promptForPermission)
             registrationBackend = .eventTapOnly
         }
     }
 
     func unregisterCurrentShortcut() {
+        // Both registration backends are cleaned up because the active path can change across saves.
         if let hotKeyRef {
             UnregisterEventHotKey(hotKeyRef)
             self.hotKeyRef = nil
@@ -121,6 +130,7 @@ final class GlobalShortcutRegistrar {
     }
 
     static func shortcutString(from event: NSEvent) -> String? {
+        // This converts a live key press into the same token format used in settings storage.
         let flags = event.modifierFlags.intersection([.command, .control, .option, .shift])
         guard !flags.isEmpty else {
             return nil
@@ -151,6 +161,7 @@ final class GlobalShortcutRegistrar {
     private func installCarbonHotKey(descriptor: ShortcutDescriptor) throws {
         try installCarbonHandlerIfNeeded()
 
+        // Carbon needs a stable integer id so the callback can map back to this registration.
         let hotKeyID = EventHotKeyID(signature: OSType(0x544C4853), id: descriptor.id)
         let status = RegisterEventHotKey(
             UInt32(descriptor.keyCode),
@@ -178,6 +189,7 @@ final class GlobalShortcutRegistrar {
             eventKind: UInt32(kEventHotKeyPressed)
         )
 
+        // Carbon callbacks are C functions. Unmanaged is the bridge that carries Swift self through userData.
         let callback: EventHandlerUPP = { _, _, userData in
             guard let userData else {
                 return noErr
@@ -238,6 +250,7 @@ final class GlobalShortcutRegistrar {
     }
 
     private func installEventTap(descriptor: ShortcutDescriptor) throws {
+        // Event tap creation doubles as a practical check for background key-listening permission.
         let inputMonitoringTrustedBeforeTap = Self.currentInputMonitoringTrust()
         let eventMask = CGEventMask(1 << CGEventType.keyDown.rawValue)
         let callback: CGEventTapCallBack = { _, type, event, userData in
@@ -295,6 +308,7 @@ final class GlobalShortcutRegistrar {
     private func handleEventTap(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
         switch type {
         case .tapDisabledByTimeout, .tapDisabledByUserInput:
+            // macOS can disable taps under load, so we re-enable ours when possible.
             if let eventTap {
                 CGEvent.tapEnable(tap: eventTap, enable: true)
             }
@@ -333,6 +347,7 @@ final class GlobalShortcutRegistrar {
 
     private func triggerShortcutIfNeeded() {
         let now = CFAbsoluteTimeGetCurrent()
+        // Debounce protects against double fires when Carbon and Event Tap both observe the same key press.
         guard now - lastTriggerTime > 0.2 else {
             return
         }
@@ -408,6 +423,7 @@ final class GlobalShortcutRegistrar {
     }
 }
 
+// ShortcutDescriptor is the normalized, low-level form used by Carbon and Event Tap registration.
 private struct ShortcutDescriptor {
     let id: UInt32
     let normalizedShortcut: String
@@ -457,6 +473,7 @@ private struct ShortcutDescriptor {
     }
 
     private static func keyCode(for token: String) -> Int? {
+        // The stored shortcut uses web-style key tokens, so we map them to macOS virtual key codes here.
         let mapping: [String: Int] = [
             "Space": 49,
             "Enter": 36,
@@ -516,6 +533,7 @@ private struct ShortcutDescriptor {
     }
 }
 
+// These errors are written for end users, so each case includes recovery guidance when possible.
 enum ShortcutRegistrationError: LocalizedError {
     case invalidShortcut(String)
     case registrationFailed(String)

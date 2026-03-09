@@ -2,6 +2,7 @@ import AppKit
 import Foundation
 import KotobaLibreCore
 
+// This executable drives a small end-to-end smoke test inside the real app process.
 @MainActor
 final class AppSmokeTestRunner {
     private let appController: AppController
@@ -13,6 +14,7 @@ final class AppSmokeTestRunner {
     }
 
     func start() {
+        // The app launches first, then the smoke test continues asynchronously on the main actor.
         Task { @MainActor in
             do {
                 try await run()
@@ -24,6 +26,7 @@ final class AppSmokeTestRunner {
     }
 
     private func run() async throws {
+        // Keep the scenario linear so failures map to a clear user-facing flow.
         try await assertInitialOnboardingState()
         let preset = try await completeOnboardingAndCreatePreset()
         try await assertSettingsAndLauncherWindows()
@@ -104,6 +107,7 @@ final class AppSmokeTestRunner {
     }
 
     private func settle() async {
+        // AppKit and WebKit update asynchronously, so each assertion waits for the UI to settle.
         try? await Task.sleep(nanoseconds: 250_000_000)
         await Task.yield()
     }
@@ -115,6 +119,7 @@ final class AppSmokeTestRunner {
     }
 
     private func finish(exitCode: Int32, message: String) {
+        // Always clean up the temporary directory, even on failure.
         print(message)
         appController.applicationWillTerminate()
         try? FileManager.default.removeItem(at: temporaryDirectory)
@@ -124,6 +129,7 @@ final class AppSmokeTestRunner {
     }
 }
 
+// LocalizedError gives the failure message a clean surface for the smoke-test summary.
 private struct SmokeTestFailure: LocalizedError {
     let message: String
 

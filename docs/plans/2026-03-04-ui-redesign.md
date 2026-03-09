@@ -16,13 +16,13 @@ Kotoba Libre is now a native macOS Swift Package Manager app built with:
 
 The onboarding, settings, and shortcut experience referenced by the original redesign plan now live in:
 
-- [Views.swift](/Users/andreagrassi/WebstormProjects/toro-libre/Sources/KotobaLibreApp/Views.swift)
-- [AppController.swift](/Users/andreagrassi/WebstormProjects/toro-libre/Sources/KotobaLibreApp/AppController.swift)
-- [SettingsWindowController.swift](/Users/andreagrassi/WebstormProjects/toro-libre/Sources/KotobaLibreApp/SettingsWindowController.swift)
-- [LauncherWindowController.swift](/Users/andreagrassi/WebstormProjects/toro-libre/Sources/KotobaLibreApp/LauncherWindowController.swift)
+- [Views.swift](../../Sources/KotobaLibreApp/Views.swift)
+- [AppController.swift](../../Sources/KotobaLibreApp/AppController.swift)
+- [SettingsWindowController.swift](../../Sources/KotobaLibreApp/SettingsWindowController.swift)
+- [LauncherWindowController.swift](../../Sources/KotobaLibreApp/LauncherWindowController.swift)
 
 ## Use These Docs Instead
 
-- [README.md](/Users/andreagrassi/WebstormProjects/toro-libre/README.md)
-- [docs/architecture.md](/Users/andreagrassi/WebstormProjects/toro-libre/docs/architecture.md)
-- [docs/development.md](/Users/andreagrassi/WebstormProjects/toro-libre/docs/development.md)
+- [README.md](../../README.md)
+- [docs/architecture.md](../architecture.md)
+- [docs/development.md](../development.md)
