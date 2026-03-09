@@ -156,6 +156,8 @@ struct KotobaLibreSelfTest {
         let decodedLegacySettings = try JSONDecoder().decode(AppSettings.self, from: legacySettingsJSON)
         expect(decodedLegacySettings.appVisibilityMode == .dockOnly, "settingsDecodeLegacyVisibilityDefault")
         expect(!decodedLegacySettings.debugLoggingEnabled, "settingsDecodeLegacyDebugLoggingDefault")
+        expect(AppResources.iconPNGURL?.lastPathComponent == "AppIcon.png", "appResourcesResolvePNG")
+        expect(AppResources.iconICNSURL?.lastPathComponent == "AppIcon.icns", "appResourcesResolveICNS")
 
         let roundTripPreset = Preset(id: "id-1", name: "Support Agent", urlTemplate: "https://chat.example.com/c/new?agent=support", kind: .agent, tags: ["support", "internal"], createdAt: "unix-ms-1", updatedAt: "unix-ms-2")
         let encodedPreset = try JSONEncoder().encode(roundTripPreset)
@@ -182,7 +184,7 @@ struct KotobaLibreSelfTest {
         expect(try store.loadPresets().isEmpty, "storeResetLoadsEmptyPresets")
 
         if failures.isEmpty {
-            print("KotobaLibreSelfTest: all checks passed (\(45) assertions)")
+            print("KotobaLibreSelfTest: all checks passed (\(47) assertions)")
             return
         }
 
