@@ -636,6 +636,7 @@ struct SettingsPanelView: View {
     @State private var autostartEnabled = false
     @State private var restrictHost = true
     @State private var useRouteReloadForLauncherChats = false
+    @State private var debugLoggingEnabled = false
     @State private var launcherOpacity = 95.0
     @State private var appVisibilityMode = AppVisibilityMode.dockOnly
     @State private var statusMessage = ""
@@ -656,6 +657,7 @@ struct SettingsPanelView: View {
                 Toggle("Restrict URLs to the configured instance host", isOn: $restrictHost)
                 Toggle("Launch Kotoba Libre at login", isOn: $autostartEnabled)
                 Toggle("Use route reload for launcher chats", isOn: $useRouteReloadForLauncherChats)
+                Toggle("Enable debug logs", isOn: $debugLoggingEnabled)
                 VStack(alignment: .leading, spacing: 8) {
                     Text("App Visibility")
                     Picker("App Visibility", selection: $appVisibilityMode) {
@@ -747,6 +749,7 @@ struct SettingsPanelView: View {
         autostartEnabled = appController.settings.autostartEnabled
         restrictHost = appController.settings.restrictHostToInstanceHost
         useRouteReloadForLauncherChats = appController.settings.useRouteReloadForLauncherChats
+        debugLoggingEnabled = appController.settings.debugLoggingEnabled
         launcherOpacity = (appController.settings.launcherOpacity * 100).rounded()
         appVisibilityMode = appController.settings.appVisibilityMode
     }
@@ -792,6 +795,7 @@ struct SettingsPanelView: View {
             restrictHostToInstanceHost: restrictHost,
             defaultPresetId: appController.settings.defaultPresetId,
             useRouteReloadForLauncherChats: useRouteReloadForLauncherChats,
+            debugLoggingEnabled: debugLoggingEnabled,
             launcherOpacity: launcherOpacity / 100,
             appVisibilityMode: appVisibilityMode
         )
@@ -803,6 +807,7 @@ struct SettingsPanelView: View {
             autostartEnabled: autostartEnabled,
             restrictHost: restrictHost,
             useRouteReloadForLauncherChats: useRouteReloadForLauncherChats,
+            debugLoggingEnabled: debugLoggingEnabled,
             launcherOpacity: launcherOpacity,
             appVisibilityMode: appVisibilityMode
         )
@@ -814,6 +819,7 @@ struct SettingsPanelView: View {
             autostartEnabled: appController.settings.autostartEnabled,
             restrictHost: appController.settings.restrictHostToInstanceHost,
             useRouteReloadForLauncherChats: appController.settings.useRouteReloadForLauncherChats,
+            debugLoggingEnabled: appController.settings.debugLoggingEnabled,
             launcherOpacity: (appController.settings.launcherOpacity * 100).rounded(),
             appVisibilityMode: appController.settings.appVisibilityMode
         )
@@ -889,6 +895,7 @@ private struct SettingsDraftState: Equatable {
     let autostartEnabled: Bool
     let restrictHost: Bool
     let useRouteReloadForLauncherChats: Bool
+    let debugLoggingEnabled: Bool
     let launcherOpacity: Double
     let appVisibilityMode: AppVisibilityMode
 }

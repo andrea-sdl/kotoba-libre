@@ -47,12 +47,14 @@ struct KotobaLibreSelfTest {
                 restrictHostToInstanceHost: true,
                 defaultPresetId: "preset-1",
                 useRouteReloadForLauncherChats: false,
+                debugLoggingEnabled: true,
                 launcherOpacity: 0.95,
                 appVisibilityMode: .dockAndMenuBar
             )
         )
         expect(normalizedSettings.globalShortcut == "CmdOrCtrl+Alt+KeyV", "settingsNormalizeShortcutAliases")
         expect(normalizedSettings.appVisibilityMode == .dockAndMenuBar, "settingsPreserveVisibilityMode")
+        expect(normalizedSettings.debugLoggingEnabled, "settingsPreserveDebugLoggingFlag")
 
         let openURLParsed = try KotobaLibreCore.parseDeepLink("kotobalibre://open?url=https%3A%2F%2Fchat.example.com%2Fc%2F123")
         expect(openURLParsed == .openURL("https://chat.example.com/c/123"), "deepLinkOpenURLIsParsed")
@@ -127,6 +129,7 @@ struct KotobaLibreSelfTest {
         """.data(using: .utf8)!
         let decodedLegacySettings = try JSONDecoder().decode(AppSettings.self, from: legacySettingsJSON)
         expect(decodedLegacySettings.appVisibilityMode == .dockOnly, "settingsDecodeLegacyVisibilityDefault")
+        expect(!decodedLegacySettings.debugLoggingEnabled, "settingsDecodeLegacyDebugLoggingDefault")
 
         let roundTripPreset = Preset(id: "id-1", name: "Support Agent", urlTemplate: "https://chat.example.com/c/new?agent=support", kind: .agent, tags: ["support", "internal"], createdAt: "unix-ms-1", updatedAt: "unix-ms-2")
         let encodedPreset = try JSONEncoder().encode(roundTripPreset)
@@ -153,7 +156,7 @@ struct KotobaLibreSelfTest {
         expect(try store.loadPresets().isEmpty, "storeResetLoadsEmptyPresets")
 
         if failures.isEmpty {
-            print("KotobaLibreSelfTest: all checks passed (\(41) assertions)")
+            print("KotobaLibreSelfTest: all checks passed (\(43) assertions)")
             return
         }
 
