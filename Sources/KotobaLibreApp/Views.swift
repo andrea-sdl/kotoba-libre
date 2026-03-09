@@ -385,6 +385,8 @@ struct AgentManagerView: View {
     @State private var didLoadInitialDraft = false
 
     var body: some View {
+        let presets = appController.sortedPresets()
+
         VStack(alignment: .leading, spacing: 16) {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
@@ -401,25 +403,21 @@ struct AgentManagerView: View {
 
             HSplitView {
                 List(selection: $selectedPresetID) {
-                    ForEach(appController.sortedPresets()) { preset in
-                        HStack {
-                            Button(appController.settings.defaultPresetId == preset.id ? "★" : "☆") {
-                                toggleDefault(for: preset)
-                            }
-                            .buttonStyle(.plain)
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(preset.name)
-                                    .font(.headline)
-                                Text(preset.urlTemplate)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(1)
-                            }
-                        }
+                    ForEach(presets) { preset in
+                        AgentListRow(
+                            preset: preset,
+                            isDefault: appController.settings.defaultPresetId == preset.id,
+                            onToggleDefault: { toggleDefault(for: preset) }
+                        )
                         .tag(preset.id)
                     }
                 }
                 .frame(minWidth: 320)
+                .overlay {
+                    if presets.isEmpty {
+                        EmptyAgentStateView()
+                    }
+                }
                 .onChange(of: selectedPresetID) { newValue in
                     guard let newValue, let preset = appController.presets.first(where: { $0.id == newValue }) else {
                         return
@@ -591,6 +589,52 @@ struct AgentManagerView: View {
     }
 }
 
+private struct AgentListRow: View {
+    let preset: Preset
+    let isDefault: Bool
+    let onToggleDefault: () -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Button(action: onToggleDefault) {
+                Image(systemName: isDefault ? "star.fill" : "star")
+                    .foregroundStyle(isDefault ? Color.accentColor : .secondary)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(isDefault ? "Unset default agent" : "Set as default agent")
+            .accessibilityHint("Marks \(preset.name) as the launcher default.")
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(preset.name)
+                    .font(.headline)
+                Text(preset.urlTemplate)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            .accessibilityElement(children: .combine)
+        }
+    }
+}
+
+private struct EmptyAgentStateView: View {
+    var body: some View {
+        VStack(spacing: 10) {
+            Image(systemName: "person.crop.circle.badge.plus")
+                .font(.system(size: 28))
+                .foregroundStyle(.secondary)
+            Text("No Agents Yet")
+                .font(.headline)
+            Text("Create your first agent to power the launcher.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(24)
+    }
+}
+
 private struct PresetDraftState: Equatable {
     let name: String
     let urlTemplate: String
@@ -644,6 +688,8 @@ struct SettingsPanelView: View {
     @State private var isShowingResetConfirmation = false
     @State private var isShowingCompatibilityConfirmation = false
     @State private var pendingCleanupPreview: AppController.SettingsChangePreview?
+    @State private var liveCompatibilityPreview: AppController.SettingsChangePreview?
+    @State private var liveValidationIssue: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -680,7 +726,11 @@ struct SettingsPanelView: View {
             }
             .formStyle(.grouped)
 
-            if let compatibilityMessage {
+            if let liveValidationIssue {
+                Text(liveValidationIssue)
+                    .font(.footnote)
+                    .foregroundStyle(Color.red)
+            } else if let compatibilityMessage {
                 VStack(alignment: .leading, spacing: 10) {
                     Text(compatibilityMessage)
                         .font(.footnote)
@@ -708,13 +758,13 @@ struct SettingsPanelView: View {
         .onAppear {
             navigationGuard.registerDiscardHandler(for: .settings, handler: discardChanges)
             reload()
-            updateDirtyState()
+            refreshPreviewState()
         }
         .onChange(of: draftState) { _ in
-            updateDirtyState()
+            refreshPreviewState()
         }
         .onChange(of: appController.settings) { _ in
-            updateDirtyState()
+            refreshPreviewState()
         }
         .confirmationDialog("Reset configuration?", isPresented: $isShowingResetConfirmation, titleVisibility: .visible) {
             Button("Reset Configuration", role: .destructive) {
@@ -756,7 +806,7 @@ struct SettingsPanelView: View {
 
     private func saveSettings() {
         do {
-            let preview = try appController.previewSettingsChange(draftSettings)
+            let preview = try resolveCurrentPreview()
             if !preview.incompatiblePresets.isEmpty {
                 pendingCleanupPreview = preview
                 isShowingCompatibilityConfirmation = true
@@ -784,7 +834,7 @@ struct SettingsPanelView: View {
 
     private func discardChanges() {
         reload()
-        updateDirtyState()
+        refreshPreviewState()
     }
 
     private var draftSettings: AppSettings {
@@ -826,11 +876,11 @@ struct SettingsPanelView: View {
     }
 
     private var compatibilityMessage: String? {
-        guard let preview = try? appController.previewSettingsChange(draftSettings), !preview.incompatiblePresets.isEmpty else {
+        guard let liveCompatibilityPreview, !liveCompatibilityPreview.incompatiblePresets.isEmpty else {
             return nil
         }
 
-        return cleanupMessage(for: preview.incompatiblePresets)
+        return cleanupMessage(for: liveCompatibilityPreview.incompatiblePresets)
     }
 
     private func cleanupMessage(for incompatiblePresets: [Preset]) -> String {
@@ -869,7 +919,7 @@ struct SettingsPanelView: View {
         do {
             let result = try appController.saveSettings(draftSettings)
             reload()
-            updateDirtyState()
+            refreshPreviewState()
             pendingCleanupPreview = nil
 
             let removedCount = result.removedPresets.count
@@ -885,8 +935,23 @@ struct SettingsPanelView: View {
         }
     }
 
-    private func updateDirtyState() {
+    private func refreshPreviewState() {
+        do {
+            liveCompatibilityPreview = try appController.previewSettingsChange(draftSettings)
+            liveValidationIssue = nil
+        } catch {
+            liveCompatibilityPreview = nil
+            liveValidationIssue = error.localizedDescription
+        }
+
         navigationGuard.setDirty(draftState != savedState, for: .settings)
+    }
+
+    private func resolveCurrentPreview() throws -> AppController.SettingsChangePreview {
+        let preview = try appController.previewSettingsChange(draftSettings)
+        liveCompatibilityPreview = preview
+        liveValidationIssue = nil
+        return preview
     }
 }
 
@@ -1016,14 +1081,9 @@ struct AboutPanelView: View {
 struct LauncherRootView: View {
     @ObservedObject var viewModel: LauncherViewModel
 
-    private var selectedPresetBinding: Binding<String> {
-        Binding(
-            get: { viewModel.selectedPresetID ?? viewModel.presets.first?.id ?? "" },
-            set: { viewModel.selectedPresetID = $0 }
-        )
-    }
-
     var body: some View {
+        let presets = viewModel.presets
+
         VStack(spacing: 10) {
             HStack(spacing: 14) {
                 Image(systemName: "magnifyingglass")
@@ -1038,14 +1098,14 @@ struct LauncherRootView: View {
                 .frame(maxWidth: .infinity, minHeight: 44)
 
                 Group {
-                    if viewModel.presets.isEmpty {
+                    if presets.isEmpty {
                         Text("No agents")
                             .foregroundStyle(.secondary)
                             .frame(width: 220, alignment: .trailing)
                     } else {
-                        Picker("Agent", selection: selectedPresetBinding) {
-                            ForEach(viewModel.presets) { preset in
-                                Text(preset.name).tag(preset.id)
+                        Picker("Agent", selection: $viewModel.selectedPresetID) {
+                            ForEach(presets) { preset in
+                                Text(preset.name).tag(Optional(preset.id))
                             }
                         }
                         .labelsHidden()
@@ -1162,9 +1222,11 @@ private final class Coordinator: NSObject, NSTextFieldDelegate {
 }
 
 struct AppLogoView: View {
+    private static let iconImage = AppResources.iconPNGURL.flatMap(NSImage.init(contentsOf:))
+
     var body: some View {
         HStack(spacing: 14) {
-            if let iconURL = AppResources.iconPNGURL, let image = NSImage(contentsOf: iconURL) {
+            if let image = Self.iconImage {
                 Image(nsImage: image)
                     .resizable()
                     .frame(width: 56, height: 56)

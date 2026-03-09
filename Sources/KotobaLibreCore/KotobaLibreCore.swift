@@ -283,9 +283,14 @@ public enum KotobaLibreCore {
             createdAt = preset.createdAt
         }
 
-        let updatedAt = preset.updatedAt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            ? now
-            : preset.updatedAt
+        let updatedAt: String
+        if existing != nil {
+            updatedAt = now
+        } else if preset.updatedAt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            updatedAt = now
+        } else {
+            updatedAt = preset.updatedAt
+        }
 
         return Preset(
             id: presetID,
