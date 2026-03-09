@@ -4,6 +4,14 @@ import ServiceManagement
 import SwiftUI
 import KotobaLibreCore
 
+// WebAddAgentCandidate captures the agent page state needed to create a local saved agent.
+struct WebAddAgentCandidate: Equatable {
+    let sourceURL: URL
+    let newChatURL: String
+    let agentID: String
+    let agentName: String
+}
+
 // AppController is the main coordinator for the desktop app.
 // It owns persisted state, window controllers, global shortcuts, and app-level side effects.
 @MainActor
@@ -193,6 +201,14 @@ final class AppController: NSObject, ObservableObject {
             createdAt: marker,
             updatedAt: marker
         )
+    }
+
+    func makePreset(from candidate: WebAddAgentCandidate) -> Preset {
+        var preset = makeEmptyPreset(kind: .agent)
+        let trimmedName = candidate.agentName.trimmingCharacters(in: .whitespacesAndNewlines)
+        preset.name = trimmedName.isEmpty ? candidate.agentID : trimmedName
+        preset.urlTemplate = candidate.newChatURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        return preset
     }
 
     func sortedPresets() -> [Preset] {
