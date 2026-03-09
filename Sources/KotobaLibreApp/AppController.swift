@@ -197,7 +197,6 @@ final class AppController: NSObject, ObservableObject {
             name: "",
             urlTemplate: suggestPresetTemplate(instanceBaseURL: settings.instanceBaseUrl),
             kind: kind,
-            tags: [],
             createdAt: marker,
             updatedAt: marker
         )

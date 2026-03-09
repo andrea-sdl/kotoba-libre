@@ -94,9 +94,9 @@ struct KotobaLibreSelfTest {
         expect(KotobaLibreCore.expandTemplate("https://chat.example.com/c/new/support-agent", query: "hello world") == "https://chat.example.com/c/new/support-agent?prompt=hello%20world&submit=true", "templateQueryKeepsPathBasedAgentRoute")
 
         let input = [
-            Preset(id: "", name: "  Agent One  ", urlTemplate: " https://chat.example.com/c/new?agent_id=1 ", kind: .agent, tags: [" support ", "support"], createdAt: "", updatedAt: ""),
-            Preset(id: "dup", name: "Agent Two", urlTemplate: "https://chat.example.com/c/new?agent_id=2", kind: .agent, tags: [], createdAt: "unix-ms-1", updatedAt: ""),
-            Preset(id: "dup", name: "Agent Three", urlTemplate: "https://chat.example.com/c/new?agent_id=3", kind: .agent, tags: [], createdAt: "unix-ms-2", updatedAt: "unix-ms-3")
+            Preset(id: "", name: "  Agent One  ", urlTemplate: " https://chat.example.com/c/new?agent_id=1 ", kind: .agent, createdAt: "", updatedAt: ""),
+            Preset(id: "dup", name: "Agent Two", urlTemplate: "https://chat.example.com/c/new?agent_id=2", kind: .agent, createdAt: "unix-ms-1", updatedAt: ""),
+            Preset(id: "dup", name: "Agent Three", urlTemplate: "https://chat.example.com/c/new?agent_id=3", kind: .agent, createdAt: "unix-ms-2", updatedAt: "unix-ms-3")
         ]
         let normalizedPresets = KotobaLibreCore.normalizeLoadedPresets(input, nowProvider: { "unix-ms-now" })
         expect(normalizedPresets.count == 3, "loadedPresets count")
@@ -105,7 +105,6 @@ struct KotobaLibreSelfTest {
         expect(normalizedPresets[2].id != "dup", "loadedPresets changes second duplicate")
         expect(normalizedPresets[0].name == "Agent One", "loadedPresets trims name")
         expect(normalizedPresets[0].urlTemplate == "https://chat.example.com/c/new?agent_id=1", "loadedPresets trims url")
-        expect(normalizedPresets[0].tags == ["support"], "loadedPresets normalize tags")
         expect(normalizedPresets[1].updatedAt == "unix-ms-1", "loadedPresets backfill updatedAt")
 
         let existingPreset = Preset(
@@ -113,7 +112,6 @@ struct KotobaLibreSelfTest {
             name: "Support Agent",
             urlTemplate: "https://chat.example.com/c/new?agent_id=1",
             kind: .agent,
-            tags: ["support"],
             createdAt: "unix-ms-old",
             updatedAt: "unix-ms-old"
         )
@@ -122,7 +120,6 @@ struct KotobaLibreSelfTest {
             name: "Updated Support Agent",
             urlTemplate: "https://chat.example.com/c/new?agent_id=2",
             kind: .agent,
-            tags: ["support", "ops"],
             createdAt: "unix-ms-ignored",
             updatedAt: "unix-ms-ignored"
         )
@@ -134,10 +131,10 @@ struct KotobaLibreSelfTest {
         expect(normalizedEditedPreset.createdAt == "unix-ms-old", "normalizePresetPreservesCreatedAtForExisting")
         expect(normalizedEditedPreset.updatedAt == "unix-ms-new", "normalizePresetRefreshesUpdatedAtForExisting")
 
-        let mismatchedPreset = Preset(id: "id-1", name: "Support Agent", urlTemplate: "https://other.example.com/c/new?agent_id=1", kind: .agent, tags: [], createdAt: "unix-ms-1", updatedAt: "unix-ms-2")
+        let mismatchedPreset = Preset(id: "id-1", name: "Support Agent", urlTemplate: "https://other.example.com/c/new?agent_id=1", kind: .agent, createdAt: "unix-ms-1", updatedAt: "unix-ms-2")
         expect(KotobaLibreCore.validateImportCompatibility(mismatchedPreset, allowedHost: "chat.example.com", row: 1) != nil, "importValidationRejectsHostMismatch")
 
-        let matchingPreset = Preset(id: "id-1", name: "Support Agent", urlTemplate: "https://chat.example.com/c/new?agent_id=1", kind: .agent, tags: [], createdAt: "unix-ms-1", updatedAt: "unix-ms-2")
+        let matchingPreset = Preset(id: "id-1", name: "Support Agent", urlTemplate: "https://chat.example.com/c/new?agent_id=1", kind: .agent, createdAt: "unix-ms-1", updatedAt: "unix-ms-2")
         expect(KotobaLibreCore.validateImportCompatibility(matchingPreset, allowedHost: "chat.example.com", row: 1) == nil, "importValidationAcceptsMatchingHost")
         expect(KotobaLibreCore.validatePresetCompatibility(matchingPreset, allowedHost: "chat.example.com") == nil, "presetCompatibilityAcceptsMatchingHost")
         expect(KotobaLibreCore.validatePresetCompatibility(mismatchedPreset, allowedHost: "chat.example.com") != nil, "presetCompatibilityRejectsHostMismatch")
@@ -163,7 +160,7 @@ struct KotobaLibreSelfTest {
         expect(AppResources.iconPNGURL?.lastPathComponent == "AppIcon.png", "appResourcesResolvePNG")
         expect(AppResources.iconICNSURL?.lastPathComponent == "AppIcon.icns", "appResourcesResolveICNS")
 
-        let roundTripPreset = Preset(id: "id-1", name: "Support Agent", urlTemplate: "https://chat.example.com/c/new?agent=support", kind: .agent, tags: ["support", "internal"], createdAt: "unix-ms-1", updatedAt: "unix-ms-2")
+        let roundTripPreset = Preset(id: "id-1", name: "Support Agent", urlTemplate: "https://chat.example.com/c/new?agent=support", kind: .agent, createdAt: "unix-ms-1", updatedAt: "unix-ms-2")
         let encodedPreset = try JSONEncoder().encode(roundTripPreset)
         let decodedPreset = try JSONDecoder().decode(Preset.self, from: encodedPreset)
         expect(decodedPreset == roundTripPreset, "presetRoundTrip")
@@ -171,7 +168,7 @@ struct KotobaLibreSelfTest {
         let tempDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         let store = try AppDataStore(baseDirectory: tempDirectory)
         try store.saveSettings(settingsRestrictingHost())
-        try store.savePresets([Preset(id: "preset-1", name: "Support", urlTemplate: "https://chat.example.com/c/new?agent_id=1", kind: .agent, tags: [], createdAt: "unix-ms-1", updatedAt: "unix-ms-1")])
+        try store.savePresets([Preset(id: "preset-1", name: "Support", urlTemplate: "https://chat.example.com/c/new?agent_id=1", kind: .agent, createdAt: "unix-ms-1", updatedAt: "unix-ms-1")])
         expect(FileManager.default.fileExists(atPath: store.settingsURL.path), "storeWritesSettings")
         expect(FileManager.default.fileExists(atPath: store.presetsURL.path), "storeWritesPresets")
         expect(try store.loadSettings().instanceBaseUrl == "https://chat.example.com", "storeLoadsSettings")

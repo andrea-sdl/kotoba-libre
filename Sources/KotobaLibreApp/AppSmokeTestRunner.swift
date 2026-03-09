@@ -59,7 +59,6 @@ final class AppSmokeTestRunner {
         var preset = appController.makeEmptyPreset()
         preset.name = "Smoke Test Agent"
         preset.urlTemplate = "https://chat.example.com/c/new?agent_id=smoke-test-agent"
-        preset.tags = ["smoke", "test"]
 
         let savedPreset = try appController.upsertPreset(preset)
         try appController.setDefaultPreset(id: savedPreset.id)
