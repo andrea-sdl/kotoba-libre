@@ -104,7 +104,7 @@ struct KotobaLibreSelfTest {
         expect(normalizedPresets[1].id == "dup", "loadedPresets preserves first duplicate")
         expect(normalizedPresets[2].id != "dup", "loadedPresets changes second duplicate")
         expect(normalizedPresets[0].name == "Agent One", "loadedPresets trims name")
-        expect(normalizedPresets[0].urlTemplate == "https://chat.example.com/c/new?agent_id=1", "loadedPresets trims url")
+        expect(normalizedPresets[0].urlTemplate == "1", "loadedPresets stores only the agent id")
         expect(normalizedPresets[1].updatedAt == "unix-ms-1", "loadedPresets backfill updatedAt")
 
         let existingPreset = Preset(
@@ -130,11 +130,12 @@ struct KotobaLibreSelfTest {
         )
         expect(normalizedEditedPreset.createdAt == "unix-ms-old", "normalizePresetPreservesCreatedAtForExisting")
         expect(normalizedEditedPreset.updatedAt == "unix-ms-new", "normalizePresetRefreshesUpdatedAtForExisting")
+        expect(normalizedEditedPreset.urlTemplate == "2", "normalizePresetStoresAgentIDsInsteadOfFullURLs")
 
-        let mismatchedPreset = Preset(id: "id-1", name: "Support Agent", urlTemplate: "https://other.example.com/c/new?agent_id=1", kind: .agent, createdAt: "unix-ms-1", updatedAt: "unix-ms-2")
+        let mismatchedPreset = Preset(id: "id-1", name: "Support Agent", urlTemplate: "https://other.example.com/c/new?agent_id=1", kind: .link, createdAt: "unix-ms-1", updatedAt: "unix-ms-2")
         expect(KotobaLibreCore.validateImportCompatibility(mismatchedPreset, allowedHost: "chat.example.com", row: 1) != nil, "importValidationRejectsHostMismatch")
 
-        let matchingPreset = Preset(id: "id-1", name: "Support Agent", urlTemplate: "https://chat.example.com/c/new?agent_id=1", kind: .agent, createdAt: "unix-ms-1", updatedAt: "unix-ms-2")
+        let matchingPreset = Preset(id: "id-1", name: "Support Agent", urlTemplate: "https://chat.example.com/c/new?agent_id=1", kind: .link, createdAt: "unix-ms-1", updatedAt: "unix-ms-2")
         expect(KotobaLibreCore.validateImportCompatibility(matchingPreset, allowedHost: "chat.example.com", row: 1) == nil, "importValidationAcceptsMatchingHost")
         expect(KotobaLibreCore.validatePresetCompatibility(matchingPreset, allowedHost: "chat.example.com") == nil, "presetCompatibilityAcceptsMatchingHost")
         expect(KotobaLibreCore.validatePresetCompatibility(mismatchedPreset, allowedHost: "chat.example.com") != nil, "presetCompatibilityRejectsHostMismatch")
@@ -146,6 +147,12 @@ struct KotobaLibreSelfTest {
         expect(KotobaLibreCore.canUseSPANavigation(instanceHost: "chat.example.com", url: allowedSPAHomeURL), "spaNavigationAllowedForPlainAgentRouteOnInstanceHost")
         let blockedSPAURL = URL(string: "https://example.com/c/new?prompt=hello&submit=true")!
         expect(!KotobaLibreCore.canUseSPANavigation(instanceHost: "chat.example.com", url: blockedSPAURL), "spaNavigationBlockedForNonInstanceHost")
+        let agentDestination = try KotobaLibreCore.destinationString(
+            for: Preset(id: "id-1", name: "Support Agent", urlTemplate: "agent_123", kind: .agent, createdAt: "unix-ms-1", updatedAt: "unix-ms-2"),
+            instanceBaseURL: "https://chat.example.com",
+            query: "hello"
+        )
+        expect(agentDestination == "https://chat.example.com/c/new?agent_id=agent_123&prompt=hello&submit=true", "agentDestinationBuildsFromStoredAgentID")
 
         let encodedSettings = try JSONEncoder().encode(AppSettings())
         let decodedSettings = try JSONDecoder().decode(AppSettings.self, from: encodedSettings)

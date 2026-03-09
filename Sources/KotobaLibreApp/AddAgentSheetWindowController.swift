@@ -18,6 +18,10 @@ final class AddAgentSheetViewModel: ObservableObject {
         self.dismiss = dismiss
     }
 
+    var instanceBaseURL: String? {
+        appController?.settings.instanceBaseUrl
+    }
+
     func save() {
         guard let appController else {
             return
@@ -59,7 +63,7 @@ private struct AddAgentSheetView: View {
                 .foregroundStyle(.secondary)
 
             Form {
-                AgentEditorFields(draft: $viewModel.draft)
+                AgentEditorFields(draft: $viewModel.draft, instanceBaseURL: viewModel.instanceBaseURL)
             }
             .formStyle(.grouped)
 

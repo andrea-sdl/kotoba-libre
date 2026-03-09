@@ -298,7 +298,10 @@ public enum KotobaLibreCore {
         return Preset(
             id: presetID,
             name: preset.name.trimmingCharacters(in: .whitespacesAndNewlines),
-            urlTemplate: preset.urlTemplate.trimmingCharacters(in: .whitespacesAndNewlines),
+            urlTemplate: normalizePresetValue(
+                preset.urlTemplate.trimmingCharacters(in: .whitespacesAndNewlines),
+                kind: preset.kind
+            ),
             kind: preset.kind,
             createdAt: createdAt,
             updatedAt: updatedAt
@@ -320,7 +323,10 @@ public enum KotobaLibreCore {
             seenIDs.insert(current.id)
 
             current.name = current.name.trimmingCharacters(in: .whitespacesAndNewlines)
-            current.urlTemplate = current.urlTemplate.trimmingCharacters(in: .whitespacesAndNewlines)
+            current.urlTemplate = normalizePresetValue(
+                current.urlTemplate.trimmingCharacters(in: .whitespacesAndNewlines),
+                kind: current.kind
+            )
 
             let trimmedCreatedAt = current.createdAt.trimmingCharacters(in: .whitespacesAndNewlines)
             let trimmedUpdatedAt = current.updatedAt.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -354,6 +360,50 @@ public enum KotobaLibreCore {
             return ValidationResult(valid: true)
         } catch {
             return ValidationResult(valid: false, reason: error.localizedDescription)
+        }
+    }
+
+    public static func normalizePresetValue(_ rawValue: String, kind: PresetKind) -> String {
+        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        switch kind {
+        case .agent:
+            return agentID(from: trimmed) ?? trimmed
+        case .link:
+            return trimmed
+        }
+    }
+
+    public static func agentID(from rawValue: String) -> String? {
+        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return nil
+        }
+
+        if let url = URL(string: trimmed), let agentID = queryValue(url, key: "agent_id")?.trimmingCharacters(in: .whitespacesAndNewlines), !agentID.isEmpty {
+            return agentID
+        }
+
+        if trimmed.contains("://") {
+            return nil
+        }
+
+        return trimmed
+    }
+
+    public static func validatePresetValue(_ value: String, kind: PresetKind) -> ValidationResult {
+        switch kind {
+        case .agent:
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else {
+                return ValidationResult(valid: false, reason: "Agent ID cannot be empty")
+            }
+            guard let normalizedAgentID = agentID(from: trimmed), !normalizedAgentID.isEmpty else {
+                return ValidationResult(valid: false, reason: "Agent URLs must include an agent_id query parameter")
+            }
+            return ValidationResult(valid: true)
+        case .link:
+            return validateURLTemplate(value)
         }
     }
 
@@ -408,7 +458,11 @@ public enum KotobaLibreCore {
     }
 
     public static func presetTemplateHost(_ preset: Preset) throws -> String? {
-        try parseURLTemplateCandidate(preset.urlTemplate).host?.lowercased()
+        if preset.kind == .agent {
+            return nil
+        }
+
+        return try parseURLTemplateCandidate(preset.urlTemplate).host?.lowercased()
     }
 
     public static func validatePresetCompatibility(_ preset: Preset, allowedHost: String) -> String? {
@@ -416,9 +470,13 @@ public enum KotobaLibreCore {
             return "name cannot be empty"
         }
 
-        let validation = validateURLTemplate(preset.urlTemplate)
+        let validation = validatePresetValue(preset.urlTemplate, kind: preset.kind)
         if !validation.valid {
             return validation.reason ?? "Invalid URL template"
+        }
+
+        if preset.kind == .agent {
+            return nil
         }
 
         do {
@@ -500,6 +558,43 @@ public enum KotobaLibreCore {
         )
     }
 
+    public static func previewDestination(for preset: Preset, instanceBaseURL: String?) throws -> String {
+        try destinationString(for: preset, instanceBaseURL: instanceBaseURL, query: nil)
+    }
+
+    public static func destinationString(for preset: Preset, instanceBaseURL: String?, query: String?) throws -> String {
+        switch preset.kind {
+        case .agent:
+            guard let baseURL = try parseInstanceBaseURL(AppSettings(instanceBaseUrl: instanceBaseURL)) else {
+                throw KotobaLibreError.invalidDestination("Set your LibreChat instance URL to preview or open agents")
+            }
+            guard let agentID = agentID(from: preset.urlTemplate), !agentID.isEmpty else {
+                throw KotobaLibreError.invalidDestination("Agent ID cannot be empty")
+            }
+
+            let normalizedBaseURL = baseURL.absoluteString.hasSuffix("/") ? baseURL.absoluteString : "\(baseURL.absoluteString)/"
+            guard
+                let base = URL(string: normalizedBaseURL),
+                var components = URLComponents(url: URL(string: "c/new", relativeTo: base)?.absoluteURL ?? baseURL, resolvingAgainstBaseURL: false)
+            else {
+                throw KotobaLibreError.invalidDestination("Invalid LibreChat instance URL")
+            }
+
+            var items = components.queryItems ?? []
+            items.removeAll { $0.name == "agent_id" }
+            items.append(URLQueryItem(name: "agent_id", value: agentID))
+            components.queryItems = items
+
+            guard let destination = components.url?.absoluteString else {
+                throw KotobaLibreError.invalidDestination("Invalid agent destination URL")
+            }
+
+            return appendQuery(to: destination, query: query)
+        case .link:
+            return expandTemplate(preset.urlTemplate, query: query)
+        }
+    }
+
     public static func expandTemplate(_ urlTemplate: String, query: String?) -> String {
         // There are two modes:
         // 1. Replace {query} when the template wants full control.
@@ -518,8 +613,12 @@ public enum KotobaLibreCore {
             return templated
         }
 
-        guard let query, !query.isEmpty, var components = URLComponents(string: templated) else {
-            return templated
+        return appendQuery(to: templated, query: query)
+    }
+
+    private static func appendQuery(to destination: String, query: String?) -> String {
+        guard let query, !query.isEmpty, var components = URLComponents(string: destination) else {
+            return destination
         }
 
         var items = (components.queryItems ?? []).filter { item in
@@ -528,7 +627,7 @@ public enum KotobaLibreCore {
         items.append(URLQueryItem(name: "prompt", value: query))
         items.append(URLQueryItem(name: "submit", value: "true"))
         components.queryItems = items
-        return components.url?.absoluteString ?? templated
+        return components.url?.absoluteString ?? destination
     }
 
     public static func canUseSPANavigation(instanceHost: String?, url: URL) -> Bool {

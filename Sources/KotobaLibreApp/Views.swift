@@ -388,6 +388,7 @@ struct SettingsRootView: View {
 // AgentEditorFields keeps the shared preset fields consistent between Settings and the titlebar sheet.
 struct AgentEditorFields: View {
     @Binding var draft: Preset
+    let instanceBaseURL: String?
 
     var body: some View {
         TextField("Name", text: $draft.name)
@@ -396,12 +397,76 @@ struct AgentEditorFields: View {
                 Text(kind.rawValue.capitalized).tag(kind)
             }
         }
-        TextField("Configured URL", text: $draft.urlTemplate)
+        TextField(destinationFieldTitle, text: $draft.urlTemplate)
+            .onChange(of: draft.urlTemplate) { nextValue in
+                normalizeAgentValueIfNeeded(nextValue)
+            }
+            .onChange(of: draft.kind) { _ in
+                normalizeAgentValueIfNeeded(draft.urlTemplate)
+            }
 
-        let validation = KotobaLibreCore.validateURLTemplate(draft.urlTemplate)
-        Text(validation.valid ? "Template looks valid." : (validation.reason ?? "Invalid URL template."))
+        if let previewState {
+            Text(previewState.message)
+                .font(.footnote)
+                .foregroundStyle(previewState.isError ? Color.red : .secondary)
+                .textSelection(.enabled)
+        }
+
+        if draft.kind == .link {
+            Text("Launcher searches append the query as `prompt` plus `submit=true` unless you use `{query}` in the URL.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        }
+
+        let validation = KotobaLibreCore.validatePresetValue(draft.urlTemplate, kind: draft.kind)
+        Text(validation.valid ? validationSuccessMessage : (validation.reason ?? "Invalid value."))
             .font(.footnote)
             .foregroundStyle(validation.valid ? .secondary : Color.red)
+    }
+
+    private var destinationFieldTitle: String {
+        switch draft.kind {
+        case .agent:
+            return "Agent ID or Agent URL"
+        case .link:
+            return "Configured URL"
+        }
+    }
+
+    private var validationSuccessMessage: String {
+        switch draft.kind {
+        case .agent:
+            return "Agent ID looks valid."
+        case .link:
+            return "Link looks valid."
+        }
+    }
+
+    private var previewState: (message: String, isError: Bool)? {
+        let trimmedValue = draft.urlTemplate.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedValue.isEmpty else {
+            return nil
+        }
+
+        do {
+            let preview = try KotobaLibreCore.previewDestination(for: draft, instanceBaseURL: instanceBaseURL)
+            return ("Preview: \(preview)", false)
+        } catch {
+            return (error.localizedDescription, true)
+        }
+    }
+
+    private func normalizeAgentValueIfNeeded(_ rawValue: String) {
+        guard draft.kind == .agent else {
+            return
+        }
+
+        let normalizedValue = KotobaLibreCore.normalizePresetValue(rawValue, kind: .agent)
+        guard normalizedValue != rawValue else {
+            return
+        }
+
+        draft.urlTemplate = normalizedValue
     }
 }
 
@@ -458,7 +523,7 @@ struct AgentManagerView: View {
                 }
 
                 Form {
-                    AgentEditorFields(draft: $draft)
+                    AgentEditorFields(draft: $draft, instanceBaseURL: appController.settings.instanceBaseUrl)
 
                     HStack {
                         Button("Save Agent") { savePreset() }
@@ -535,7 +600,7 @@ struct AgentManagerView: View {
 
     private func openDraftURL() {
         do {
-            try appController.openDraftURL(draft.urlTemplate)
+            try appController.openDraftURL(draft)
             setStatus("Opened URL.", isError: false)
         } catch {
             setStatus(error.localizedDescription, isError: true)
