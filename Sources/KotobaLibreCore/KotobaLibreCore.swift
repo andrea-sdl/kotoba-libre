@@ -62,6 +62,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var restrictHostToInstanceHost: Bool
     public var defaultPresetId: String?
     public var useRouteReloadForLauncherChats: Bool
+    public var debugLoggingEnabled: Bool
     public var launcherOpacity: Double
     public var appVisibilityMode: AppVisibilityMode
 
@@ -72,6 +73,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         case restrictHostToInstanceHost
         case defaultPresetId
         case useRouteReloadForLauncherChats
+        case debugLoggingEnabled
         case launcherOpacity
         case appVisibilityMode
     }
@@ -83,6 +85,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         restrictHostToInstanceHost: Bool = true,
         defaultPresetId: String? = nil,
         useRouteReloadForLauncherChats: Bool = false,
+        debugLoggingEnabled: Bool = false,
         launcherOpacity: Double = 0.95,
         appVisibilityMode: AppVisibilityMode = .dockOnly
     ) {
@@ -92,6 +95,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         self.restrictHostToInstanceHost = restrictHostToInstanceHost
         self.defaultPresetId = defaultPresetId
         self.useRouteReloadForLauncherChats = useRouteReloadForLauncherChats
+        self.debugLoggingEnabled = debugLoggingEnabled
         self.launcherOpacity = launcherOpacity
         self.appVisibilityMode = appVisibilityMode
     }
@@ -104,6 +108,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         restrictHostToInstanceHost = try container.decodeIfPresent(Bool.self, forKey: .restrictHostToInstanceHost) ?? true
         defaultPresetId = try container.decodeIfPresent(String.self, forKey: .defaultPresetId)
         useRouteReloadForLauncherChats = try container.decodeIfPresent(Bool.self, forKey: .useRouteReloadForLauncherChats) ?? false
+        debugLoggingEnabled = try container.decodeIfPresent(Bool.self, forKey: .debugLoggingEnabled) ?? false
         launcherOpacity = try container.decodeIfPresent(Double.self, forKey: .launcherOpacity) ?? 0.95
         appVisibilityMode = try container.decodeIfPresent(AppVisibilityMode.self, forKey: .appVisibilityMode) ?? .dockOnly
     }
@@ -116,6 +121,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         try container.encode(restrictHostToInstanceHost, forKey: .restrictHostToInstanceHost)
         try container.encodeIfPresent(defaultPresetId, forKey: .defaultPresetId)
         try container.encode(useRouteReloadForLauncherChats, forKey: .useRouteReloadForLauncherChats)
+        try container.encode(debugLoggingEnabled, forKey: .debugLoggingEnabled)
         try container.encode(launcherOpacity, forKey: .launcherOpacity)
         try container.encode(appVisibilityMode, forKey: .appVisibilityMode)
     }

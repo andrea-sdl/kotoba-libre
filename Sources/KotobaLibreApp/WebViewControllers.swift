@@ -52,6 +52,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
     func showWebView(settings: AppSettings) {
         let controller = ensureWebController()
+        controller.debugLoggingEnabled = settings.debugLoggingEnabled
         window?.contentViewController = controller
     }
 
@@ -62,12 +63,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         }
 
         let controller = ensureWebController()
+        controller.debugLoggingEnabled = settings.debugLoggingEnabled
         window?.contentViewController = controller
         controller.load(url: homeURL)
     }
 
     func open(url: URL, settings: AppSettings, instanceHost: String?, forceEmbedAllHosts: Bool = false) {
         let controller = ensureWebController()
+        controller.debugLoggingEnabled = settings.debugLoggingEnabled
         window?.contentViewController = controller
         controller.open(
             url: url,
@@ -177,7 +180,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         do {
             try store.saveMainWindowState(state)
         } catch {
-            print("KotobaLibre Window: failed to save state -> \(error.localizedDescription)")
+            debugLog("KotobaLibre Window: failed to save state -> \(error.localizedDescription)")
         }
     }
 
@@ -292,6 +295,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
         return savedState.rect
     }
+
+    private func debugLog(_ message: String) {
+        guard appController?.settings.debugLoggingEnabled == true else {
+            return
+        }
+
+        print(message)
+    }
 }
 
 private extension WindowFrameState {
@@ -332,6 +343,7 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate {
 
     let webView: WKWebView
     var externalNavigationHandler: ((URL) -> Void)?
+    var debugLoggingEnabled = false
     private var hasLoadedRemoteContent = false
     private var externalNavigationPolicy: ExternalNavigationPolicy = .singleHost(nil)
     private let logMessageHandler = ScriptMessageHandler()
@@ -358,8 +370,8 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate {
         super.init(nibName: nil, bundle: nil)
         self.webView.navigationDelegate = self
         self.webView.allowsBackForwardNavigationGestures = true
-        logMessageHandler.onMessage = { message in
-            print("KotobaLibre SPA: \(message)")
+        logMessageHandler.onMessage = { [weak self] message in
+            self?.debugLog("KotobaLibre SPA: \(message)")
         }
     }
 
@@ -374,7 +386,7 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate {
 
     func load(url: URL) {
         hasLoadedRemoteContent = true
-        print("KotobaLibre SPA: load(url:) -> \(url.absoluteString)")
+        debugLog("KotobaLibre SPA: load(url:) -> \(url.absoluteString)")
         webView.load(URLRequest(url: url))
     }
 
@@ -393,9 +405,9 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate {
             webView.evaluateJavaScript(script) { [weak self] _, error in
                 if let error {
                     let message = error.localizedDescription
-                    print("KotobaLibre SPA: evaluateJavaScript failed -> \(message)")
+                    self?.debugLog("KotobaLibre SPA: evaluateJavaScript failed -> \(message)")
                     if message.localizedCaseInsensitiveContains("unsupported type") {
-                        print("KotobaLibre SPA: ignoring unsupported evaluateJavaScript return type")
+                        self?.debugLog("KotobaLibre SPA: ignoring unsupported evaluateJavaScript return type")
                         return
                     }
                     self?.load(url: url)
@@ -434,7 +446,15 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate {
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         hasLoadedRemoteContent = true
-        print("KotobaLibre SPA: didFinish -> \(webView.url?.absoluteString ?? "<unknown>")")
+        debugLog("KotobaLibre SPA: didFinish -> \(webView.url?.absoluteString ?? "<unknown>")")
+    }
+
+    private func debugLog(_ message: String) {
+        guard debugLoggingEnabled else {
+            return
+        }
+
+        print(message)
     }
 
     private func embeddedHost(for url: URL, instanceHost: String?, settings: AppSettings) -> String? {
