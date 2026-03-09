@@ -1,20 +1,16 @@
-name: Release macOS (Unsigned)
+name: Release macOS (Unsigned DMG)
 
 on:
-  push:
-    tags:
-      - "v*"
   workflow_dispatch:
     inputs:
-      version:
-        description: "Release version (for example: 0.2.0 or v0.2.0)"
+      bump:
+        description: "Release bump to apply from the default branch"
         required: true
-        type: string
-      prerelease:
-        description: "Mark this release as prerelease"
-        required: false
-        default: false
-        type: boolean
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
       draft:
         description: "Create this release as draft"
         required: false
@@ -24,14 +20,32 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: release-${{ github.event.repository.default_branch }}
+  cancel-in-progress: false
+
 jobs:
   release-macos:
     runs-on: macos-latest
+    env:
+      APP_NAME: Kotoba Libre
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Require the default branch
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          default_branch="${{ github.event.repository.default_branch }}"
+
+          if [[ "${GITHUB_REF_NAME}" != "${default_branch}" ]]; then
+            echo "Run this workflow from ${default_branch}. Current ref is ${GITHUB_REF_NAME}." >&2
+            exit 1
+          fi
 
       - name: Resolve release metadata
         id: release_meta
@@ -39,30 +53,22 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [[ "${GITHUB_EVENT_NAME}" == "push" ]]; then
-            tag="${GITHUB_REF_NAME}"
-            version="${tag#v}"
-            prerelease="false"
-            draft="false"
-          else
-            input_version="${{ inputs.version }}"
-            version="${input_version#v}"
-            tag="v${version}"
-            prerelease="${{ inputs.prerelease }}"
-            draft="${{ inputs.draft }}"
-          fi
-
-          if [[ ! "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
-            echo "Invalid semantic version: ${version}" >&2
-            exit 1
-          fi
+          current_version="$(tr -d '[:space:]' < VERSION)"
+          release_version="$(./scripts/ci/semver-bump.sh "${current_version}" "${{ inputs.bump }}")"
+          next_dev_version="$(./scripts/ci/semver-bump.sh "${release_version}" patch --prerelease dev)"
+          tag="v${release_version}"
 
           echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
-          echo "version=${version}" >> "${GITHUB_OUTPUT}"
-          echo "prerelease=${prerelease}" >> "${GITHUB_OUTPUT}"
-          echo "draft=${draft}" >> "${GITHUB_OUTPUT}"
+          echo "current_version=${current_version}" >> "${GITHUB_OUTPUT}"
+          echo "version=${release_version}" >> "${GITHUB_OUTPUT}"
+          echo "next_dev_version=${next_dev_version}" >> "${GITHUB_OUTPUT}"
 
-      - name: Fail if release already exists
+      - name: Setup Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Ensure tag and release do not already exist
         uses: actions/github-script@v7
         env:
           RELEASE_TAG: ${{ steps.release_meta.outputs.tag }}
@@ -71,28 +77,50 @@ jobs:
             const tag = process.env.RELEASE_TAG;
             const { owner, repo } = context.repo;
 
-            let existingRelease = null;
             try {
-              existingRelease = await github.rest.repos.getReleaseByTag({ owner, repo, tag });
+              await github.rest.repos.getReleaseByTag({ owner, repo, tag });
+              core.setFailed(`Release for tag ${tag} already exists. Delete it or choose a different bump.`);
             } catch (error) {
               if (error.status !== 404) {
                 throw error;
               }
             }
 
-            if (existingRelease) {
-              core.setFailed(`Release for tag ${tag} already exists. Delete it or bump the version.`);
-            } else {
-              core.info(`No release exists for tag ${tag}. Continuing.`);
-            }
+      - name: Ensure git tag does not already exist
+        shell: bash
+        run: |
+          set -euo pipefail
 
-      - name: Setup Xcode
-        uses: maxim-lobanov/setup-xcode@v1
-        with:
-          xcode-version: latest-stable
+          tag="${{ steps.release_meta.outputs.tag }}"
+          git fetch --tags --force origin
 
-      - name: Validate app version consistency
-        run: ./scripts/ci/validate-version.sh "${{ steps.release_meta.outputs.version }}"
+          if git ls-remote --exit-code --tags origin "refs/tags/${tag}" >/dev/null 2>&1; then
+            echo "Tag ${tag} already exists on origin." >&2
+            exit 1
+          fi
+
+      - name: Configure git author
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Create release commit and tag
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          release_version="${{ steps.release_meta.outputs.version }}"
+          tag="${{ steps.release_meta.outputs.tag }}"
+
+          printf '%s\n' "${release_version}" > VERSION
+          ./scripts/ci/validate-version.sh "${release_version}"
+
+          git add VERSION
+          git commit -m "Release ${tag}"
+          git tag -a "${tag}" -m "Release ${tag}"
 
       - name: Build app bundle
         run: ./scripts/build-app.sh "${{ steps.release_meta.outputs.version }}"
@@ -101,48 +129,38 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test -d "dist-artifacts/Toro Libre.app"
-          test -f "dist-artifacts/Toro Libre-unsigned.dmg"
-          test -f "dist-artifacts/Toro Libre-unsigned-app.zip"
+          test -d "dist-artifacts/${APP_NAME}.app"
+          test -f "dist-artifacts/${APP_NAME}-unsigned.dmg"
 
-      - name: Generate SHA256 checksums
-        shell: bash
-        run: |
-          set -euo pipefail
-          shasum -a 256 dist-artifacts/* > dist-artifacts/SHA256SUMS.txt
-
-      - name: Ensure tag exists for manual release
-        if: github.event_name == 'workflow_dispatch'
+      - name: Create next development version commit
         shell: bash
         run: |
           set -euo pipefail
 
+          next_dev_version="${{ steps.release_meta.outputs.next_dev_version }}"
+
+          printf '%s\n' "${next_dev_version}" > VERSION
+          git add VERSION
+          git commit -m "Start ${next_dev_version}"
+
+      - name: Push branch updates and tag
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          default_branch="${{ github.event.repository.default_branch }}"
           tag="${{ steps.release_meta.outputs.tag }}"
 
-          git fetch --tags --force
-
-          if git ls-remote --exit-code --tags origin "refs/tags/${tag}" >/dev/null 2>&1; then
-            echo "Tag ${tag} already exists on origin."
-            exit 0
-          fi
-
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag "${tag}" "${GITHUB_SHA}"
+          git push origin "HEAD:${default_branch}"
           git push origin "refs/tags/${tag}"
-          echo "Created tag ${tag} from ${GITHUB_SHA}"
 
-      # Future signed/notarized flow can branch here via workflow inputs + secrets.
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.release_meta.outputs.tag }}
-          name: Toro Libre v${{ steps.release_meta.outputs.version }}
-          draft: ${{ steps.release_meta.outputs.draft == 'true' }}
-          prerelease: ${{ steps.release_meta.outputs.prerelease == 'true' }}
+          name: Kotoba Libre v${{ steps.release_meta.outputs.version }}
+          draft: ${{ inputs.draft }}
           generate_release_notes: true
           fail_on_unmatched_files: true
           files: |
             dist-artifacts/*-unsigned.dmg
-            dist-artifacts/*-unsigned-app.zip
-            dist-artifacts/SHA256SUMS.txt

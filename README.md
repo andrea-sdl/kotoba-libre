@@ -38,6 +38,7 @@ The app gives LibreChat a focused desktop shell with:
 |-- scripts
 |   |-- build-app.sh
 |   |-- create-unsigned-dmg.sh
+|   |-- ci/semver-bump.sh
 |   `-- ci/validate-version.sh
 `-- VERSION
 ```
@@ -165,6 +166,7 @@ Validate the version before release:
 ```
 
 Unsigned release automation is defined in `.github/workflows/release.yml`.
+The release workflow is launched manually from the default branch, creates the release tag for the selected `patch` / `minor` / `major` bump, publishes only the unsigned DMG to GitHub Releases, and then advances `VERSION` to the next `-dev` version on the default branch.
 
 More detail:
 

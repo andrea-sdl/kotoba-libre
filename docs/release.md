@@ -16,6 +16,15 @@ Before releasing, validate the requested version:
 
 The script accepts either `0.1.0` or `v0.1.0` and fails if `VERSION` does not match.
 
+Version bump math for the release workflow lives in:
+
+- `scripts/ci/semver-bump.sh`
+
+After each automated release, the default branch advances to the next patch development version with a `-dev` suffix. Example:
+
+- Release `0.2.0`
+- Default branch becomes `0.2.1-dev`
+
 ## Local Packaging
 
 Build the release executable, app bundle, and unsigned archives with:
@@ -51,19 +60,22 @@ After a successful packaging run, expect:
 
 The workflow in `.github/workflows/release.yml` supports:
 
-- Tag-triggered releases on `v*`
-- Manual `workflow_dispatch` releases with version input
+- Manual `workflow_dispatch` releases from the default branch
+- A required bump choice: `patch`, `minor`, or `major`
+- Automatic release commit + tag creation
+- Automatic post-release bump to the next patch `-dev` version
+- Publishing only the unsigned DMG to the GitHub release
 
 High-level flow:
 
-1. Resolve version and tag metadata
-2. Fail if the release already exists
-3. Set up Xcode
-4. Validate `VERSION`
+1. Verify the workflow is running from the default branch
+2. Compute the release version from the selected bump and current `VERSION`
+3. Fail if the tag or GitHub release already exists
+4. Commit `VERSION=<release version>` and create `v<release version>`
 5. Build unsigned artifacts
-6. Generate SHA256 checksums
-7. Create the tag for manual releases if needed
-8. Publish the GitHub release
+6. Commit `VERSION=<next patch>-dev` locally on top of the release commit
+7. Push the branch update and the release tag
+8. Publish the GitHub release with the unsigned DMG only
 
 ## Distribution Notes
 
