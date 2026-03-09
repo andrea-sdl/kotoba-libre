@@ -4,6 +4,7 @@ public let appBundleIdentifier = "com.andreagrassi.kotobalibre"
 public let appDisplayName = "Kotoba Libre"
 public let settingsFileName = "settings.json"
 public let presetsFileName = "presets.json"
+public let mainWindowStateFileName = "main-window-state.json"
 
 public enum AppVisibilityMode: String, Codable, CaseIterable, Equatable, Sendable {
     case dockAndMenuBar
@@ -117,6 +118,20 @@ public struct AppSettings: Codable, Equatable, Sendable {
         try container.encode(useRouteReloadForLauncherChats, forKey: .useRouteReloadForLauncherChats)
         try container.encode(launcherOpacity, forKey: .launcherOpacity)
         try container.encode(appVisibilityMode, forKey: .appVisibilityMode)
+    }
+}
+
+public struct WindowFrameState: Codable, Equatable, Sendable {
+    public var originX: Double
+    public var originY: Double
+    public var width: Double
+    public var height: Double
+
+    public init(originX: Double, originY: Double, width: Double, height: Double) {
+        self.originX = originX
+        self.originY = originY
+        self.width = width
+        self.height = height
     }
 }
 
