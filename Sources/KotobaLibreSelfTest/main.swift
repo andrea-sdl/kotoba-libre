@@ -85,6 +85,7 @@ struct KotobaLibreSelfTest {
 
         expect(KotobaLibreCore.expandTemplate("https://chat.example.com/search?q={query}", query: "hello world") == "https://chat.example.com/search?q=hello+world", "templateQueryPlaceholderIsEncoded")
         expect(KotobaLibreCore.expandTemplate("https://chat.example.com/c/new?agent_id=agent_aLfpSjQmQKt9nhbFi7BIs", query: "hello world") == "https://chat.example.com/c/new?agent_id=agent_aLfpSjQmQKt9nhbFi7BIs&prompt=hello%20world&submit=true", "templateQueryIsAppendedAsPromptWithSubmitWhenMissingPlaceholder")
+        expect(KotobaLibreCore.expandTemplate("https://chat.example.com/c/new/support-agent", query: "hello world") == "https://chat.example.com/c/new/support-agent?prompt=hello%20world&submit=true", "templateQueryKeepsPathBasedAgentRoute")
 
         let input = [
             Preset(id: "", name: "  Agent One  ", urlTemplate: " https://chat.example.com/c/new?agent_id=1 ", kind: .agent, tags: [" support ", "support"], createdAt: "", updatedAt: ""),
@@ -112,6 +113,8 @@ struct KotobaLibreSelfTest {
 
         let allowedSPAURL = URL(string: "https://chat.example.com/c/new?agent_id=agent_aLfpSjQmQKt9nhbFi7BIs&prompt=hello&submit=true")!
         expect(KotobaLibreCore.canUseSPANavigation(instanceHost: "chat.example.com", url: allowedSPAURL), "spaNavigationAllowedForLauncherSubmitURLOnInstanceHost")
+        let allowedSPAHomeURL = URL(string: "https://chat.example.com/c/new?agent_id=agent_aLfpSjQmQKt9nhbFi7BIs")!
+        expect(KotobaLibreCore.canUseSPANavigation(instanceHost: "chat.example.com", url: allowedSPAHomeURL), "spaNavigationAllowedForPlainAgentRouteOnInstanceHost")
         let blockedSPAURL = URL(string: "https://example.com/c/new?prompt=hello&submit=true")!
         expect(!KotobaLibreCore.canUseSPANavigation(instanceHost: "chat.example.com", url: blockedSPAURL), "spaNavigationBlockedForNonInstanceHost")
 
@@ -144,7 +147,7 @@ struct KotobaLibreSelfTest {
         expect(try store.loadPresets().isEmpty, "storeResetLoadsEmptyPresets")
 
         if failures.isEmpty {
-            print("KotobaLibreSelfTest: all checks passed (\(35) assertions)")
+            print("KotobaLibreSelfTest: all checks passed (\(37) assertions)")
             return
         }
 
