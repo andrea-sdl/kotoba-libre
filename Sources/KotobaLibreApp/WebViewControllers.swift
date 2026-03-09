@@ -7,10 +7,15 @@ import WebKit
 private let defaultMainWindowSize = NSSize(width: 800, height: 600)
 private let minimumMainWindowSize = NSSize(width: 800, height: 600)
 
+// These identifiers keep the main window toolbar definition local to the web window controller file.
+private enum MainWindowToolbarItem {
+    static let addAgent = NSToolbarItem.Identifier("KotobaLibreAddAgent")
+}
+
 // MainWindowController owns the primary app window.
 // It swaps between onboarding and web content and remembers the last usable frame.
 @MainActor
-final class MainWindowController: NSWindowController, NSWindowDelegate {
+final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolbarDelegate {
     enum ContentKind: String {
         case onboarding
         case web
@@ -23,6 +28,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     private var eventMonitor: Any?
     private let savedWindowFrame: NSRect?
     private var hasCompletedInitialFrameSetup = false
+    private lazy var addAgentButton = makeAddAgentToolbarButton()
+    private var currentAddAgentCandidate: WebAddAgentCandidate?
+    private var addAgentSheetWindowController: AddAgentSheetWindowController?
 
     init(appController: AppController, store: AppDataStore) {
         self.store = store
@@ -35,9 +43,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         )
         window.title = appDisplayName
         window.minSize = minimumMainWindowSize
+        window.toolbarStyle = .unifiedCompact
         super.init(window: window)
         self.appController = appController
         self.window?.delegate = self
+        installToolbar()
         installScreenObserver()
         installWindowFrameObservers()
         installShortcutMonitor()
@@ -53,6 +63,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             return
         }
 
+        updateAddAgentCandidate(nil)
         let hostingController = NSHostingController(
             rootView: OnboardingFlowView(appController: appController)
         )
@@ -72,6 +83,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             return
         }
 
+        updateAddAgentCandidate(nil)
         let controller = ensureWebController()
         controller.debugLoggingEnabled = settings.debugLoggingEnabled
         window?.contentViewController = controller
@@ -79,6 +91,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     }
 
     func open(url: URL, settings: AppSettings, instanceHost: String?, forceEmbedAllHosts: Bool = false) {
+        updateAddAgentCandidate(nil)
         let controller = ensureWebController()
         controller.debugLoggingEnabled = settings.debugLoggingEnabled
         window?.contentViewController = controller
@@ -146,6 +159,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         created.externalNavigationHandler = { [weak appController] url in
             appController?.openExternally(url)
         }
+        created.addAgentCandidateHandler = { [weak self] candidate in
+            self?.updateAddAgentCandidate(candidate)
+        }
         webController = created
         return created
     }
@@ -164,6 +180,19 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
             return nil
         }
+    }
+
+    private func installToolbar() {
+        guard let window else {
+            return
+        }
+
+        let toolbar = NSToolbar(identifier: "KotobaLibreMainToolbar")
+        toolbar.delegate = self
+        toolbar.allowsUserCustomization = false
+        toolbar.autosavesConfiguration = false
+        toolbar.displayMode = .iconOnly
+        window.toolbar = toolbar
     }
 
     private func installScreenObserver() {
@@ -335,6 +364,85 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
         print(message)
     }
+
+    private func updateAddAgentCandidate(_ candidate: WebAddAgentCandidate?) {
+        currentAddAgentCandidate = candidate
+        addAgentButton.isEnabled = candidate != nil
+    }
+
+    private func presentAddAgentSheetFromTitlebar() {
+        guard let webController else {
+            return
+        }
+
+        webController.fetchCurrentAddAgentCandidate { [weak self] liveCandidate in
+            guard let self else {
+                return
+            }
+
+            let candidate = liveCandidate ?? self.currentAddAgentCandidate
+            guard let candidate, let appController, let window else {
+                return
+            }
+
+            let preset = appController.makePreset(from: candidate)
+            addAgentSheetWindowController?.dismiss()
+            let sheetController = AddAgentSheetWindowController(
+                appController: appController,
+                initialPreset: preset
+            ) { [weak self] in
+                self?.addAgentSheetWindowController = nil
+            }
+            addAgentSheetWindowController = sheetController
+            sheetController.beginSheet(on: window)
+        }
+    }
+
+    private func makeAddAgentToolbarButton() -> NSButton {
+        let button = NSButton(title: "Add Agent", target: self, action: #selector(handleAddAgentToolbarButton))
+        button.setButtonType(.momentaryPushIn)
+        button.bezelStyle = .rounded
+        button.isBordered = true
+        button.controlSize = .small
+        button.contentTintColor = .systemBlue
+        button.image = NSImage(
+            systemSymbolName: "plus.circle",
+            accessibilityDescription: "Add Agent"
+        )
+        button.imagePosition = .imageLeading
+        button.isEnabled = false
+        button.toolTip = "Save the current LibreChat agent into Kotoba Libre."
+        return button
+    }
+
+    @objc private func handleAddAgentToolbarButton() {
+        presentAddAgentSheetFromTitlebar()
+    }
+
+    func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+        [.flexibleSpace, MainWindowToolbarItem.addAgent]
+    }
+
+    func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+        [.flexibleSpace, MainWindowToolbarItem.addAgent]
+    }
+
+    func toolbar(
+        _ toolbar: NSToolbar,
+        itemForItemIdentifier itemIdentifier: NSToolbarItem.Identifier,
+        willBeInsertedIntoToolbar flag: Bool
+    ) -> NSToolbarItem? {
+        guard itemIdentifier == MainWindowToolbarItem.addAgent else {
+            return nil
+        }
+
+        let item = NSToolbarItem(itemIdentifier: itemIdentifier)
+        item.label = "Add Agent"
+        item.paletteLabel = "Add Agent"
+        item.toolTip = "Save the current LibreChat agent into Kotoba Libre."
+        item.view = addAgentButton
+        return item
+    }
 }
 
 // WindowFrameState is stored as plain doubles. This extension converts it back to AppKit geometry.
@@ -357,6 +465,7 @@ private extension WindowFrameState {
 @MainActor
 final class WebContentViewController: NSViewController, WKNavigationDelegate {
     private static let logHandlerName = "kotobaLibreLog"
+    private static let addAgentCandidateHandlerName = "kotobaLibreAddAgentCandidate"
 
     private enum ExternalNavigationPolicy {
         case singleHost(String?)
@@ -376,18 +485,30 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate {
         }
     }
 
+    // This message handler forwards structured route data from the injected observer script.
+    private final class DictionaryMessageHandler: NSObject, WKScriptMessageHandler {
+        var onMessage: ((Any) -> Void)?
+
+        func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+            onMessage?(message.body)
+        }
+    }
+
     let webView: WKWebView
     var externalNavigationHandler: ((URL) -> Void)?
+    var addAgentCandidateHandler: ((WebAddAgentCandidate?) -> Void)?
     var debugLoggingEnabled = false
     private var hasLoadedRemoteContent = false
     private var externalNavigationPolicy: ExternalNavigationPolicy = .singleHost(nil)
     private let logMessageHandler = ScriptMessageHandler()
+    private let addAgentMessageHandler = DictionaryMessageHandler()
 
     init() {
         let configuration = WKWebViewConfiguration()
         configuration.allowsAirPlayForMediaPlayback = false
         // These scripts are injected before the page app boots so launcher navigation can seed state early.
         configuration.userContentController.add(logMessageHandler, name: Self.logHandlerName)
+        configuration.userContentController.add(addAgentMessageHandler, name: Self.addAgentCandidateHandlerName)
         configuration.userContentController.addUserScript(
             WKUserScript(
                 source: Self.loggerBootstrapScript,
@@ -402,12 +523,22 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate {
                 forMainFrameOnly: true
             )
         )
+        configuration.userContentController.addUserScript(
+            WKUserScript(
+                source: Self.addAgentObserverScript,
+                injectionTime: .atDocumentStart,
+                forMainFrameOnly: true
+            )
+        )
         self.webView = WKWebView(frame: .zero, configuration: configuration)
         super.init(nibName: nil, bundle: nil)
         self.webView.navigationDelegate = self
         self.webView.allowsBackForwardNavigationGestures = true
         logMessageHandler.onMessage = { [weak self] message in
             self?.debugLog("KotobaLibre SPA: \(message)")
+        }
+        addAgentMessageHandler.onMessage = { [weak self] body in
+            self?.addAgentCandidateHandler?(Self.parseAddAgentCandidate(from: body))
         }
     }
 
@@ -454,6 +585,27 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate {
         }
 
         load(url: url)
+    }
+
+    func fetchCurrentAddAgentCandidate(completion: @escaping (WebAddAgentCandidate?) -> Void) {
+        let script = """
+        (() => {
+          try {
+            const readCandidate = globalThis.__kotobaLibreReadAddAgentCandidate;
+            return typeof readCandidate === "function" ? readCandidate() : null;
+          } catch (_) {
+            return null;
+          }
+        })();
+        """
+
+        webView.evaluateJavaScript(script) { [weak self] result, error in
+            if let error {
+                self?.debugLog("KotobaLibre Add Agent: evaluateJavaScript failed -> \(error.localizedDescription)")
+            }
+
+            completion(Self.parseAddAgentCandidate(from: result as Any))
+        }
     }
 
     func webView(
@@ -549,6 +701,98 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate {
         }
       } catch (_) {
       }
+    })();
+    """
+
+    private static let addAgentObserverScript = """
+    (() => {
+      const trimText = (value) => typeof value === "string" ? value.trim() : "";
+      const basePath = () => {
+        const baseHref = document.querySelector("base")?.getAttribute("href") ?? "/";
+        try {
+          const value = new URL(baseHref, window.location.origin).pathname || "/";
+          if (value === "/") return "";
+          return value.endsWith("/") ? value.slice(0, -1) : value;
+        } catch (_) {
+          return "";
+        }
+      };
+      const routePath = (url) => {
+        let pathname = url.pathname;
+        const currentBasePath = basePath();
+        if (currentBasePath && pathname === currentBasePath) {
+          pathname = "/";
+        } else if (currentBasePath && pathname.startsWith(`${currentBasePath}/`)) {
+          pathname = pathname.slice(currentBasePath.length) || "/";
+        }
+        if (!pathname.startsWith("/")) {
+          pathname = `/${pathname}`;
+        }
+        return pathname;
+      };
+      const readCandidate = () => {
+        try {
+          const url = new URL(window.location.href);
+          const agentID = trimText(url.searchParams.get("agent_id") ?? "");
+          if (routePath(url) !== "/agents" || !agentID) {
+            return null;
+          }
+          const currentBasePath = basePath();
+          const newChatPath = currentBasePath ? `${currentBasePath}/c/new` : "/c/new";
+          const newChatURL = new URL(newChatPath, url.origin);
+          newChatURL.searchParams.set("agent_id", agentID);
+          return {
+            sourceURL: url.href,
+            newChatURL: newChatURL.href,
+            agentID,
+            agentName: trimText(document.querySelector('div[role="dialog"] h2')?.textContent ?? ""),
+          };
+        } catch (_) {
+          return null;
+        }
+      };
+      const postCandidate = () => {
+        try {
+          window.webkit?.messageHandlers?.\(addAgentCandidateHandlerName).postMessage(readCandidate());
+        } catch (_) {
+        }
+      };
+      let queued = false;
+      const schedule = () => {
+        if (queued) return;
+        queued = true;
+        queueMicrotask(() => {
+          queued = false;
+          postCandidate();
+        });
+      };
+      const wrapHistory = (methodName) => {
+        const original = history[methodName];
+        if (typeof original !== "function") return;
+        history[methodName] = function(...args) {
+          const result = original.apply(this, args);
+          schedule();
+          return result;
+        };
+      };
+      wrapHistory("pushState");
+      wrapHistory("replaceState");
+      globalThis.__kotobaLibreReadAddAgentCandidate = readCandidate;
+      window.addEventListener("popstate", schedule);
+      window.addEventListener("hashchange", schedule);
+      window.addEventListener("load", schedule);
+      document.addEventListener("readystatechange", schedule);
+      const observer = new MutationObserver(schedule);
+      const beginObserving = () => {
+        if (!document.documentElement) return;
+        observer.observe(document.documentElement, {
+          subtree: true,
+          childList: true,
+          characterData: true,
+        });
+      };
+      beginObserving();
+      schedule();
     })();
     """
 
@@ -1028,5 +1272,31 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate {
           })();
         })();
         """
+    }
+
+    private static func parseAddAgentCandidate(from rawValue: Any) -> WebAddAgentCandidate? {
+        guard let dictionary = rawValue as? [String: Any] else {
+            return nil
+        }
+
+        let sourceURLString = (dictionary["sourceURL"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let newChatURL = (dictionary["newChatURL"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let agentID = (dictionary["agentID"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let agentName = (dictionary["agentName"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard
+            let sourceURL = URL(string: sourceURLString),
+            !newChatURL.isEmpty,
+            !agentID.isEmpty
+        else {
+            return nil
+        }
+
+        return WebAddAgentCandidate(
+            sourceURL: sourceURL,
+            newChatURL: newChatURL,
+            agentID: agentID,
+            agentName: agentName
+        )
     }
 }

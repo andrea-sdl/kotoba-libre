@@ -342,7 +342,7 @@ struct SettingsRootView: View {
                 .tag(SettingsTab.about)
         }
         .padding(20)
-        .frame(minWidth: 980, minHeight: 500)
+        .frame(minWidth: 980, alignment: .topLeading)
         .onChange(of: selectedTab) { nextTab in
             guard !isIgnoringNextSelectionChange else {
                 isIgnoringNextSelectionChange = false
@@ -382,6 +382,31 @@ struct SettingsRootView: View {
         } message: {
             Text("Save or discard the current page before switching to another settings section.")
         }
+    }
+}
+
+// AgentEditorFields keeps the shared preset fields consistent between Settings and the titlebar sheet.
+struct AgentEditorFields: View {
+    @Binding var draft: Preset
+
+    var body: some View {
+        TextField("Name", text: $draft.name)
+        Picker("Kind", selection: $draft.kind) {
+            ForEach(PresetKind.allCases, id: \.self) { kind in
+                Text(kind.rawValue.capitalized).tag(kind)
+            }
+        }
+        TextField("Configured URL", text: $draft.urlTemplate)
+        TextField("Tags", text: Binding(
+            get: { draft.tags.joined(separator: ", ") },
+            // The text field edits one comma-separated string, but the model stores an array.
+            set: { draft.tags = $0.split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) } }
+        ))
+
+        let validation = KotobaLibreCore.validateURLTemplate(draft.urlTemplate)
+        Text(validation.valid ? "Template looks valid." : (validation.reason ?? "Invalid URL template."))
+            .font(.footnote)
+            .foregroundStyle(validation.valid ? .secondary : Color.red)
     }
 }
 
@@ -438,23 +463,7 @@ struct AgentManagerView: View {
                 }
 
                 Form {
-                    TextField("Name", text: $draft.name)
-                    Picker("Kind", selection: $draft.kind) {
-                        ForEach(PresetKind.allCases, id: \.self) { kind in
-                            Text(kind.rawValue.capitalized).tag(kind)
-                        }
-                    }
-                    TextField("Configured URL", text: $draft.urlTemplate)
-                    TextField("Tags", text: Binding(
-                        get: { draft.tags.joined(separator: ", ") },
-                        // The text field edits one comma-separated string, but the model stores an array.
-                        set: { draft.tags = $0.split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) } }
-                    ))
-
-                    let validation = KotobaLibreCore.validateURLTemplate(draft.urlTemplate)
-                    Text(validation.valid ? "Template looks valid." : (validation.reason ?? "Invalid URL template."))
-                        .font(.footnote)
-                        .foregroundStyle(validation.valid ? .secondary : Color.red)
+                    AgentEditorFields(draft: $draft)
 
                     HStack {
                         Button("Save Agent") { savePreset() }

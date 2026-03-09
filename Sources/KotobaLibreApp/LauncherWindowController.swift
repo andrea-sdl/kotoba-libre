@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 import KotobaLibreCore
 
@@ -201,9 +202,11 @@ final class LauncherViewModel: ObservableObject {
     @Published var focusToken = UUID()
 
     private weak var appController: AppController?
+    private var cancellables: Set<AnyCancellable> = []
 
     init(appController: AppController) {
         self.appController = appController
+        observeAppController(appController)
     }
 
     var presets: [Preset] {
@@ -276,5 +279,36 @@ final class LauncherViewModel: ObservableObject {
     private func setStatus(_ message: String, isError: Bool) {
         statusMessage = message
         self.isError = isError
+    }
+
+    private func observeAppController(_ appController: AppController) {
+        // The launcher mirrors live preset and settings changes so newly added agents appear immediately.
+        appController.$presets
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                self?.handleAppStateChange()
+            }
+            .store(in: &cancellables)
+
+        appController.$settings
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                self?.handleAppStateChange()
+            }
+            .store(in: &cancellables)
+    }
+
+    private func handleAppStateChange() {
+        guard let appController else {
+            return
+        }
+
+        if let selectedPresetID, !appController.presets.contains(where: { $0.id == selectedPresetID }) {
+            self.selectedPresetID = appController.settings.defaultPresetId ?? presets.first?.id
+        } else if self.selectedPresetID == nil {
+            self.selectedPresetID = appController.settings.defaultPresetId ?? presets.first?.id
+        }
+
+        objectWillChange.send()
     }
 }
