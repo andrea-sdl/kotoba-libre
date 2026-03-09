@@ -605,6 +605,30 @@ private struct PresetDraftState: Equatable {
     }
 }
 
+private extension AppVisibilityMode {
+    var settingsLabel: String {
+        switch self {
+        case .dockAndMenuBar:
+            return "Show both dock icon and menu bar"
+        case .dockOnly:
+            return "Show only dock icon"
+        case .menuBarOnly:
+            return "Show only menu bar"
+        }
+    }
+
+    var settingsDescription: String {
+        switch self {
+        case .dockAndMenuBar:
+            return "Keep the app in the Dock and add a menu bar shortcut for quick access."
+        case .dockOnly:
+            return "Keep the current app behavior with a Dock icon and no extra menu bar item."
+        case .menuBarOnly:
+            return "Hide the Dock icon and use the menu bar item for settings, showing the LibreChat window, and quitting."
+        }
+    }
+}
+
 struct SettingsPanelView: View {
     @ObservedObject var appController: AppController
     @EnvironmentObject private var navigationGuard: SettingsNavigationGuard
@@ -613,6 +637,7 @@ struct SettingsPanelView: View {
     @State private var restrictHost = true
     @State private var useRouteReloadForLauncherChats = false
     @State private var launcherOpacity = 95.0
+    @State private var appVisibilityMode = AppVisibilityMode.dockOnly
     @State private var statusMessage = ""
     @State private var statusIsError = false
     @State private var isShowingResetConfirmation = false
@@ -631,6 +656,21 @@ struct SettingsPanelView: View {
                 Toggle("Restrict URLs to the configured instance host", isOn: $restrictHost)
                 Toggle("Launch Kotoba Libre at login", isOn: $autostartEnabled)
                 Toggle("Use route reload for launcher chats", isOn: $useRouteReloadForLauncherChats)
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("App Visibility")
+                    Picker("App Visibility", selection: $appVisibilityMode) {
+                        ForEach(AppVisibilityMode.allCases, id: \.self) { mode in
+                            Text(mode.settingsLabel)
+                                .tag(mode)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.radioGroup)
+
+                    Text(appVisibilityMode.settingsDescription)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
                 VStack(alignment: .leading) {
                     Text("Launcher Opacity \(Int(launcherOpacity))%")
                     Slider(value: $launcherOpacity, in: 50...100, step: 5)
@@ -708,6 +748,7 @@ struct SettingsPanelView: View {
         restrictHost = appController.settings.restrictHostToInstanceHost
         useRouteReloadForLauncherChats = appController.settings.useRouteReloadForLauncherChats
         launcherOpacity = (appController.settings.launcherOpacity * 100).rounded()
+        appVisibilityMode = appController.settings.appVisibilityMode
     }
 
     private func saveSettings() {
@@ -751,7 +792,8 @@ struct SettingsPanelView: View {
             restrictHostToInstanceHost: restrictHost,
             defaultPresetId: appController.settings.defaultPresetId,
             useRouteReloadForLauncherChats: useRouteReloadForLauncherChats,
-            launcherOpacity: launcherOpacity / 100
+            launcherOpacity: launcherOpacity / 100,
+            appVisibilityMode: appVisibilityMode
         )
     }
 
@@ -761,7 +803,8 @@ struct SettingsPanelView: View {
             autostartEnabled: autostartEnabled,
             restrictHost: restrictHost,
             useRouteReloadForLauncherChats: useRouteReloadForLauncherChats,
-            launcherOpacity: launcherOpacity
+            launcherOpacity: launcherOpacity,
+            appVisibilityMode: appVisibilityMode
         )
     }
 
@@ -771,7 +814,8 @@ struct SettingsPanelView: View {
             autostartEnabled: appController.settings.autostartEnabled,
             restrictHost: appController.settings.restrictHostToInstanceHost,
             useRouteReloadForLauncherChats: appController.settings.useRouteReloadForLauncherChats,
-            launcherOpacity: (appController.settings.launcherOpacity * 100).rounded()
+            launcherOpacity: (appController.settings.launcherOpacity * 100).rounded(),
+            appVisibilityMode: appController.settings.appVisibilityMode
         )
     }
 
@@ -846,6 +890,7 @@ private struct SettingsDraftState: Equatable {
     let restrictHost: Bool
     let useRouteReloadForLauncherChats: Bool
     let launcherOpacity: Double
+    let appVisibilityMode: AppVisibilityMode
 }
 
 struct ShortcutPanelView: View {

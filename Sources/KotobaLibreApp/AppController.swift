@@ -43,6 +43,7 @@ final class AppController: NSObject, ObservableObject {
 
     private let store: AppDataStore
     private let shortcutRegistrar = GlobalShortcutRegistrar()
+    private var statusItem: NSStatusItem?
     private lazy var mainWindowController = MainWindowController(appController: self)
     private lazy var settingsWindowController = SettingsWindowController(appController: self)
     private lazy var launcherWindowController = LauncherWindowController(appController: self)
@@ -73,6 +74,7 @@ final class AppController: NSObject, ObservableObject {
         shortcutDraft = settings.globalShortcut
         setupApplicationMenu()
         applyAppIcon()
+        applyAppVisibilityMode(settings.appVisibilityMode)
         try? syncAutostart(enabled: settings.autostartEnabled)
         registerGlobalShortcutIfPossible(promptForPermission: false)
         refreshMainWindowContent(openHomeIfNeeded: settings.instanceBaseUrl != nil)
@@ -189,6 +191,7 @@ final class AppController: NSObject, ObservableObject {
                 try persistPresets()
             }
             try syncAutostart(enabled: normalized.autostartEnabled)
+            applyAppVisibilityMode(normalized.appVisibilityMode)
         } catch {
             restoreTransientState(settings: previousSettings, presets: previousPresets)
             registerGlobalShortcutIfPossible(promptForPermission: false)
@@ -235,6 +238,7 @@ final class AppController: NSObject, ObservableObject {
             throw error
         }
 
+        applyAppVisibilityMode(settings.appVisibilityMode)
         registerGlobalShortcutIfPossible(promptForPermission: false)
         refreshMainWindowContent(openHomeIfNeeded: false)
         mainWindowController.resetToDefaultSize()
@@ -560,11 +564,77 @@ final class AppController: NSObject, ObservableObject {
         showSettingsWindow()
     }
 
+    @objc private func showMainWindowFromStatusItem() {
+        restoreOrOpenPrimaryWindow()
+    }
+
+    private func applyAppVisibilityMode(_ mode: AppVisibilityMode) {
+        if mode.showsMenuBarItem {
+            installStatusItemIfNeeded()
+        } else {
+            removeStatusItem()
+        }
+
+        let targetPolicy: NSApplication.ActivationPolicy = mode.showsDockIcon ? .regular : .accessory
+        guard NSApp.activationPolicy() != targetPolicy else {
+            return
+        }
+
+        _ = NSApp.setActivationPolicy(targetPolicy)
+        if mode.showsDockIcon {
+            NSApp.activate(ignoringOtherApps: true)
+        }
+    }
+
     private func applyAppIcon() {
         if let iconURL = AppResources.iconPNGURL, let image = NSImage(contentsOf: iconURL) {
             image.isTemplate = false
             NSApp.applicationIconImage = image
         }
+    }
+
+    private func installStatusItemIfNeeded() {
+        guard statusItem == nil else {
+            return
+        }
+
+        let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        if let button = statusItem.button {
+            button.image = statusItemImage()
+            button.imagePosition = .imageOnly
+            button.toolTip = appDisplayName
+        }
+
+        let menu = NSMenu()
+        let showWindowItem = menu.addItem(withTitle: "Show LibreChat Window", action: #selector(showMainWindowFromStatusItem), keyEquivalent: "")
+        showWindowItem.target = self
+        let settingsItem = menu.addItem(withTitle: "Settings…", action: #selector(openSettingsFromMenu), keyEquivalent: "")
+        settingsItem.target = self
+        menu.addItem(.separator())
+        menu.addItem(withTitle: "Quit \(appDisplayName)", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        statusItem.menu = menu
+        self.statusItem = statusItem
+    }
+
+    private func removeStatusItem() {
+        guard let statusItem else {
+            return
+        }
+
+        NSStatusBar.system.removeStatusItem(statusItem)
+        self.statusItem = nil
+    }
+
+    private func statusItemImage() -> NSImage? {
+        guard let image = NSImage(
+            systemSymbolName: "bubble.left.and.bubble.right.fill",
+            accessibilityDescription: appDisplayName
+        ) else {
+            return nil
+        }
+
+        image.isTemplate = true
+        return image
     }
 
     private func syncAutostart(enabled: Bool) throws {

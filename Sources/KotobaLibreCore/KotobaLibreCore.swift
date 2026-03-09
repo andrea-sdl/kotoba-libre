@@ -5,6 +5,20 @@ public let appDisplayName = "Kotoba Libre"
 public let settingsFileName = "settings.json"
 public let presetsFileName = "presets.json"
 
+public enum AppVisibilityMode: String, Codable, CaseIterable, Equatable, Sendable {
+    case dockAndMenuBar
+    case dockOnly
+    case menuBarOnly
+
+    public var showsDockIcon: Bool {
+        self != .menuBarOnly
+    }
+
+    public var showsMenuBarItem: Bool {
+        self != .dockOnly
+    }
+}
+
 public enum PresetKind: String, Codable, CaseIterable, Equatable, Sendable {
     case agent
     case link
@@ -48,6 +62,18 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var defaultPresetId: String?
     public var useRouteReloadForLauncherChats: Bool
     public var launcherOpacity: Double
+    public var appVisibilityMode: AppVisibilityMode
+
+    enum CodingKeys: String, CodingKey {
+        case instanceBaseUrl
+        case globalShortcut
+        case autostartEnabled
+        case restrictHostToInstanceHost
+        case defaultPresetId
+        case useRouteReloadForLauncherChats
+        case launcherOpacity
+        case appVisibilityMode
+    }
 
     public init(
         instanceBaseUrl: String? = nil,
@@ -56,7 +82,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
         restrictHostToInstanceHost: Bool = true,
         defaultPresetId: String? = nil,
         useRouteReloadForLauncherChats: Bool = false,
-        launcherOpacity: Double = 0.95
+        launcherOpacity: Double = 0.95,
+        appVisibilityMode: AppVisibilityMode = .dockOnly
     ) {
         self.instanceBaseUrl = instanceBaseUrl
         self.globalShortcut = globalShortcut
@@ -65,6 +92,31 @@ public struct AppSettings: Codable, Equatable, Sendable {
         self.defaultPresetId = defaultPresetId
         self.useRouteReloadForLauncherChats = useRouteReloadForLauncherChats
         self.launcherOpacity = launcherOpacity
+        self.appVisibilityMode = appVisibilityMode
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        instanceBaseUrl = try container.decodeIfPresent(String.self, forKey: .instanceBaseUrl)
+        globalShortcut = try container.decodeIfPresent(String.self, forKey: .globalShortcut) ?? AppSettings.defaultShortcut
+        autostartEnabled = try container.decodeIfPresent(Bool.self, forKey: .autostartEnabled) ?? false
+        restrictHostToInstanceHost = try container.decodeIfPresent(Bool.self, forKey: .restrictHostToInstanceHost) ?? true
+        defaultPresetId = try container.decodeIfPresent(String.self, forKey: .defaultPresetId)
+        useRouteReloadForLauncherChats = try container.decodeIfPresent(Bool.self, forKey: .useRouteReloadForLauncherChats) ?? false
+        launcherOpacity = try container.decodeIfPresent(Double.self, forKey: .launcherOpacity) ?? 0.95
+        appVisibilityMode = try container.decodeIfPresent(AppVisibilityMode.self, forKey: .appVisibilityMode) ?? .dockOnly
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encodeIfPresent(instanceBaseUrl, forKey: .instanceBaseUrl)
+        try container.encode(globalShortcut, forKey: .globalShortcut)
+        try container.encode(autostartEnabled, forKey: .autostartEnabled)
+        try container.encode(restrictHostToInstanceHost, forKey: .restrictHostToInstanceHost)
+        try container.encodeIfPresent(defaultPresetId, forKey: .defaultPresetId)
+        try container.encode(useRouteReloadForLauncherChats, forKey: .useRouteReloadForLauncherChats)
+        try container.encode(launcherOpacity, forKey: .launcherOpacity)
+        try container.encode(appVisibilityMode, forKey: .appVisibilityMode)
     }
 }
 

@@ -6,6 +6,7 @@ The app gives LibreChat a focused desktop shell with:
 
 - Guided onboarding for first launch
 - A native settings window for instance configuration, agents, and shortcuts
+- Configurable app presence modes: dock only, dock + menu bar, or menu bar only
 - A Spotlight-style launcher opened through a global keyboard shortcut
 - Deep links for opening settings, presets, and direct destinations
 - JSON import/export for agent presets
@@ -103,6 +104,14 @@ The settings window includes tabs for:
 - About
 
 The settings UI warns before you leave a tab with unsaved changes.
+
+From the Settings tab, users can also choose whether Kotoba Libre appears:
+
+- In both the Dock and the menu bar
+- Only in the Dock
+- Only in the menu bar
+
+When the menu bar item is enabled, it includes actions for opening Settings, showing the LibreChat window, and quitting the app.
 
 When host restriction is enabled and you change the configured LibreChat instance to a different host, Kotoba Libre re-validates saved agents, offers an export step first, and removes any incompatible agents after you confirm the change.
 

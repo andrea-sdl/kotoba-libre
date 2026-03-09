@@ -24,6 +24,8 @@ This target is intentionally UI-free so behavior can be validated in the self-te
 
 - `NSApplication` bootstrap
 - App menu and lifecycle
+- Dock/menu bar visibility mode switching
+- Menu bar status item actions
 - Main web content window
 - Settings window
 - Launcher panel
@@ -74,6 +76,22 @@ Kotoba Libre uses three main native window types:
 - Opened by the configured global shortcut
 - Lets the user pick a preset and submit prompt text
 - Hides on focus loss and restores the previously frontmost app
+
+## App Presence Modes
+
+Kotoba Libre persists one app visibility mode in settings:
+
+- Dock only
+- Dock and menu bar
+- Menu bar only
+
+When the menu bar item is enabled, it provides commands for:
+
+- Showing the LibreChat window
+- Opening Settings
+- Quitting the app
+
+The Dock icon is controlled through the app activation policy so switching modes takes effect without changing the rest of the window model.
 
 ## Configuration Flow
 
