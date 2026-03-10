@@ -15,9 +15,10 @@ The app gives LibreChat a focused desktop shell with:
 ## Current Stack
 
 - Swift 6.2
+- macOS 26+
 - Swift Package Manager
 - AppKit app lifecycle and window management
-- SwiftUI for onboarding, settings, and launcher UI
+- SwiftUI with native Glass effects for onboarding, settings, sheets, and launcher UI
 - WebKit for the embedded LibreChat experience
 - GitHub Actions for unsigned release automation
 
@@ -111,6 +112,8 @@ The settings window includes tabs for:
 - Shortcuts
 - About
 
+The native settings, onboarding, add-agent sheet, and launcher surfaces use the recent macOS Glass APIs so the desktop chrome stays visually consistent across the app.
+
 The settings UI warns before you leave a tab with unsaved changes.
 
 From the System tab, users can also choose whether Kotoba Libre appears:
@@ -130,7 +133,7 @@ When host restriction is enabled and you change the configured LibreChat instanc
 The launcher is a floating panel that:
 
 - Opens with the configured global shortcut
-- Lets the user pick a preset
+- Lets the user pick an agent from a styled glass selector
 - Passes prompt text into LibreChat URLs
 - Falls back gracefully when no instance or presets are configured
 

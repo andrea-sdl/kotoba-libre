@@ -36,7 +36,7 @@ This target is intentionally UI-free so behavior can be validated in the self-te
 The UI stack is mixed by design:
 
 - AppKit manages windows, menus, and system integration
-- SwiftUI renders onboarding, settings, and launcher content
+- SwiftUI renders onboarding, settings, sheets, and launcher content with native Glass surfaces
 - WebKit renders LibreChat content inside `WKWebView`
 
 ### `KotobaLibreSelfTest`
@@ -74,7 +74,7 @@ Kotoba Libre uses three main native window types:
 
 - Floating `NSPanel`
 - Opened by the configured global shortcut
-- Lets the user pick a preset and submit prompt text
+- Lets the user pick a preset from a compact glass selector and submit prompt text
 - Hides on focus loss and restores the previously frontmost app
 
 ## App Presence Modes
