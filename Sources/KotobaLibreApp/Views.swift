@@ -200,6 +200,12 @@ struct OnboardingFlowView: View {
                     title: "LibreChat Voice Input",
                     description: "LibreChat can use your microphone for voice input. Kotoba Libre only requests microphone access so that LibreChat feature can work inside the app."
                 )
+
+                SpeechRecognitionPermissionSection(
+                    appController: appController,
+                    title: "Voice Launcher Transcription",
+                    description: "Voice mode uses Apple speech recognition to turn your recording into a prompt. You can configure its dedicated shortcut later in Settings."
+                )
             }
         }
     }
@@ -334,6 +340,95 @@ private struct MicrophonePermissionSection: View {
             return "checkmark.circle.fill"
         case .denied:
             return "mic.slash.fill"
+        case .restricted:
+            return "lock.circle.fill"
+        }
+    }
+
+    private var statusColor: Color {
+        switch permissionState {
+        case .granted:
+            return .secondary
+        case .notDetermined, .denied, .restricted:
+            return .orange
+        }
+    }
+
+    @ViewBuilder
+    private var backgroundView: some View {
+        if showsCardBackground {
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(Color.secondary.opacity(0.08))
+        }
+    }
+}
+
+// This shared section keeps speech recognition permission handling consistent anywhere voice mode is surfaced.
+private struct SpeechRecognitionPermissionSection: View {
+    @ObservedObject var appController: AppController
+    let title: String
+    let description: String
+    var showsCardBackground: Bool = true
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(title)
+                .font(.headline)
+            Text(description)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+
+            Label(permissionState.statusMessage, systemImage: statusSymbolName)
+                .font(.footnote)
+                .foregroundStyle(statusColor)
+                .fixedSize(horizontal: false, vertical: true)
+
+            HStack(spacing: 12) {
+                switch permissionState {
+                case .notDetermined:
+                    Button(appController.isRequestingSpeechRecognitionPermission ? "Requesting..." : "Allow Speech Recognition") {
+                        appController.requestSpeechRecognitionPermission()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(appController.isRequestingSpeechRecognitionPermission)
+                case .granted:
+                    Button("Refresh Status") {
+                        appController.refreshSpeechRecognitionPermissionState()
+                    }
+                case .denied, .restricted:
+                    Button("Open System Settings") {
+                        appController.openSpeechRecognitionPrivacySettings()
+                    }
+                    Button("Refresh Status") {
+                        appController.refreshSpeechRecognitionPermissionState()
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .center)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(showsCardBackground ? 16 : 0)
+        .background(backgroundView)
+        .onAppear {
+            appController.refreshSpeechRecognitionPermissionState()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            appController.refreshSpeechRecognitionPermissionState()
+        }
+    }
+
+    private var permissionState: SpeechRecognitionPermissionState {
+        appController.speechRecognitionPermissionState
+    }
+
+    private var statusSymbolName: String {
+        switch permissionState {
+        case .notDetermined:
+            return "waveform.badge.mic"
+        case .granted:
+            return "checkmark.circle.fill"
+        case .denied:
+            return "waveform.slash"
         case .restricted:
             return "lock.circle.fill"
         }
@@ -1109,6 +1204,7 @@ struct SettingsPanelView: View {
         AppSettings(
             instanceBaseUrl: instanceBaseURL,
             globalShortcut: appController.settings.globalShortcut,
+            voiceGlobalShortcut: appController.settings.voiceGlobalShortcut,
             autostartEnabled: appController.settings.autostartEnabled,
             restrictHostToInstanceHost: restrictHost,
             defaultPresetId: appController.settings.defaultPresetId,
@@ -1271,6 +1367,12 @@ struct SystemPanelView: View {
                     description: "LibreChat can record from the microphone for voice input. Kotoba Libre only requests this permission so that LibreChat feature can work when you use it.",
                     showsCardBackground: false
                 )
+                SpeechRecognitionPermissionSection(
+                    appController: appController,
+                    title: "Voice Launcher Transcription",
+                    description: "Voice mode uses Apple speech recognition to turn your recording into the prompt that gets sent to the selected agent.",
+                    showsCardBackground: false
+                )
                 Button("Reset Config", role: .destructive) {
                     isShowingResetConfirmation = true
                 }
@@ -1359,6 +1461,7 @@ struct SystemPanelView: View {
         AppSettings(
             instanceBaseUrl: appController.settings.instanceBaseUrl,
             globalShortcut: appController.settings.globalShortcut,
+            voiceGlobalShortcut: appController.settings.voiceGlobalShortcut,
             autostartEnabled: autostartEnabled,
             restrictHostToInstanceHost: appController.settings.restrictHostToInstanceHost,
             defaultPresetId: appController.settings.defaultPresetId,
@@ -1381,51 +1484,99 @@ struct ShortcutPanelView: View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Shortcuts")
                 .font(.largeTitle.bold())
-            Text("Global shortcut for opening the Spotlight launcher.")
+            Text("Configure separate shortcuts for typed prompts and voice mode.")
                 .foregroundStyle(.secondary)
 
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Global Shortcut")
-                    .font(.headline)
-                ShortcutPreviewView(shortcut: appController.shortcutDraft)
+            Form {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Text Launcher Shortcut")
+                        .font(.headline)
+                    Text("Opens the Spotlight-style launcher with the text field.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                    ShortcutPreviewView(shortcut: appController.shortcutDraft)
 
-                HStack {
-                    Button(appController.isRecordingShortcut ? "Stop" : "Record Shortcut") {
-                        if appController.isRecordingShortcut {
-                            appController.stopShortcutRecording()
-                            setStatus("Shortcut capture canceled.", isError: false)
-                        } else {
-                            appController.beginShortcutRecording()
-                            setStatus("Press a key combination (Esc to cancel).", isError: false)
+                    HStack {
+                        Button(appController.isRecordingShortcut ? "Stop" : "Record Shortcut") {
+                            if appController.isRecordingShortcut {
+                                appController.stopShortcutRecording()
+                                setStatus("Shortcut capture canceled.", isError: false)
+                            } else {
+                                appController.beginShortcutRecording()
+                                setStatus("Press a key combination (Esc to cancel).", isError: false)
+                            }
                         }
-                    }
-                    Button("Reset Default") {
-                        appController.resetShortcutDraft()
-                        setStatus("Reset to default: \(AppSettings.defaultShortcut)", isError: false)
-                    }
-                    Button("Save Shortcut") {
-                        do {
-                            try appController.saveShortcutDraft()
-                            setStatus("Shortcut saved.", isError: false)
-                        } catch {
-                            setStatus(error.localizedDescription, isError: true)
+                        Button("Reset Default") {
+                            appController.resetShortcutDraft()
+                            setStatus("Reset to default: \(AppSettings.defaultShortcut)", isError: false)
                         }
+                        Button("Save Shortcut") {
+                            do {
+                                try appController.saveShortcutDraft()
+                                setStatus("Text launcher shortcut saved.", isError: false)
+                            } catch {
+                                setStatus(error.localizedDescription, isError: true)
+                            }
+                        }
+                        .buttonStyle(.borderedProminent)
                     }
-                    .buttonStyle(.borderedProminent)
+
+                    if appController.isRecordingShortcut {
+                        Text("Listening for a shortcut...")
+                            .foregroundStyle(.secondary)
+                    } else if let registrationIssue = appController.shortcutRegistrationIssue {
+                        Text(registrationIssue)
+                            .foregroundStyle(Color.red)
+                    }
                 }
 
-                if appController.isRecordingShortcut {
-                    Text("Listening for a shortcut...")
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Voice Launcher Shortcut")
+                        .font(.headline)
+                    Text("Opens the persistent voice launcher and, when pressed again, sends the finished transcript to the selected agent.")
+                        .font(.footnote)
                         .foregroundStyle(.secondary)
+                    ShortcutPreviewView(shortcut: appController.voiceShortcutDraft)
+
+                    HStack {
+                        Button(appController.isRecordingVoiceShortcut ? "Stop" : "Record Shortcut") {
+                            if appController.isRecordingVoiceShortcut {
+                                appController.stopShortcutRecording()
+                                setStatus("Voice shortcut capture canceled.", isError: false)
+                            } else {
+                                appController.beginVoiceShortcutRecording()
+                                setStatus("Press a key combination (Esc to cancel).", isError: false)
+                            }
+                        }
+                        Button("Reset Default") {
+                            appController.resetVoiceShortcutDraft()
+                            setStatus("Reset to default: \(AppSettings.defaultVoiceShortcut)", isError: false)
+                        }
+                        Button("Save Shortcut") {
+                            do {
+                                try appController.saveVoiceShortcutDraft()
+                                setStatus("Voice launcher shortcut saved.", isError: false)
+                            } catch {
+                                setStatus(error.localizedDescription, isError: true)
+                            }
+                        }
+                        .buttonStyle(.borderedProminent)
+                    }
+
+                    if appController.isRecordingVoiceShortcut {
+                        Text("Listening for a shortcut...")
+                            .foregroundStyle(.secondary)
+                    } else if let registrationIssue = appController.voiceShortcutRegistrationIssue {
+                        Text(registrationIssue)
+                            .foregroundStyle(Color.red)
+                    }
                 }
             }
+            .formStyle(.grouped)
 
             if !statusMessage.isEmpty {
                 Text(statusMessage)
                     .foregroundStyle(statusIsError ? Color.red : .secondary)
-            } else if let registrationIssue = appController.shortcutRegistrationIssue {
-                Text(registrationIssue)
-                    .foregroundStyle(Color.red)
             }
 
             Spacer()
@@ -1437,7 +1588,13 @@ struct ShortcutPanelView: View {
         .onChange(of: appController.shortcutDraft) {
             updateDirtyState()
         }
+        .onChange(of: appController.voiceShortcutDraft) {
+            updateDirtyState()
+        }
         .onChange(of: appController.isRecordingShortcut) {
+            updateDirtyState()
+        }
+        .onChange(of: appController.isRecordingVoiceShortcut) {
             updateDirtyState()
         }
         .onChange(of: appController.settings) {
@@ -1452,12 +1609,17 @@ struct ShortcutPanelView: View {
 
     private func discardChanges() {
         appController.discardShortcutDraftChanges()
+        appController.discardVoiceShortcutDraftChanges()
         updateDirtyState()
     }
 
     private func updateDirtyState() {
         // Recording mode counts as unsaved work because the user has started an in-progress edit.
-        let isDirty = appController.shortcutDraft != appController.settings.globalShortcut || appController.isRecordingShortcut
+        let isDirty =
+            appController.shortcutDraft != appController.settings.globalShortcut ||
+            appController.voiceShortcutDraft != appController.settings.voiceGlobalShortcut ||
+            appController.isRecordingShortcut ||
+            appController.isRecordingVoiceShortcut
         navigationGuard.setDirty(isDirty, for: .shortcuts)
     }
 }
@@ -1500,37 +1662,84 @@ struct LauncherRootView: View {
         }
 
         VStack(spacing: 8) {
-            HStack(spacing: 12) {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 18, weight: .medium))
-                    .foregroundStyle(.secondary)
+            Group {
+                switch viewModel.presentationMode {
+                case .text:
+                    HStack(spacing: 12) {
+                        Image(systemName: "magnifyingglass")
+                            .font(.system(size: 18, weight: .medium))
+                            .foregroundStyle(.secondary)
 
-                LauncherSearchField(
-                    text: $viewModel.query,
-                    focusToken: viewModel.focusToken,
-                    onSubmit: viewModel.submit
-                )
-                .frame(maxWidth: .infinity, minHeight: 44)
+                        LauncherSearchField(
+                            text: $viewModel.query,
+                            focusToken: viewModel.focusToken,
+                            onSubmit: viewModel.handlePrimaryAction
+                        )
+                        .frame(maxWidth: .infinity, minHeight: 44)
 
-                if presets.isEmpty {
-                    Text("No agents")
-                        .foregroundStyle(.secondary)
-                        .frame(width: 236, alignment: .trailing)
-                } else {
-                    LauncherAgentMenu(
-                        presets: presets,
-                        selectedPresetID: viewModel.selectedPresetID,
-                        selectedPresetName: selectedPresetName,
-                        defaultPresetID: viewModel.defaultPresetID
-                    ) { presetID in
-                        viewModel.selectedPresetID = presetID
+                        if presets.isEmpty {
+                            Text("No agents")
+                                .foregroundStyle(.secondary)
+                                .frame(width: 236, alignment: .trailing)
+                        } else {
+                            LauncherAgentMenu(
+                                presets: presets,
+                                selectedPresetID: viewModel.selectedPresetID,
+                                selectedPresetName: selectedPresetName,
+                                defaultPresetID: viewModel.defaultPresetID
+                            ) { presetID in
+                                viewModel.selectedPresetID = presetID
+                            }
+                        }
                     }
+                    .accessibilityElement(children: .contain)
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 10)
+                    .frame(maxWidth: .infinity, minHeight: 64)
+                case .voice:
+                    VStack(spacing: 20) {
+                        VoiceLauncherIndicator(
+                            audioLevel: viewModel.voiceAudioLevel,
+                            state: viewModel.voiceState
+                        )
+
+                        VStack(spacing: 6) {
+                            Text(voiceTitle)
+                                .font(.system(size: 28, weight: .bold, design: .rounded))
+
+                            Text(voiceSubtitle)
+                                .font(.subheadline.weight(.medium))
+                                .foregroundStyle(.secondary)
+                                .multilineTextAlignment(.center)
+                        }
+
+                        HStack(spacing: 12) {
+                            if presets.isEmpty {
+                                Text("No agents")
+                                    .foregroundStyle(.secondary)
+                                    .frame(width: 236, alignment: .leading)
+                            } else {
+                                LauncherAgentMenu(
+                                    presets: presets,
+                                    selectedPresetID: viewModel.selectedPresetID,
+                                    selectedPresetName: selectedPresetName,
+                                    defaultPresetID: viewModel.defaultPresetID
+                                ) { presetID in
+                                    viewModel.selectedPresetID = presetID
+                                }
+                            }
+
+                            Button("Cancel") {
+                                viewModel.cancelAndHide()
+                            }
+                            .buttonStyle(.glass)
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.horizontal, 28)
+                    .padding(.vertical, 26)
                 }
             }
-            .accessibilityElement(children: .contain)
-            .padding(.horizontal, 18)
-            .padding(.vertical, 10)
-            .frame(maxWidth: .infinity, minHeight: 64)
             .background(
                 RoundedRectangle(cornerRadius: 18, style: .continuous)
                     .fill(Color(nsColor: .windowBackgroundColor).opacity(viewModel.opacity))
@@ -1551,6 +1760,132 @@ struct LauncherRootView: View {
         .padding(.vertical, 24)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
         .background(Color.clear)
+    }
+
+    private var voiceTitle: String {
+        switch viewModel.voiceState {
+        case .idle:
+            return "Voice Launcher"
+        case .preparing:
+            return "Preparing Voice Mode"
+        case .listening:
+            return "Listening"
+        case .finishing:
+            return "Finishing Transcript"
+        }
+    }
+
+    private var voiceSubtitle: String {
+        switch viewModel.voiceState {
+        case .idle:
+            return "Choose an agent, then start speaking."
+        case .preparing:
+            return "Requesting access and warming up Apple's speech transcription."
+        case .listening:
+            return "Speak naturally, then press \(viewModel.voiceShortcutDisplayValue) again to send."
+        case .finishing:
+            return "Transcribing your last words and preparing the prompt."
+        }
+    }
+}
+
+// VoiceLauncherIndicator gives voice mode a distinct animated listening surface without showing raw text.
+private struct VoiceLauncherIndicator: View {
+    let audioLevel: Double
+    let state: VoiceTranscriptionService.State
+
+    var body: some View {
+        TimelineView(.animation) { context in
+            let timestamp = context.date.timeIntervalSinceReferenceDate
+            let pulseScale = pulseScale(at: timestamp)
+            let ringScale = ringScale(at: timestamp)
+
+            ZStack {
+                Circle()
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                Color.accentColor.opacity(0.88),
+                                Color.accentColor.opacity(0.26),
+                                Color.white.opacity(0.72)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .frame(width: 138, height: 138)
+                    .scaleEffect(pulseScale)
+
+                Circle()
+                    .stroke(Color.accentColor.opacity(0.34), lineWidth: 2)
+                    .frame(width: 164, height: 164)
+                    .scaleEffect(ringScale)
+
+                Circle()
+                    .stroke(Color.white.opacity(0.42), lineWidth: 1)
+                    .frame(width: 188, height: 188)
+                    .scaleEffect(0.96 + (ringScale - 1.0) * 0.6)
+
+                Image(systemName: symbolName)
+                    .font(.system(size: 52, weight: .semibold))
+                    .foregroundStyle(Color.white)
+                    .shadow(color: .black.opacity(0.16), radius: 10, x: 0, y: 6)
+            }
+            .frame(width: 208, height: 208)
+        }
+        .accessibilityLabel(accessibilityLabel)
+    }
+
+    private var symbolName: String {
+        switch state {
+        case .idle:
+            return "waveform"
+        case .preparing:
+            return "waveform.badge.mic"
+        case .listening:
+            return "waveform.circle.fill"
+        case .finishing:
+            return "waveform.badge.magnifyingglass"
+        }
+    }
+
+    private var accessibilityLabel: String {
+        switch state {
+        case .idle:
+            return "Voice launcher is idle"
+        case .preparing:
+            return "Voice launcher is preparing"
+        case .listening:
+            return "Voice launcher is listening"
+        case .finishing:
+            return "Voice launcher is finishing the transcript"
+        }
+    }
+
+    private func pulseScale(at timestamp: TimeInterval) -> Double {
+        switch state {
+        case .idle:
+            return 1.0
+        case .preparing:
+            return 0.96 + ((sin(timestamp * 2.2) + 1.0) * 0.03)
+        case .listening:
+            return 0.94 + (((sin(timestamp * 4.8) + 1.0) / 2.0) * (0.08 + audioLevel * 0.1))
+        case .finishing:
+            return 0.98 + ((sin(timestamp * 3.0) + 1.0) * 0.02)
+        }
+    }
+
+    private func ringScale(at timestamp: TimeInterval) -> Double {
+        switch state {
+        case .idle:
+            return 1.0
+        case .preparing:
+            return 1.02 + ((sin(timestamp * 1.6) + 1.0) * 0.04)
+        case .listening:
+            return 1.04 + (((sin(timestamp * 3.6) + 1.0) / 2.0) * (0.14 + audioLevel * 0.18))
+        case .finishing:
+            return 1.06 + ((sin(timestamp * 2.4) + 1.0) * 0.04)
+        }
     }
 }
 

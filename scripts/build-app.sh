@@ -81,6 +81,8 @@ cat > "${CONTENTS_DIR}/Info.plist" <<EOF
   <string>Kotoba Libre requests camera access only when an embedded LibreChat feature needs camera and microphone capture.</string>
   <key>NSMicrophoneUsageDescription</key>
   <string>Kotoba Libre requests microphone access only so LibreChat's microphone input feature can work.</string>
+  <key>NSSpeechRecognitionUsageDescription</key>
+  <string>Kotoba Libre requests speech recognition access only so the voice launcher can transcribe your spoken prompt before sending it to LibreChat.</string>
   <key>NSPrincipalClass</key>
   <string>NSApplication</string>
 </dict>

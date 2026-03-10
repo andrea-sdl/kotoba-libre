@@ -7,8 +7,15 @@ import KotobaLibreCore
 private enum LauncherPanelMetrics {
     static let preferredWidth: CGFloat = 860
     static let minimumWidth: CGFloat = 560
-    static let preferredHeight: CGFloat = 196
+    static let preferredTextHeight: CGFloat = 196
+    static let preferredVoiceHeight: CGFloat = 312
     static let horizontalInset: CGFloat = 32
+}
+
+// LauncherPresentation keeps one panel controller flexible enough for text and voice entry flows.
+enum LauncherPresentation: Equatable {
+    case text
+    case voice
 }
 
 // LauncherPanel is a custom NSPanel so the launcher can float above other apps
@@ -18,7 +25,7 @@ final class LauncherPanel: NSPanel {
         super.init(
             contentRect: NSRect(
                 origin: .zero,
-                size: NSSize(width: LauncherPanelMetrics.preferredWidth, height: LauncherPanelMetrics.preferredHeight)
+                size: NSSize(width: LauncherPanelMetrics.preferredWidth, height: LauncherPanelMetrics.preferredTextHeight)
             ),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
@@ -55,6 +62,10 @@ final class LauncherWindowController: NSWindowController, NSWindowDelegate {
         window?.isVisible ?? false
     }
 
+    var presentationMode: LauncherPresentation {
+        viewModel.presentationMode
+    }
+
     init(appController: AppController) {
         self.appController = appController
         self.viewModel = LauncherViewModel(appController: appController)
@@ -79,18 +90,22 @@ final class LauncherWindowController: NSWindowController, NSWindowDelegate {
         hide()
     }
 
-    func showAndFocus() {
+    func showAndFocus(presentation: LauncherPresentation) {
         // Remember the previous app so we can return focus after the launcher closes.
         let frontmostApplication = NSWorkspace.shared.frontmostApplication
         previouslyFrontmostApplication = frontmostApplication == NSRunningApplication.current ? nil : frontmostApplication
         shouldRestorePreviouslyFrontmostApplication = true
 
-        viewModel.refresh()
-        positionPanelOnActiveDisplay()
+        viewModel.prepareForPresentation(presentation)
+        positionPanelOnActiveDisplay(presentation: presentation)
         NSApp.activate(ignoringOtherApps: true)
         window?.orderFrontRegardless()
         window?.makeKeyAndOrderFront(nil)
         viewModel.focusToken = UUID()
+    }
+
+    func finishVoiceCaptureAndSubmit() {
+        viewModel.finishVoiceCaptureAndSubmit()
     }
 
     func suppressPreviousApplicationRestore() {
@@ -99,12 +114,12 @@ final class LauncherWindowController: NSWindowController, NSWindowDelegate {
 
     func hide() {
         window?.orderOut(nil)
-        viewModel.reset()
+        viewModel.cancelPresentation()
         restorePreviouslyFrontmostApplicationIfNeeded()
     }
 
     func windowDidResignKey(_ notification: Notification) {
-        guard isVisible else {
+        guard isVisible, viewModel.shouldHideOnFocusLoss else {
             return
         }
 
@@ -112,7 +127,7 @@ final class LauncherWindowController: NSWindowController, NSWindowDelegate {
     }
 
     func windowDidResignMain(_ notification: Notification) {
-        guard isVisible else {
+        guard isVisible, viewModel.shouldHideOnFocusLoss else {
             return
         }
 
@@ -150,12 +165,20 @@ final class LauncherWindowController: NSWindowController, NSWindowDelegate {
                 return event
             }
 
+            if self.viewModel.presentationMode == .voice, self.viewModel.matchesVoiceShortcut(event) {
+                self.viewModel.finishVoiceCaptureAndSubmit()
+                return nil
+            }
+
             switch event.keyCode {
             case 53:
-                self.hide()
-                return nil
+                if self.viewModel.shouldHideOnEscape {
+                    self.hide()
+                    return nil
+                }
+                return event
             case 36, 76:
-                self.viewModel.submit()
+                self.viewModel.handlePrimaryAction()
                 return nil
             default:
                 return event
@@ -163,14 +186,14 @@ final class LauncherWindowController: NSWindowController, NSWindowDelegate {
         }
     }
 
-    private func positionPanelOnActiveDisplay() {
+    private func positionPanelOnActiveDisplay(presentation: LauncherPresentation) {
         guard let window else {
             return
         }
 
         // The launcher follows the active display so the shortcut feels local to the current workspace.
         let targetScreen = screenContainingMouse() ?? window.screen ?? NSScreen.main
-        let frame = frameForPresentation(on: targetScreen)
+        let frame = frameForPresentation(on: targetScreen, presentation: presentation)
         window.setFrame(frame, display: false)
     }
 
@@ -179,7 +202,7 @@ final class LauncherWindowController: NSWindowController, NSWindowDelegate {
         return NSScreen.screens.first { NSMouseInRect(mouseLocation, $0.frame, false) }
     }
 
-    private func frameForPresentation(on screen: NSScreen?) -> NSRect {
+    private func frameForPresentation(on screen: NSScreen?, presentation: LauncherPresentation) -> NSRect {
         let fallbackVisibleFrame = NSRect(x: 0, y: 0, width: LauncherPanelMetrics.preferredWidth, height: 900)
         let visibleFrame = screen?.visibleFrame ?? fallbackVisibleFrame
 
@@ -189,7 +212,9 @@ final class LauncherWindowController: NSWindowController, NSWindowDelegate {
             LauncherPanelMetrics.preferredWidth,
             max(minimumWidth, availableWidth)
         )
-        let height = LauncherPanelMetrics.preferredHeight
+        let height = presentation == .voice
+            ? LauncherPanelMetrics.preferredVoiceHeight
+            : LauncherPanelMetrics.preferredTextHeight
 
         let originX = visibleFrame.midX - (width / 2)
         let originY = visibleFrame.midY - (height / 2)
@@ -201,17 +226,27 @@ final class LauncherWindowController: NSWindowController, NSWindowDelegate {
 // The view model keeps the launcher view simple and translates UI actions into AppController calls.
 @MainActor
 final class LauncherViewModel: ObservableObject {
+    @Published private(set) var presentationMode: LauncherPresentation = .text
     @Published var query = ""
     @Published var selectedPresetID: String?
     @Published var statusMessage = ""
     @Published var isError = false
     @Published var focusToken = UUID()
+    @Published private(set) var voiceState: VoiceTranscriptionService.State = .idle
+    @Published private(set) var voiceAudioLevel = 0.12
 
     private weak var appController: AppController?
     private var cancellables: Set<AnyCancellable> = []
+    private let voiceTranscriptionService = VoiceTranscriptionService()
+    private var voiceStartTask: Task<Void, Never>?
+    private var voiceFinishTask: Task<Void, Never>?
+    private var latestVoiceTranscript = ""
 
     init(appController: AppController) {
         self.appController = appController
+        voiceTranscriptionService.onTranscriptChange = { [weak self] transcript in
+            self?.latestVoiceTranscript = transcript
+        }
         observeAppController(appController)
     }
 
@@ -240,23 +275,139 @@ final class LauncherViewModel: ObservableObject {
         appController?.settings.defaultPresetId
     }
 
-    func refresh() {
+    var shouldHideOnFocusLoss: Bool {
+        presentationMode == .text
+    }
+
+    var shouldHideOnEscape: Bool {
+        presentationMode == .text
+    }
+
+    var voiceShortcutDisplayValue: String {
+        voiceShortcutValue
+            .split(separator: "+")
+            .map { token in
+                switch token {
+                case "CmdOrCtrl":
+                    return "⌘"
+                case "Ctrl":
+                    return "⌃"
+                case "Alt":
+                    return "⌥"
+                case "Shift":
+                    return "⇧"
+                default:
+                    return token.replacingOccurrences(of: "Key", with: "").replacingOccurrences(of: "Digit", with: "")
+                }
+            }
+            .joined(separator: "")
+    }
+
+    var voiceShortcutValue: String {
+        appController?.settings.voiceGlobalShortcut ?? AppSettings.defaultVoiceShortcut
+    }
+
+    func prepareForPresentation(_ presentation: LauncherPresentation) {
+        presentationMode = presentation
+        voiceFinishTask?.cancel()
+        voiceFinishTask = nil
         statusMessage = ""
         isError = false
+        ensureSelectedPreset()
 
-        // The launcher can open even when setup is incomplete, so it surfaces guidance here.
-        if selectedPresetID == nil {
-            selectedPresetID = appController?.settings.defaultPresetId ?? presets.first?.id
+        guard validateSharedLauncherState() else {
+            cancelVoiceCapture(resetStatus: false)
+            return
         }
 
-        if appController?.settings.instanceBaseUrl == nil {
-            setStatus("Configure instance URL first.", isError: true)
-        } else if presets.isEmpty {
-            setStatus("No agents configured yet. Add one in Settings.", isError: true)
+        switch presentation {
+        case .text:
+            cancelVoiceCapture(resetStatus: false)
+            focusToken = UUID()
+        case .voice:
+            query = ""
+            latestVoiceTranscript = ""
+            startVoiceCapture()
         }
     }
 
-    func submit() {
+    func handlePrimaryAction() {
+        switch presentationMode {
+        case .text:
+            submitTextLauncher()
+        case .voice:
+            finishVoiceCaptureAndSubmit()
+        }
+    }
+
+    func matchesVoiceShortcut(_ event: NSEvent) -> Bool {
+        GlobalShortcutRegistrar.shortcutString(from: event) == voiceShortcutValue
+    }
+
+    func finishVoiceCaptureAndSubmit() {
+        guard presentationMode == .voice else {
+            return
+        }
+
+        guard validateSharedLauncherState() else {
+            return
+        }
+
+        guard voiceState == .listening else {
+            if voiceState == .preparing {
+                setStatus("Voice mode is still starting. Try the shortcut again in a moment.", isError: false)
+            }
+            return
+        }
+
+        guard let appController else {
+            return
+        }
+
+        guard let targetID = selectedPresetID ?? presets.first?.id else {
+            setStatus("No agent selected.", isError: true)
+            return
+        }
+
+        voiceState = .finishing
+        voiceAudioLevel = 0.24
+        setStatus("Finishing transcription…", isError: false)
+        voiceFinishTask?.cancel()
+        voiceFinishTask = Task { [weak self] in
+            guard let self else {
+                return
+            }
+
+            do {
+                let transcript = try await self.voiceTranscriptionService.stopAndFinalize()
+                try appController.openPreset(id: targetID, query: transcript, preferMainWindow: true)
+                self.resetForNextLaunch()
+            } catch is CancellationError {
+                self.voiceState = .idle
+                self.voiceAudioLevel = 0.12
+            } catch {
+                self.voiceState = .idle
+                self.voiceAudioLevel = 0.12
+                self.setStatus(error.localizedDescription, isError: true)
+                if let voiceError = error as? VoiceTranscriptionServiceError, voiceError == .noSpeechDetected {
+                    self.startVoiceCapture()
+                }
+            }
+        }
+    }
+
+    func cancelAndHide() {
+        cancelVoiceCapture(resetStatus: true)
+        appController?.hideLauncherWindow()
+    }
+
+    func cancelPresentation() {
+        cancelVoiceCapture(resetStatus: false)
+        presentationMode = .text
+        resetForNextLaunch()
+    }
+
+    private func submitTextLauncher() {
         guard let appController else {
             return
         }
@@ -272,16 +423,62 @@ final class LauncherViewModel: ObservableObject {
                 query: query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : query,
                 preferMainWindow: true
             )
-            reset()
+            resetForNextLaunch()
         } catch {
             setStatus(error.localizedDescription, isError: true)
         }
     }
 
-    func reset() {
+    private func startVoiceCapture() {
+        cancelVoiceCapture(resetStatus: false)
+        voiceState = .preparing
+        voiceAudioLevel = 0.3
+        setStatus("Preparing voice launcher…", isError: false)
+
+        voiceStartTask = Task { [weak self] in
+            guard let self, let appController = self.appController else {
+                return
+            }
+
+            do {
+                try await appController.ensureVoiceModePermissions()
+                try self.voiceTranscriptionService.start()
+                self.voiceState = .listening
+                self.voiceAudioLevel = 0.7
+                self.setStatus("Listening. Press \(self.voiceShortcutDisplayValue) again to send.", isError: false)
+            } catch is CancellationError {
+                self.voiceState = .idle
+                self.voiceAudioLevel = 0.12
+            } catch {
+                self.voiceState = .idle
+                self.voiceAudioLevel = 0.12
+                self.setStatus(error.localizedDescription, isError: true)
+            }
+        }
+    }
+
+    private func cancelVoiceCapture(resetStatus: Bool) {
+        voiceStartTask?.cancel()
+        voiceStartTask = nil
+        voiceFinishTask?.cancel()
+        voiceFinishTask = nil
+        voiceTranscriptionService.cancel()
+        voiceState = .idle
+        voiceAudioLevel = 0.12
+        latestVoiceTranscript = ""
+        if resetStatus {
+            statusMessage = ""
+            isError = false
+        }
+    }
+
+    private func resetForNextLaunch() {
         // Reset after a successful launch so the next shortcut opens a clean prompt.
         query = ""
-        selectedPresetID = appController?.settings.defaultPresetId ?? presets.first?.id
+        latestVoiceTranscript = ""
+        voiceState = .idle
+        voiceAudioLevel = 0.12
+        ensureSelectedPreset()
         statusMessage = ""
         isError = false
     }
@@ -289,6 +486,31 @@ final class LauncherViewModel: ObservableObject {
     private func setStatus(_ message: String, isError: Bool) {
         statusMessage = message
         self.isError = isError
+    }
+
+    private func validateSharedLauncherState() -> Bool {
+        guard let appController else {
+            return false
+        }
+
+        if appController.settings.instanceBaseUrl == nil {
+            setStatus("Configure instance URL first.", isError: true)
+            return false
+        }
+
+        if presets.isEmpty {
+            setStatus("No agents configured yet. Add one in Settings.", isError: true)
+            return false
+        }
+
+        ensureSelectedPreset()
+        return true
+    }
+
+    private func ensureSelectedPreset() {
+        if selectedPresetID == nil {
+            selectedPresetID = appController?.settings.defaultPresetId ?? presets.first?.id
+        }
     }
 
     private func observeAppController(_ appController: AppController) {

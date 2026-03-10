@@ -59,9 +59,11 @@ public struct Preset: Codable, Equatable, Identifiable, Sendable {
 // Defaults are chosen so a missing or older settings file can still decode safely.
 public struct AppSettings: Codable, Equatable, Sendable {
     public static let defaultShortcut = "CmdOrCtrl+Shift+Space"
+    public static let defaultVoiceShortcut = "CmdOrCtrl+Alt+V"
 
     public var instanceBaseUrl: String?
     public var globalShortcut: String
+    public var voiceGlobalShortcut: String
     public var autostartEnabled: Bool
     public var restrictHostToInstanceHost: Bool
     public var defaultPresetId: String?
@@ -73,6 +75,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
     enum CodingKeys: String, CodingKey {
         case instanceBaseUrl
         case globalShortcut
+        case voiceGlobalShortcut
         case autostartEnabled
         case restrictHostToInstanceHost
         case defaultPresetId
@@ -85,6 +88,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public init(
         instanceBaseUrl: String? = nil,
         globalShortcut: String = AppSettings.defaultShortcut,
+        voiceGlobalShortcut: String = AppSettings.defaultVoiceShortcut,
         autostartEnabled: Bool = false,
         restrictHostToInstanceHost: Bool = true,
         defaultPresetId: String? = nil,
@@ -95,6 +99,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
     ) {
         self.instanceBaseUrl = instanceBaseUrl
         self.globalShortcut = globalShortcut
+        self.voiceGlobalShortcut = voiceGlobalShortcut
         self.autostartEnabled = autostartEnabled
         self.restrictHostToInstanceHost = restrictHostToInstanceHost
         self.defaultPresetId = defaultPresetId
@@ -109,6 +114,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         // decodeIfPresent keeps backward compatibility with older files that do not know newer keys.
         instanceBaseUrl = try container.decodeIfPresent(String.self, forKey: .instanceBaseUrl)
         globalShortcut = try container.decodeIfPresent(String.self, forKey: .globalShortcut) ?? AppSettings.defaultShortcut
+        voiceGlobalShortcut = try container.decodeIfPresent(String.self, forKey: .voiceGlobalShortcut) ?? AppSettings.defaultVoiceShortcut
         autostartEnabled = try container.decodeIfPresent(Bool.self, forKey: .autostartEnabled) ?? false
         restrictHostToInstanceHost = try container.decodeIfPresent(Bool.self, forKey: .restrictHostToInstanceHost) ?? true
         defaultPresetId = try container.decodeIfPresent(String.self, forKey: .defaultPresetId)
@@ -122,6 +128,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encodeIfPresent(instanceBaseUrl, forKey: .instanceBaseUrl)
         try container.encode(globalShortcut, forKey: .globalShortcut)
+        try container.encode(voiceGlobalShortcut, forKey: .voiceGlobalShortcut)
         try container.encode(autostartEnabled, forKey: .autostartEnabled)
         try container.encode(restrictHostToInstanceHost, forKey: .restrictHostToInstanceHost)
         try container.encodeIfPresent(defaultPresetId, forKey: .defaultPresetId)
@@ -259,6 +266,8 @@ public enum KotobaLibreCore {
 
         let shortcut = normalizeShortcutValue(normalized.globalShortcut)
         normalized.globalShortcut = shortcut.isEmpty ? AppSettings.defaultShortcut : shortcut
+        let voiceShortcut = normalizeShortcutValue(normalized.voiceGlobalShortcut)
+        normalized.voiceGlobalShortcut = voiceShortcut.isEmpty ? AppSettings.defaultVoiceShortcut : voiceShortcut
 
         if let defaultPresetID = normalized.defaultPresetId?.trimmingCharacters(in: .whitespacesAndNewlines), !defaultPresetID.isEmpty {
             normalized.defaultPresetId = defaultPresetID
@@ -269,6 +278,15 @@ public enum KotobaLibreCore {
         normalized.launcherOpacity = min(max(normalized.launcherOpacity, 0.5), 1.0)
 
         return normalized
+    }
+
+    public static func validateShortcutConfiguration(_ settings: AppSettings) -> ValidationResult {
+        let normalizedSettings = normalizeSettings(settings)
+        guard normalizedSettings.globalShortcut != normalizedSettings.voiceGlobalShortcut else {
+            return ValidationResult(valid: false, reason: "Launcher and voice shortcuts must be different")
+        }
+
+        return ValidationResult(valid: true)
     }
 
     public static func normalizePreset(_ preset: Preset, existing: Preset? = nil, now: String = nowMarker()) -> Preset {
