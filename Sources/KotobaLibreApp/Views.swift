@@ -1349,8 +1349,9 @@ struct SystemPanelView: View {
                 Toggle("Launch Kotoba Libre at login", isOn: $autostartEnabled)
                 Toggle("Enable debug logs", isOn: $debugLoggingEnabled)
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("App Visibility")
                     HStack(alignment: .center, spacing: 16) {
+                        Text("App Visibility")
+
                         Spacer()
 
                         Picker("App Visibility", selection: $appVisibilityMode) {
