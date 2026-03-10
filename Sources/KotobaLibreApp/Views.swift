@@ -1493,6 +1493,11 @@ struct LauncherRootView: View {
     var body: some View {
         let presets = viewModel.presets
         let selectedPreset = presets.first { $0.id == viewModel.selectedPresetID }
+        let selectedPresetName = if let selectedPreset {
+            selectedPreset.id == viewModel.defaultPresetID ? "\(selectedPreset.name) (Default)" : selectedPreset.name
+        } else {
+            "Choose agent"
+        }
 
         VStack(spacing: 8) {
             HStack(spacing: 12) {
@@ -1515,7 +1520,7 @@ struct LauncherRootView: View {
                     LauncherAgentMenu(
                         presets: presets,
                         selectedPresetID: viewModel.selectedPresetID,
-                        selectedPresetName: selectedPreset?.name ?? "Choose agent",
+                        selectedPresetName: selectedPresetName,
                         defaultPresetID: viewModel.defaultPresetID
                     ) { presetID in
                         viewModel.selectedPresetID = presetID
@@ -1526,16 +1531,25 @@ struct LauncherRootView: View {
             .padding(.horizontal, 18)
             .padding(.vertical, 10)
             .frame(maxWidth: .infinity, minHeight: 64)
-            .glassEffect(.regular.tint(Color.white.opacity(max(0.08, viewModel.opacity * 0.08))), in: .rect(cornerRadius: 18))
+            .background(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(Color(nsColor: .windowBackgroundColor).opacity(viewModel.opacity))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            .stroke(Color.black.opacity(0.12), lineWidth: 1)
+                    )
+            )
             .shadow(color: .black.opacity(0.16), radius: 18, x: 0, y: 10)
 
             if !viewModel.statusMessage.isEmpty {
-                GlassStatusBanner(message: viewModel.statusMessage, isError: viewModel.isError)
+                Text(viewModel.statusMessage)
+                    .foregroundStyle(viewModel.isError ? Color.red : .secondary)
+                    .font(.footnote)
             }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .padding(.horizontal, 24)
+        .padding(.vertical, 24)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
         .background(Color.clear)
     }
 }
@@ -1563,16 +1577,10 @@ private struct LauncherAgentMenu: View {
             }
         } label: {
             HStack(spacing: 10) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(defaultPresetID == selectedPresetID ? "Default agent" : "Selected agent")
-                        .font(.system(size: 11, weight: .semibold, design: .rounded))
-                        .foregroundStyle(.secondary)
-
-                    Text(selectedPresetName)
-                        .font(.system(size: 14, weight: .semibold, design: .rounded))
-                        .foregroundStyle(.primary)
-                        .lineLimit(1)
-                }
+                Text(selectedPresetName)
+                    .font(.system(size: 16, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
 
                 Spacer(minLength: 10)
 
@@ -1583,8 +1591,14 @@ private struct LauncherAgentMenu: View {
             .frame(width: 236, alignment: .leading)
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
-            .glassEffect(.regular.interactive().tint(Color.accentColor.opacity(0.08)), in: .rect(cornerRadius: 14))
-            .shadow(color: .black.opacity(0.08), radius: 10, x: 0, y: 4)
+            .background(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(Color.white.opacity(0.62))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .stroke(Color.black.opacity(0.08), lineWidth: 1)
+                    )
+            )
             .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         }
         .menuStyle(.borderlessButton)
