@@ -7,10 +7,8 @@ import KotobaLibreCore
 private enum LauncherPanelMetrics {
     static let preferredWidth: CGFloat = 860
     static let minimumWidth: CGFloat = 560
-    static let preferredHeight: CGFloat = 112
+    static let preferredHeight: CGFloat = 196
     static let horizontalInset: CGFloat = 32
-    static let topInset: CGFloat = 88
-    static let bottomInset: CGFloat = 24
 }
 
 // LauncherPanel is a custom NSPanel so the launcher can float above other apps
@@ -22,7 +20,7 @@ final class LauncherPanel: NSPanel {
                 origin: .zero,
                 size: NSSize(width: LauncherPanelMetrics.preferredWidth, height: LauncherPanelMetrics.preferredHeight)
             ),
-            styleMask: [.nonactivatingPanel, .titled, .fullSizeContentView],
+            styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
         )
@@ -34,16 +32,10 @@ final class LauncherPanel: NSPanel {
         isReleasedWhenClosed = false
         isOpaque = false
         backgroundColor = .clear
-        hasShadow = true
+        hasShadow = false
         hidesOnDeactivate = false
         isMovableByWindowBackground = false
-        titleVisibility = .hidden
-        titlebarAppearsTransparent = true
         animationBehavior = .utilityWindow
-
-        standardWindowButton(.closeButton)?.isHidden = true
-        standardWindowButton(.miniaturizeButton)?.isHidden = true
-        standardWindowButton(.zoomButton)?.isHidden = true
     }
 
     override var canBecomeKey: Bool { true }
@@ -70,8 +62,11 @@ final class LauncherWindowController: NSWindowController, NSWindowDelegate {
         let panel = LauncherPanel()
         super.init(window: panel)
 
+        let hostingView = NSHostingView(rootView: LauncherRootView(viewModel: viewModel))
+        hostingView.wantsLayer = true
+        hostingView.layer?.backgroundColor = NSColor.clear.cgColor
         panel.delegate = self
-        panel.contentView = NSHostingView(rootView: LauncherRootView(viewModel: viewModel))
+        panel.contentView = hostingView
         installKeyboardMonitor()
     }
 
@@ -197,10 +192,7 @@ final class LauncherWindowController: NSWindowController, NSWindowDelegate {
         let height = LauncherPanelMetrics.preferredHeight
 
         let originX = visibleFrame.midX - (width / 2)
-        let originY = max(
-            visibleFrame.minY + LauncherPanelMetrics.bottomInset,
-            visibleFrame.maxY - LauncherPanelMetrics.topInset - height
-        )
+        let originY = visibleFrame.midY - (height / 2)
 
         return NSRect(x: originX, y: originY, width: width, height: height)
     }
