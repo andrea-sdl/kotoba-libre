@@ -1108,7 +1108,13 @@ struct SettingsPanelView: View {
             Form {
                 TextField("LibreChat Instance URL", text: $instanceBaseURL)
                 Toggle("Restrict URLs to the configured instance host", isOn: $restrictHost)
-                Toggle("Use route reload for launcher chats", isOn: $useRouteReloadForLauncherChats)
+                VStack(alignment: .leading, spacing: 6) {
+                    Toggle("Use route reload for launcher chats", isOn: $useRouteReloadForLauncherChats)
+                    Text("Enable this if the normal SPA navigation flow does not work correctly for launcher chats.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             .formStyle(.grouped)
 
@@ -1350,8 +1356,7 @@ struct SystemPanelView: View {
                                 .tag(mode)
                         }
                     }
-                    .labelsHidden()
-                    .pickerStyle(.radioGroup)
+                    .pickerStyle(.menu)
 
                     Text(appVisibilityMode.settingsDescription)
                         .font(.footnote)
@@ -1361,18 +1366,31 @@ struct SystemPanelView: View {
                     Text("Launcher Opacity \(Int(launcherOpacity))%")
                     Slider(value: $launcherOpacity, in: 50...100, step: 5)
                 }
-                MicrophonePermissionSection(
-                    appController: appController,
-                    title: "LibreChat Microphone Access",
-                    description: "LibreChat can record from the microphone for voice input. Kotoba Libre only requests this permission so that LibreChat feature can work when you use it.",
-                    showsCardBackground: false
-                )
-                SpeechRecognitionPermissionSection(
-                    appController: appController,
-                    title: "Voice Launcher Transcription",
-                    description: "Voice mode uses Apple speech recognition to turn your recording into the prompt that gets sent to the selected agent.",
-                    showsCardBackground: false
-                )
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Permissions")
+                        .font(.headline)
+
+                    HStack(alignment: .top, spacing: 20) {
+                        MicrophonePermissionSection(
+                            appController: appController,
+                            title: "LibreChat Microphone Access",
+                            description: "LibreChat can record from the microphone for voice input. Kotoba Libre only requests this permission so that LibreChat feature can work when you use it.",
+                            showsCardBackground: false
+                        )
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+
+                        Divider()
+                            .frame(maxHeight: .infinity)
+
+                        SpeechRecognitionPermissionSection(
+                            appController: appController,
+                            title: "Voice Launcher Transcription",
+                            description: "Voice mode uses Apple speech recognition to turn your recording into the prompt that gets sent to the selected agent.",
+                            showsCardBackground: false
+                        )
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                    }
+                }
                 Button("Reset Config", role: .destructive) {
                     isShowingResetConfirmation = true
                 }
@@ -1508,17 +1526,13 @@ struct ShortcutPanelView: View {
                         }
                         Button("Reset Default") {
                             appController.resetShortcutDraft()
-                            setStatus("Reset to default: \(AppSettings.defaultShortcut)", isError: false)
-                        }
-                        Button("Save Shortcut") {
                             do {
                                 try appController.saveShortcutDraft()
-                                setStatus("Text launcher shortcut saved.", isError: false)
+                                setStatus("Reset to default: \(AppSettings.defaultShortcut)", isError: false)
                             } catch {
                                 setStatus(error.localizedDescription, isError: true)
                             }
                         }
-                        .buttonStyle(.borderedProminent)
                     }
 
                     if appController.isRecordingShortcut {
@@ -1550,17 +1564,13 @@ struct ShortcutPanelView: View {
                         }
                         Button("Reset Default") {
                             appController.resetVoiceShortcutDraft()
-                            setStatus("Reset to default: \(AppSettings.defaultVoiceShortcut)", isError: false)
-                        }
-                        Button("Save Shortcut") {
                             do {
                                 try appController.saveVoiceShortcutDraft()
-                                setStatus("Voice launcher shortcut saved.", isError: false)
+                                setStatus("Reset to default: \(AppSettings.defaultVoiceShortcut)", isError: false)
                             } catch {
                                 setStatus(error.localizedDescription, isError: true)
                             }
                         }
-                        .buttonStyle(.borderedProminent)
                     }
 
                     if appController.isRecordingVoiceShortcut {
@@ -1591,11 +1601,11 @@ struct ShortcutPanelView: View {
         .onChange(of: appController.voiceShortcutDraft) {
             updateDirtyState()
         }
-        .onChange(of: appController.isRecordingShortcut) {
-            updateDirtyState()
+        .onChange(of: appController.isRecordingShortcut) { previousValue, newValue in
+            handleTextRecordingChange(from: previousValue, to: newValue)
         }
-        .onChange(of: appController.isRecordingVoiceShortcut) {
-            updateDirtyState()
+        .onChange(of: appController.isRecordingVoiceShortcut) { previousValue, newValue in
+            handleVoiceRecordingChange(from: previousValue, to: newValue)
         }
         .onChange(of: appController.settings) {
             updateDirtyState()
@@ -1611,6 +1621,42 @@ struct ShortcutPanelView: View {
         appController.discardShortcutDraftChanges()
         appController.discardVoiceShortcutDraftChanges()
         updateDirtyState()
+    }
+
+    private func handleTextRecordingChange(from previousValue: Bool, to newValue: Bool) {
+        updateDirtyState()
+        guard previousValue, !newValue else {
+            return
+        }
+
+        guard appController.shortcutDraft != appController.settings.globalShortcut else {
+            return
+        }
+
+        do {
+            try appController.saveShortcutDraft()
+            setStatus("Text launcher shortcut saved.", isError: false)
+        } catch {
+            setStatus(error.localizedDescription, isError: true)
+        }
+    }
+
+    private func handleVoiceRecordingChange(from previousValue: Bool, to newValue: Bool) {
+        updateDirtyState()
+        guard previousValue, !newValue else {
+            return
+        }
+
+        guard appController.voiceShortcutDraft != appController.settings.voiceGlobalShortcut else {
+            return
+        }
+
+        do {
+            try appController.saveVoiceShortcutDraft()
+            setStatus("Voice launcher shortcut saved.", isError: false)
+        } catch {
+            setStatus(error.localizedDescription, isError: true)
+        }
     }
 
     private func updateDirtyState() {
@@ -1697,21 +1743,24 @@ struct LauncherRootView: View {
                     .padding(.vertical, 10)
                     .frame(maxWidth: .infinity, minHeight: 64)
                 case .voice:
-                    VStack(spacing: 20) {
-                        VoiceLauncherIndicator(
-                            audioLevel: viewModel.voiceAudioLevel,
-                            state: viewModel.voiceState
-                        )
+                    VStack(spacing: 18) {
+                        HStack(spacing: 16) {
+                            VoiceLauncherIndicator(
+                                audioLevel: viewModel.voiceAudioLevel,
+                                state: viewModel.voiceState,
+                                diameter: 92
+                            )
 
-                        VStack(spacing: 6) {
                             Text(voiceTitle)
                                 .font(.system(size: 28, weight: .bold, design: .rounded))
-
-                            Text(voiceSubtitle)
-                                .font(.subheadline.weight(.medium))
-                                .foregroundStyle(.secondary)
-                                .multilineTextAlignment(.center)
                         }
+                        .frame(maxWidth: .infinity, alignment: .center)
+
+                        Text(voiceSubtitle)
+                            .font(.subheadline.weight(.medium))
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                            .frame(maxWidth: 460)
 
                         HStack(spacing: 12) {
                             if presets.isEmpty {
@@ -1737,7 +1786,8 @@ struct LauncherRootView: View {
                     }
                     .frame(maxWidth: .infinity)
                     .padding(.horizontal, 28)
-                    .padding(.vertical, 26)
+                    .padding(.top, 24)
+                    .padding(.bottom, 26)
                 }
             }
             .background(
@@ -1746,7 +1796,6 @@ struct LauncherRootView: View {
                     presentationMode: viewModel.presentationMode
                 )
             )
-            .shadow(color: .black.opacity(0.16), radius: 18, x: 0, y: 10)
 
             if !viewModel.statusMessage.isEmpty {
                 Text(viewModel.statusMessage)
@@ -1793,220 +1842,135 @@ private struct LauncherPanelSurface: View {
     let presentationMode: LauncherPresentation
 
     var body: some View {
-        ZStack {
-            LauncherAmbientGlow(presentationMode: presentationMode)
-                .padding(-52)
-                .blendMode(.screen)
-                .opacity(presentationMode == .voice ? 0.92 : 0.80)
+        let shape = RoundedRectangle(cornerRadius: 18, style: .continuous)
 
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
+        ZStack {
+            shape
                 .fill(Color(nsColor: .windowBackgroundColor).opacity(opacity))
                 .overlay(
                     RoundedRectangle(cornerRadius: 18, style: .continuous)
                         .stroke(Color.black.opacity(0.12), lineWidth: 1)
                 )
                 .overlay(
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .stroke(Color.white.opacity(presentationMode == .voice ? 0.16 : 0.10), lineWidth: 1)
-                        .blur(radius: 1.6)
-                )
-                .overlay(
-                    LauncherAmbientGlow(presentationMode: presentationMode)
-                        .padding(-10)
-                        .blendMode(.screen)
-                        .opacity(presentationMode == .voice ? 0.78 : 0.62)
-                        .mask {
-                            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                .stroke(lineWidth: presentationMode == .voice ? 14 : 11)
-                                .blur(radius: 6)
-                        }
+                    shape
+                        .launcherGlowOverlay(isVoice: presentationMode == .voice)
                 )
         }
     }
 }
 
-// LauncherAmbientGlow paints several blurred color tides and masks them into a subtle animated halo.
-private struct LauncherAmbientGlow: View {
-    let presentationMode: LauncherPresentation
+// These helpers apply an article-style animated glow stroke behind and above launcher surfaces.
+private extension InsettableShape {
+    @MainActor
+    func launcherGlowOverlay(isVoice: Bool) -> some View {
+        launcherGlowStroke(
+            lineWidths: isVoice ? [2.5, 4.5, 7.5] : [2, 3.5, 6],
+            blurs: isVoice ? [0, 2, 6] : [0, 2, 5],
+            updateInterval: 0.42,
+            animationDurations: isVoice ? [0.44, 0.58, 0.76] : [0.40, 0.54, 0.70]
+        )
+        .opacity(isVoice ? 0.82 : 0.68)
+    }
 
-    var body: some View {
-        TimelineView(.animation) { context in
-            GeometryReader { proxy in
-                let timestamp = context.date.timeIntervalSinceReferenceDate
-                let size = proxy.size
-
-                ZStack {
-                    ForEach(glowBlobs.indices, id: \.self) { index in
-                        let blob = glowBlobs[index]
-                        Ellipse()
-                            .fill(
-                                RadialGradient(
-                                    colors: [
-                                        blob.color.opacity(blob.opacity * glowStrength),
-                                        blob.color.opacity(blob.opacity * glowStrength * 0.42),
-                                        .clear
-                                    ],
-                                    center: .center,
-                                    startRadius: 0,
-                                    endRadius: max(size.width * blob.widthFactor, size.height * blob.heightFactor) * 0.5
-                                )
-                            )
-                            .frame(
-                                width: size.width * blob.widthFactor,
-                                height: size.height * blob.heightFactor
-                            )
-                            .rotationEffect(rotation(for: blob, at: timestamp))
-                            .offset(
-                                x: horizontalOffset(for: blob, at: timestamp, size: size),
-                                y: verticalOffset(for: blob, at: timestamp, size: size)
-                            )
-                            .blur(radius: blob.blur)
-                    }
-                }
-                .frame(width: size.width, height: size.height)
-                .mask {
-                    RoundedRectangle(cornerRadius: 34, style: .continuous)
-                        .stroke(lineWidth: presentationMode == .voice ? 72 : 62)
-                        .blur(radius: 22)
-                        .padding(-20)
-                }
-                .opacity(presentationMode == .voice ? 1.0 : 0.92)
-                .saturation(1.14)
-                .allowsHitTesting(false)
-            }
-        }
+    @MainActor
+    func launcherGlowStroke(
+        lineWidths: [CGFloat],
+        blurs: [CGFloat],
+        updateInterval: TimeInterval,
+        animationDurations: [TimeInterval]
+    ) -> some View {
+        LauncherGlowStrokeView(
+            shape: self,
+            lineWidths: lineWidths,
+            blurs: blurs,
+            updateInterval: updateInterval,
+            animationDurations: animationDurations
+        )
+        .allowsHitTesting(false)
         .accessibilityHidden(true)
     }
+}
 
-    private var glowStrength: Double {
-        presentationMode == .voice ? 1.16 : 1.0
-    }
+// LauncherGlowStrokeView follows the layered animated angular-stroke approach from the reference article.
+private struct LauncherGlowStrokeView<S: InsettableShape>: View {
+    let shape: S
+    let lineWidths: [CGFloat]
+    let blurs: [CGFloat]
+    let updateInterval: TimeInterval
+    let animationDurations: [TimeInterval]
 
-    private var glowBlobs: [LauncherGlowBlob] {
-        [
-            LauncherGlowBlob(
-                color: Color(red: 0.50, green: 0.84, blue: 1.00),
-                widthFactor: 0.78,
-                heightFactor: 1.24,
-                baseX: -0.32,
-                baseY: -0.10,
-                travelX: 0.05,
-                travelY: 0.08,
-                baseRotation: -22,
-                rotationTravel: 7,
-                speed: 0.44,
-                phase: 0.3,
-                blur: 42,
-                opacity: 0.84
-            ),
-            LauncherGlowBlob(
-                color: Color(red: 1.00, green: 0.78, blue: 0.67),
-                widthFactor: 0.70,
-                heightFactor: 1.08,
-                baseX: 0.34,
-                baseY: -0.18,
-                travelX: 0.06,
-                travelY: 0.07,
-                baseRotation: 18,
-                rotationTravel: 8,
-                speed: 0.38,
-                phase: 1.4,
-                blur: 40,
-                opacity: 0.76
-            ),
-            LauncherGlowBlob(
-                color: Color(red: 0.69, green: 0.94, blue: 0.82),
-                widthFactor: 0.92,
-                heightFactor: 0.92,
-                baseX: 0.08,
-                baseY: 0.34,
-                travelX: 0.08,
-                travelY: 0.05,
-                baseRotation: -4,
-                rotationTravel: 6,
-                speed: 0.30,
-                phase: 2.2,
-                blur: 44,
-                opacity: 0.70
-            ),
-            LauncherGlowBlob(
-                color: Color(red: 0.90, green: 0.66, blue: 0.94),
-                widthFactor: 0.82,
-                heightFactor: 1.00,
-                baseX: -0.14,
-                baseY: 0.26,
-                travelX: 0.07,
-                travelY: 0.06,
-                baseRotation: 24,
-                rotationTravel: 9,
-                speed: 0.34,
-                phase: 3.1,
-                blur: 42,
-                opacity: 0.66
-            ),
-            LauncherGlowBlob(
-                color: Color(red: 0.76, green: 0.78, blue: 1.00),
-                widthFactor: 0.66,
-                heightFactor: 1.16,
-                baseX: 0.36,
-                baseY: 0.14,
-                travelX: 0.05,
-                travelY: 0.09,
-                baseRotation: -30,
-                rotationTravel: 7,
-                speed: 0.42,
-                phase: 4.0,
-                blur: 38,
-                opacity: 0.64
-            )
-        ]
-    }
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var stops: [Gradient.Stop] = .launcherGlowStyle
 
-    private func horizontalOffset(for blob: LauncherGlowBlob, at timestamp: TimeInterval, size: CGSize) -> CGFloat {
-        let primaryWave = sin((timestamp * blob.speed) + blob.phase)
-        let secondaryWave = sin((timestamp * blob.speed * 0.62) + (blob.phase * 1.4))
-        return (size.width * blob.baseX) + (size.width * blob.travelX * CGFloat((primaryWave + (secondaryWave * 0.55)) / 1.55))
-    }
+    var body: some View {
+        let layerCount = min(lineWidths.count, blurs.count, animationDurations.count)
+        let gradient = AngularGradient(
+            gradient: Gradient(stops: stops),
+            center: .center
+        )
 
-    private func verticalOffset(for blob: LauncherGlowBlob, at timestamp: TimeInterval, size: CGSize) -> CGFloat {
-        let rollingWave = cos((timestamp * blob.speed * 0.84) + blob.phase)
-        let reboundWave = sin((timestamp * blob.speed * 1.18) + (blob.phase * 0.72))
-        return (size.height * blob.baseY) + (size.height * blob.travelY * CGFloat((rollingWave + (reboundWave * 0.45)) / 1.45))
-    }
+        ZStack {
+            ForEach(0..<layerCount, id: \.self) { index in
+                shape
+                    .strokeBorder(gradient, lineWidth: lineWidths[index])
+                    .blur(radius: blurs[index])
+                    .animation(
+                        reduceMotion ? .linear(duration: 0) : .easeInOut(duration: animationDurations[index]),
+                        value: stops
+                    )
+            }
+        }
+        .task(id: updateInterval) {
+            guard !reduceMotion else {
+                stops = .launcherGlowStyle
+                return
+            }
 
-    private func rotation(for blob: LauncherGlowBlob, at timestamp: TimeInterval) -> Angle {
-        let drift = sin((timestamp * blob.speed * 0.58) + blob.phase)
-        return .degrees(blob.baseRotation + (drift * blob.rotationTravel))
+            while !Task.isCancelled {
+                stops = .launcherGlowStyle
+                try? await Task.sleep(for: .seconds(updateInterval))
+            }
+        }
     }
 }
 
-// LauncherGlowBlob keeps each glow lobe configurable without turning the animation code into magic numbers.
-private struct LauncherGlowBlob {
-    let color: Color
-    let widthFactor: CGFloat
-    let heightFactor: CGFloat
-    let baseX: CGFloat
-    let baseY: CGFloat
-    let travelX: CGFloat
-    let travelY: CGFloat
-    let baseRotation: Double
-    let rotationTravel: Double
-    let speed: Double
-    let phase: Double
-    let blur: CGFloat
-    let opacity: Double
+// The palette stays airy and oceanic while the randomized stop locations keep the motion organic.
+private extension Array where Element == Gradient.Stop {
+    static var launcherGlowStyle: [Gradient.Stop] {
+        [
+            Color(red: 0.47, green: 0.83, blue: 1.00),
+            Color(red: 0.62, green: 0.95, blue: 0.86),
+            Color(red: 0.99, green: 0.79, blue: 0.62),
+            Color(red: 0.96, green: 0.66, blue: 0.78),
+            Color(red: 0.66, green: 0.74, blue: 1.00),
+            Color(red: 0.83, green: 0.73, blue: 0.98)
+        ]
+        .map { Gradient.Stop(color: $0, location: Double.random(in: 0...1)) }
+        .sorted { $0.location < $1.location }
+    }
 }
 
 // VoiceLauncherIndicator gives voice mode a distinct animated listening surface without showing raw text.
 private struct VoiceLauncherIndicator: View {
     let audioLevel: Double
     let state: VoiceTranscriptionService.State
+    let diameter: CGFloat
+
+    init(audioLevel: Double, state: VoiceTranscriptionService.State, diameter: CGFloat = 208) {
+        self.audioLevel = audioLevel
+        self.state = state
+        self.diameter = diameter
+    }
 
     var body: some View {
         TimelineView(.animation) { context in
             let timestamp = context.date.timeIntervalSinceReferenceDate
             let pulseScale = pulseScale(at: timestamp)
             let ringScale = ringScale(at: timestamp)
+            let coreDiameter = diameter * 0.663
+            let middleRingDiameter = diameter * 0.788
+            let outerRingDiameter = diameter * 0.904
+            let symbolSize = diameter * 0.25
 
             ZStack {
                 Circle()
@@ -2021,25 +1985,25 @@ private struct VoiceLauncherIndicator: View {
                             endPoint: .bottomTrailing
                         )
                     )
-                    .frame(width: 138, height: 138)
+                    .frame(width: coreDiameter, height: coreDiameter)
                     .scaleEffect(pulseScale)
 
                 Circle()
                     .stroke(Color.accentColor.opacity(0.34), lineWidth: 2)
-                    .frame(width: 164, height: 164)
+                    .frame(width: middleRingDiameter, height: middleRingDiameter)
                     .scaleEffect(ringScale)
 
                 Circle()
                     .stroke(Color.white.opacity(0.42), lineWidth: 1)
-                    .frame(width: 188, height: 188)
+                    .frame(width: outerRingDiameter, height: outerRingDiameter)
                     .scaleEffect(0.96 + (ringScale - 1.0) * 0.6)
 
                 Image(systemName: symbolName)
-                    .font(.system(size: 52, weight: .semibold))
+                    .font(.system(size: symbolSize, weight: .semibold))
                     .foregroundStyle(Color.white)
                     .shadow(color: .black.opacity(0.16), radius: 10, x: 0, y: 6)
             }
-            .frame(width: 208, height: 208)
+            .frame(width: diameter, height: diameter)
         }
         .accessibilityLabel(accessibilityLabel)
     }

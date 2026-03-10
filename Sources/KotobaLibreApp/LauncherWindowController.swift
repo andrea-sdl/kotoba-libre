@@ -7,8 +7,10 @@ import KotobaLibreCore
 private enum LauncherPanelMetrics {
     static let preferredWidth: CGFloat = 860
     static let minimumWidth: CGFloat = 560
+    static let preferredVoiceWidth: CGFloat = 602
+    static let minimumVoiceWidth: CGFloat = 420
     static let preferredTextHeight: CGFloat = 196
-    static let preferredVoiceHeight: CGFloat = 312
+    static let preferredVoiceHeight: CGFloat = 336
     static let horizontalInset: CGFloat = 32
 }
 
@@ -207,9 +209,15 @@ final class LauncherWindowController: NSWindowController, NSWindowDelegate {
         let visibleFrame = screen?.visibleFrame ?? fallbackVisibleFrame
 
         let availableWidth = visibleFrame.width - (LauncherPanelMetrics.horizontalInset * 2)
-        let minimumWidth = min(LauncherPanelMetrics.minimumWidth, visibleFrame.width)
+        let preferredWidth = presentation == .voice
+            ? LauncherPanelMetrics.preferredVoiceWidth
+            : LauncherPanelMetrics.preferredWidth
+        let minimumWidth = min(
+            presentation == .voice ? LauncherPanelMetrics.minimumVoiceWidth : LauncherPanelMetrics.minimumWidth,
+            visibleFrame.width
+        )
         let width = min(
-            LauncherPanelMetrics.preferredWidth,
+            preferredWidth,
             max(minimumWidth, availableWidth)
         )
         let height = presentation == .voice
