@@ -1,4 +1,5 @@
 import AppKit
+import AVFoundation
 import SwiftUI
 import KotobaLibreCore
 import WebKit
@@ -463,7 +464,7 @@ private extension WindowFrameState {
 
 // WebContentViewController wraps WKWebView and contains the rules for embedded vs external navigation.
 @MainActor
-final class WebContentViewController: NSViewController, WKNavigationDelegate {
+final class WebContentViewController: NSViewController, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
     private static let logHandlerName = "kotobaLibreLog"
     private static let addAgentCandidateHandlerName = "kotobaLibreAddAgentCandidate"
 
@@ -533,6 +534,7 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate {
         self.webView = WKWebView(frame: .zero, configuration: configuration)
         super.init(nibName: nil, bundle: nil)
         self.webView.navigationDelegate = self
+        self.webView.uiDelegate = self
         self.webView.allowsBackForwardNavigationGestures = true
         logMessageHandler.onMessage = { [weak self] message in
             self?.debugLog("KotobaLibre SPA: \(message)")
@@ -613,6 +615,11 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate {
         decidePolicyFor navigationAction: WKNavigationAction,
         decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void
     ) {
+        if navigationAction.shouldPerformDownload {
+            decisionHandler(.download)
+            return
+        }
+
         guard let url = navigationAction.request.url else {
             decisionHandler(.allow)
             return
@@ -634,9 +641,126 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate {
         decisionHandler(.allow)
     }
 
+    func webView(
+        _ webView: WKWebView,
+        decidePolicyFor navigationResponse: WKNavigationResponse,
+        decisionHandler: @escaping @MainActor @Sendable (WKNavigationResponsePolicy) -> Void
+    ) {
+        if !navigationResponse.canShowMIMEType {
+            decisionHandler(.download)
+            return
+        }
+
+        decisionHandler(.allow)
+    }
+
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         hasLoadedRemoteContent = true
         debugLog("KotobaLibre SPA: didFinish -> \(webView.url?.absoluteString ?? "<unknown>")")
+    }
+
+    // The media-permission delegate bridges WebKit page requests to the app-level capture permission.
+    func webView(
+        _ webView: WKWebView,
+        requestMediaCapturePermissionFor origin: WKSecurityOrigin,
+        initiatedByFrame frame: WKFrameInfo,
+        type: WKMediaCaptureType,
+        decisionHandler: @escaping @MainActor (WKPermissionDecision) -> Void
+    ) {
+        debugLog("KotobaLibre Media Capture: requested type \(type.rawValue) from \(origin.protocol)://\(origin.host)")
+
+        switch type {
+        case .microphone:
+            decidePermission(for: .audio, decisionHandler: decisionHandler)
+        case .camera:
+            decidePermission(for: .video, decisionHandler: decisionHandler)
+        case .cameraAndMicrophone:
+            decidePermission(for: .audio) { microphoneDecision in
+                guard microphoneDecision == .grant else {
+                    decisionHandler(.deny)
+                    return
+                }
+
+                self.decidePermission(for: .video, decisionHandler: decisionHandler)
+            }
+        @unknown default:
+            decisionHandler(.deny)
+        }
+    }
+
+    // macOS cancels file uploads unless the app provides the native picker via this delegate.
+    func webView(
+        _ webView: WKWebView,
+        runOpenPanelWith parameters: WKOpenPanelParameters,
+        initiatedByFrame frame: WKFrameInfo,
+        completionHandler: @escaping @MainActor ([URL]?) -> Void
+    ) {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = parameters.allowsDirectories
+        panel.allowsMultipleSelection = parameters.allowsMultipleSelection
+        panel.resolvesAliases = true
+
+        if panel.runModal() == .OK {
+            completionHandler(panel.urls)
+        } else {
+            completionHandler(nil)
+        }
+    }
+
+    func webView(_ webView: WKWebView, navigationAction: WKNavigationAction, didBecome download: WKDownload) {
+        download.delegate = self
+    }
+
+    func webView(_ webView: WKWebView, navigationResponse: WKNavigationResponse, didBecome download: WKDownload) {
+        download.delegate = self
+    }
+
+    // Downloads need an app-chosen writable destination before WebKit will start writing bytes.
+    func download(
+        _ download: WKDownload,
+        decideDestinationUsing response: URLResponse,
+        suggestedFilename: String,
+        completionHandler: @escaping @MainActor (URL?) -> Void
+    ) {
+        let panel = NSSavePanel()
+        panel.canCreateDirectories = true
+        panel.nameFieldStringValue = suggestedFilename
+        panel.isExtensionHidden = false
+        panel.directoryURL = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
+
+        if panel.runModal() == .OK {
+            completionHandler(panel.url)
+        } else {
+            completionHandler(nil)
+        }
+    }
+
+    func downloadDidFinish(_ download: WKDownload) {
+        debugLog("KotobaLibre Download: finished")
+    }
+
+    func download(_ download: WKDownload, didFailWithError error: Error, resumeData: Data?) {
+        debugLog("KotobaLibre Download: failed -> \(error.localizedDescription)")
+    }
+
+    private func decidePermission(
+        for mediaType: AVMediaType,
+        decisionHandler: @escaping @MainActor (WKPermissionDecision) -> Void
+    ) {
+        let currentStatus = MediaCaptureAuthorization.authorizationStatus(for: mediaType)
+        switch currentStatus {
+        case .authorized:
+            decisionHandler(.grant)
+        case .denied, .restricted:
+            decisionHandler(.deny)
+        case .notDetermined:
+            MediaCaptureAuthorization.requestSystemAccess(for: mediaType) { updatedStatus in
+                decisionHandler(updatedStatus == .authorized ? .grant : .deny)
+            }
+        @unknown default:
+            decisionHandler(.deny)
+        }
     }
 
     private func debugLog(_ message: String) {

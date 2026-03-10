@@ -107,12 +107,13 @@ The settings window includes tabs for:
 
 - Agents
 - Settings
+- System
 - Shortcuts
 - About
 
 The settings UI warns before you leave a tab with unsaved changes.
 
-From the Settings tab, users can also choose whether Kotoba Libre appears:
+From the System tab, users can also choose whether Kotoba Libre appears:
 
 - In both the Dock and the menu bar
 - Only in the Dock
@@ -120,9 +121,9 @@ From the Settings tab, users can also choose whether Kotoba Libre appears:
 
 When the menu bar item is enabled, it includes actions for opening Settings, showing the LibreChat window, and quitting the app.
 
-When host restriction is enabled and you change the configured LibreChat instance to a different host, Kotoba Libre re-validates saved agents, offers an export step first, and removes any incompatible agents after you confirm the change.
+The System tab also includes microphone permission status, debug logging, and a destructive reset action that clears config and returns the app to onboarding.
 
-The Settings tab also includes a destructive reset action that clears config and returns the app to onboarding.
+When host restriction is enabled and you change the configured LibreChat instance to a different host, Kotoba Libre re-validates saved agents, offers an export step first, and removes any incompatible agents after you confirm the change.
 
 ### Launcher
 

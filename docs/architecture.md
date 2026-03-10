@@ -65,7 +65,7 @@ Kotoba Libre uses three main native window types:
 
 ### Settings window
 
-- Separate management surface for agents, settings, shortcuts, and about information
+- Separate management surface for agents, instance settings, system settings, shortcuts, and about information
 - Hidden instead of destroyed when closed
 - Used after onboarding for ongoing configuration
 - Warns before switching tabs when the current page has unsaved changes
@@ -107,7 +107,7 @@ If `settings.json` does not exist or does not contain an instance URL:
 
 ### Reset
 
-The Settings tab exposes a reset action with confirmation.
+The System tab exposes a reset action with confirmation.
 
 When the configured LibreChat host changes while host restriction is enabled, the app re-validates saved agents against the new host, offers export before save, and removes incompatible agents once the user confirms the change.
 

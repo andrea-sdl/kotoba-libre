@@ -9,6 +9,7 @@ APP_DIR="${OUT_DIR}/${APP_NAME}.app"
 CONTENTS_DIR="${APP_DIR}/Contents"
 MACOS_DIR="${CONTENTS_DIR}/MacOS"
 RESOURCES_DIR="${CONTENTS_DIR}/Resources"
+ENTITLEMENTS_PATH="scripts/KotobaLibre.entitlements"
 
 if [[ ! "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
   echo "Invalid version: ${VERSION}" >&2
@@ -76,13 +77,17 @@ cat > "${CONTENTS_DIR}/Info.plist" <<EOF
   <string>13.0</string>
   <key>NSHighResolutionCapable</key>
   <true/>
+  <key>NSCameraUsageDescription</key>
+  <string>Kotoba Libre requests camera access only when an embedded LibreChat feature needs camera and microphone capture.</string>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>Kotoba Libre requests microphone access only so LibreChat's microphone input feature can work.</string>
   <key>NSPrincipalClass</key>
   <string>NSApplication</string>
 </dict>
 </plist>
 EOF
 
-codesign --force --deep --sign - --identifier "${BUNDLE_IDENTIFIER}" --timestamp=none "${APP_DIR}"
+codesign --force --deep --sign - --entitlements "${ENTITLEMENTS_PATH}" --identifier "${BUNDLE_IDENTIFIER}" --timestamp=none "${APP_DIR}"
 
 echo "Built app bundle:"
 echo "- ${APP_DIR}"
