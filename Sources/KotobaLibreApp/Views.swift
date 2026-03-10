@@ -187,6 +187,12 @@ struct OnboardingFlowView: View {
                         .font(.footnote)
                         .foregroundStyle(Color.red)
                 }
+
+                MicrophonePermissionSection(
+                    appController: appController,
+                    title: "LibreChat Voice Input",
+                    description: "LibreChat can use your microphone for voice input. Kotoba Libre only requests microphone access so that LibreChat feature can work inside the app."
+                )
             }
 
             Spacer()
@@ -257,6 +263,88 @@ private struct ShortcutPreviewView: View {
     }
 }
 
+// This shared section keeps the microphone permission copy and actions consistent in onboarding and settings.
+private struct MicrophonePermissionSection: View {
+    @ObservedObject var appController: AppController
+    let title: String
+    let description: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(title)
+                .font(.headline)
+            Text(description)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+
+            Label(permissionState.statusMessage, systemImage: statusSymbolName)
+                .font(.footnote)
+                .foregroundStyle(statusColor)
+                .fixedSize(horizontal: false, vertical: true)
+
+            HStack(spacing: 12) {
+                switch permissionState {
+                case .notDetermined:
+                    Button(appController.isRequestingMicrophonePermission ? "Requesting..." : "Allow Microphone") {
+                        appController.requestMicrophonePermission()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(appController.isRequestingMicrophonePermission)
+                case .granted:
+                    Button("Refresh Status") {
+                        appController.refreshMicrophonePermissionState()
+                    }
+                case .denied, .restricted:
+                    Button("Open System Settings") {
+                        appController.openMicrophonePrivacySettings()
+                    }
+                    Button("Refresh Status") {
+                        appController.refreshMicrophonePermissionState()
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .center)
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(Color.secondary.opacity(0.08))
+        )
+        .onAppear {
+            appController.refreshMicrophonePermissionState()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            appController.refreshMicrophonePermissionState()
+        }
+    }
+
+    private var permissionState: MicrophonePermissionState {
+        appController.microphonePermissionState
+    }
+
+    private var statusSymbolName: String {
+        switch permissionState {
+        case .notDetermined:
+            return "mic.badge.plus"
+        case .granted:
+            return "checkmark.circle.fill"
+        case .denied:
+            return "mic.slash.fill"
+        case .restricted:
+            return "lock.circle.fill"
+        }
+    }
+
+    private var statusColor: Color {
+        switch permissionState {
+        case .granted:
+            return .secondary
+        case .notDetermined, .denied, .restricted:
+            return .orange
+        }
+    }
+}
+
 // Stored shortcut tokens use web-style names. This helper turns them into Mac glyphs.
 private func shortcutDisplayParts(_ shortcut: String) -> [String] {
     shortcut.split(separator: "+").map { token in
@@ -278,6 +366,7 @@ private func shortcutDisplayParts(_ shortcut: String) -> [String] {
 private enum SettingsTab: Int, Hashable {
     case agents
     case settings
+    case system
     case shortcuts
     case about
 }
@@ -331,6 +420,11 @@ struct SettingsRootView: View {
                 .environmentObject(navigationGuard)
                 .tabItem { Text("Settings") }
                 .tag(SettingsTab.settings)
+
+            SystemPanelView(appController: appController)
+                .environmentObject(navigationGuard)
+                .tabItem { Text("System") }
+                .tag(SettingsTab.system)
 
             ShortcutPanelView(appController: appController)
                 .environmentObject(navigationGuard)
@@ -759,20 +853,15 @@ private extension AppVisibilityMode {
     }
 }
 
-// SettingsPanelView edits app-wide behavior such as host restriction, login launch, and visibility mode.
+// SettingsPanelView edits the LibreChat instance configuration that affects routing and host validation.
 struct SettingsPanelView: View {
     @ObservedObject var appController: AppController
     @EnvironmentObject private var navigationGuard: SettingsNavigationGuard
     @State private var instanceBaseURL = ""
-    @State private var autostartEnabled = false
     @State private var restrictHost = true
     @State private var useRouteReloadForLauncherChats = false
-    @State private var debugLoggingEnabled = false
-    @State private var launcherOpacity = 95.0
-    @State private var appVisibilityMode = AppVisibilityMode.dockOnly
     @State private var statusMessage = ""
     @State private var statusIsError = false
-    @State private var isShowingResetConfirmation = false
     @State private var isShowingCompatibilityConfirmation = false
     @State private var pendingCleanupPreview: AppController.SettingsChangePreview?
     @State private var liveCompatibilityPreview: AppController.SettingsChangePreview?
@@ -788,28 +877,7 @@ struct SettingsPanelView: View {
             Form {
                 TextField("LibreChat Instance URL", text: $instanceBaseURL)
                 Toggle("Restrict URLs to the configured instance host", isOn: $restrictHost)
-                Toggle("Launch Kotoba Libre at login", isOn: $autostartEnabled)
                 Toggle("Use route reload for launcher chats", isOn: $useRouteReloadForLauncherChats)
-                Toggle("Enable debug logs", isOn: $debugLoggingEnabled)
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("App Visibility")
-                    Picker("App Visibility", selection: $appVisibilityMode) {
-                        ForEach(AppVisibilityMode.allCases, id: \.self) { mode in
-                            Text(mode.settingsLabel)
-                                .tag(mode)
-                        }
-                    }
-                    .labelsHidden()
-                    .pickerStyle(.radioGroup)
-
-                    Text(appVisibilityMode.settingsDescription)
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                }
-                VStack(alignment: .leading) {
-                    Text("Launcher Opacity \(Int(launcherOpacity))%")
-                    Slider(value: $launcherOpacity, in: 50...100, step: 5)
-                }
             }
             .formStyle(.grouped)
 
@@ -831,10 +899,6 @@ struct SettingsPanelView: View {
             HStack {
                 Button("Save Settings") { saveSettings() }
                     .buttonStyle(.borderedProminent)
-
-                Button("Reset Config", role: .destructive) {
-                    isShowingResetConfirmation = true
-                }
             }
 
             if !statusMessage.isEmpty {
@@ -852,15 +916,6 @@ struct SettingsPanelView: View {
         }
         .onChange(of: appController.settings) { _ in
             refreshPreviewState()
-        }
-        .confirmationDialog("Reset configuration?", isPresented: $isShowingResetConfirmation, titleVisibility: .visible) {
-            Button("Reset Configuration", role: .destructive) {
-                resetConfiguration()
-            }
-            Button("Cancel", role: .cancel) {
-            }
-        } message: {
-            Text("This removes the saved LibreChat instance, agents, and shortcut so onboarding appears again.")
         }
         .confirmationDialog("Remove incompatible agents?", isPresented: $isShowingCompatibilityConfirmation, titleVisibility: .visible) {
             Button("Export and Save") {
@@ -884,12 +939,8 @@ struct SettingsPanelView: View {
     private func reload() {
         // The UI edits local @State first so changes can be canceled before saving.
         instanceBaseURL = appController.settings.instanceBaseUrl ?? ""
-        autostartEnabled = appController.settings.autostartEnabled
         restrictHost = appController.settings.restrictHostToInstanceHost
         useRouteReloadForLauncherChats = appController.settings.useRouteReloadForLauncherChats
-        debugLoggingEnabled = appController.settings.debugLoggingEnabled
-        launcherOpacity = (appController.settings.launcherOpacity * 100).rounded()
-        appVisibilityMode = appController.settings.appVisibilityMode
     }
 
     private func saveSettings() {
@@ -913,14 +964,6 @@ struct SettingsPanelView: View {
         statusIsError = isError
     }
 
-    private func resetConfiguration() {
-        do {
-            try appController.resetConfiguration()
-        } catch {
-            setStatus(error.localizedDescription, isError: true)
-        }
-    }
-
     private func discardChanges() {
         reload()
         refreshPreviewState()
@@ -930,37 +973,29 @@ struct SettingsPanelView: View {
         AppSettings(
             instanceBaseUrl: instanceBaseURL,
             globalShortcut: appController.settings.globalShortcut,
-            autostartEnabled: autostartEnabled,
+            autostartEnabled: appController.settings.autostartEnabled,
             restrictHostToInstanceHost: restrictHost,
             defaultPresetId: appController.settings.defaultPresetId,
             useRouteReloadForLauncherChats: useRouteReloadForLauncherChats,
-            debugLoggingEnabled: debugLoggingEnabled,
-            launcherOpacity: launcherOpacity / 100,
-            appVisibilityMode: appVisibilityMode
+            debugLoggingEnabled: appController.settings.debugLoggingEnabled,
+            launcherOpacity: appController.settings.launcherOpacity,
+            appVisibilityMode: appController.settings.appVisibilityMode
         )
     }
 
     private var draftState: SettingsDraftState {
         SettingsDraftState(
             instanceBaseURL: instanceBaseURL,
-            autostartEnabled: autostartEnabled,
             restrictHost: restrictHost,
-            useRouteReloadForLauncherChats: useRouteReloadForLauncherChats,
-            debugLoggingEnabled: debugLoggingEnabled,
-            launcherOpacity: launcherOpacity,
-            appVisibilityMode: appVisibilityMode
+            useRouteReloadForLauncherChats: useRouteReloadForLauncherChats
         )
     }
 
     private var savedState: SettingsDraftState {
         SettingsDraftState(
             instanceBaseURL: appController.settings.instanceBaseUrl ?? "",
-            autostartEnabled: appController.settings.autostartEnabled,
             restrictHost: appController.settings.restrictHostToInstanceHost,
-            useRouteReloadForLauncherChats: appController.settings.useRouteReloadForLauncherChats,
-            debugLoggingEnabled: appController.settings.debugLoggingEnabled,
-            launcherOpacity: (appController.settings.launcherOpacity * 100).rounded(),
-            appVisibilityMode: appController.settings.appVisibilityMode
+            useRouteReloadForLauncherChats: appController.settings.useRouteReloadForLauncherChats
         )
     }
 
@@ -1048,12 +1083,158 @@ struct SettingsPanelView: View {
 // SettingsDraftState holds only the fields that belong to the Settings tab dirty check.
 private struct SettingsDraftState: Equatable {
     let instanceBaseURL: String
-    let autostartEnabled: Bool
     let restrictHost: Bool
     let useRouteReloadForLauncherChats: Bool
-    let debugLoggingEnabled: Bool
-    let launcherOpacity: Double
-    let appVisibilityMode: AppVisibilityMode
+}
+
+// SystemPanelView groups app-level behavior, diagnostics, and microphone permission controls.
+struct SystemPanelView: View {
+    @ObservedObject var appController: AppController
+    @EnvironmentObject private var navigationGuard: SettingsNavigationGuard
+    @State private var autostartEnabled = false
+    @State private var debugLoggingEnabled = false
+    @State private var launcherOpacity = 95.0
+    @State private var appVisibilityMode = AppVisibilityMode.dockOnly
+    @State private var statusMessage = ""
+    @State private var statusIsError = false
+    @State private var isShowingResetConfirmation = false
+    @State private var suppressAutosave = true
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("System")
+                .font(.largeTitle.bold())
+            Text("Control app-wide behavior, diagnostics, and LibreChat hardware permissions.")
+                .foregroundStyle(.secondary)
+
+            Form {
+                Toggle("Launch Kotoba Libre at login", isOn: $autostartEnabled)
+                Toggle("Enable debug logs", isOn: $debugLoggingEnabled)
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("App Visibility")
+                    Picker("App Visibility", selection: $appVisibilityMode) {
+                        ForEach(AppVisibilityMode.allCases, id: \.self) { mode in
+                            Text(mode.settingsLabel)
+                                .tag(mode)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.radioGroup)
+
+                    Text(appVisibilityMode.settingsDescription)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+                VStack(alignment: .leading) {
+                    Text("Launcher Opacity \(Int(launcherOpacity))%")
+                    Slider(value: $launcherOpacity, in: 50...100, step: 5)
+                }
+            }
+            .formStyle(.grouped)
+
+            MicrophonePermissionSection(
+                appController: appController,
+                title: "LibreChat Microphone Access",
+                description: "LibreChat can record from the microphone for voice input. Kotoba Libre only requests this permission so that LibreChat feature can work when you use it."
+            )
+
+            HStack {
+                Button("Reset Config", role: .destructive) {
+                    isShowingResetConfirmation = true
+                }
+            }
+
+            if !statusMessage.isEmpty {
+                Text(statusMessage)
+                    .foregroundStyle(statusIsError ? Color.red : .secondary)
+            }
+
+            Spacer()
+        }
+        .onAppear {
+            navigationGuard.registerDiscardHandler(for: .system, handler: discardChanges)
+            reload()
+        }
+        .onChange(of: autostartEnabled) { _ in
+            autosaveSettings()
+        }
+        .onChange(of: debugLoggingEnabled) { _ in
+            autosaveSettings()
+        }
+        .onChange(of: launcherOpacity) { _ in
+            autosaveSettings()
+        }
+        .onChange(of: appVisibilityMode) { _ in
+            autosaveSettings()
+        }
+        .onChange(of: appController.settings) { _ in
+            reload()
+        }
+        .confirmationDialog("Reset configuration?", isPresented: $isShowingResetConfirmation, titleVisibility: .visible) {
+            Button("Reset Configuration", role: .destructive) {
+                resetConfiguration()
+            }
+            Button("Cancel", role: .cancel) {
+            }
+        } message: {
+            Text("This removes the saved LibreChat instance, agents, and shortcut so onboarding appears again.")
+        }
+    }
+
+    private func reload() {
+        suppressAutosave = true
+        autostartEnabled = appController.settings.autostartEnabled
+        debugLoggingEnabled = appController.settings.debugLoggingEnabled
+        launcherOpacity = (appController.settings.launcherOpacity * 100).rounded()
+        appVisibilityMode = appController.settings.appVisibilityMode
+        navigationGuard.setDirty(false, for: .system)
+        suppressAutosave = false
+    }
+
+    private func autosaveSettings() {
+        guard !suppressAutosave else {
+            return
+        }
+
+        do {
+            _ = try appController.saveSettings(draftSettings)
+            setStatus("", isError: false)
+        } catch {
+            reload()
+            setStatus(error.localizedDescription, isError: true)
+        }
+    }
+
+    private func resetConfiguration() {
+        do {
+            try appController.resetConfiguration()
+        } catch {
+            setStatus(error.localizedDescription, isError: true)
+        }
+    }
+
+    private func discardChanges() {
+        reload()
+    }
+
+    private func setStatus(_ message: String, isError: Bool) {
+        statusMessage = message
+        statusIsError = isError
+    }
+
+    private var draftSettings: AppSettings {
+        AppSettings(
+            instanceBaseUrl: appController.settings.instanceBaseUrl,
+            globalShortcut: appController.settings.globalShortcut,
+            autostartEnabled: autostartEnabled,
+            restrictHostToInstanceHost: appController.settings.restrictHostToInstanceHost,
+            defaultPresetId: appController.settings.defaultPresetId,
+            useRouteReloadForLauncherChats: appController.settings.useRouteReloadForLauncherChats,
+            debugLoggingEnabled: debugLoggingEnabled,
+            launcherOpacity: launcherOpacity / 100,
+            appVisibilityMode: appVisibilityMode
+        )
+    }
 }
 
 // ShortcutPanelView lets the user record and save the global launcher shortcut.

@@ -78,6 +78,8 @@ final class AppController: NSObject, ObservableObject {
     )
     @Published var shortcutDraft: String = AppSettings.defaultShortcut
     @Published var isRecordingShortcut = false
+    @Published private(set) var microphonePermissionState = MicrophonePermissionState.current
+    @Published private(set) var isRequestingMicrophonePermission = false
 
     private let store: AppDataStore
     private let runtimeMode: RuntimeMode
@@ -114,6 +116,7 @@ final class AppController: NSObject, ObservableObject {
         }
 
         shortcutDraft = settings.globalShortcut
+        refreshMicrophonePermissionState()
         setupApplicationMenu()
         applyAppIcon()
         applyAppVisibilityMode(settings.appVisibilityMode)
@@ -162,6 +165,31 @@ final class AppController: NSObject, ObservableObject {
 
     func showLauncherWindow() {
         launcherWindowController.showAndFocus()
+    }
+
+    func refreshMicrophonePermissionState() {
+        microphonePermissionState = .current
+    }
+
+    func requestMicrophonePermission() {
+        refreshMicrophonePermissionState()
+        guard microphonePermissionState == .notDetermined else {
+            return
+        }
+
+        isRequestingMicrophonePermission = true
+        MicrophonePermissionState.requestSystemAccess { [weak self] updatedState in
+            self?.isRequestingMicrophonePermission = false
+            self?.microphonePermissionState = updatedState
+        }
+    }
+
+    func openMicrophonePrivacySettings() {
+        guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone") else {
+            return
+        }
+
+        openExternally(url)
     }
 
     func hideLauncherWindow() {
@@ -542,6 +570,10 @@ final class AppController: NSObject, ObservableObject {
 
     private func openResolvedURL(_ url: URL, preferMainWindow: Bool = false) throws {
         let instanceHost = try KotobaLibreCore.settingsInstanceHost(settings)
+        if launcherWindowController.isVisible {
+            // Launcher submissions should hand focus to the destination instead of reactivating the previous app.
+            launcherWindowController.suppressPreviousApplicationRestore()
+        }
         if shouldOpenExternally(url, instanceHost: instanceHost) {
             openExternally(url)
             hideLauncherWindow()

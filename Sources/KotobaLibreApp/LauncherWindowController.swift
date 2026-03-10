@@ -57,6 +57,7 @@ final class LauncherWindowController: NSWindowController, NSWindowDelegate {
     private let viewModel: LauncherViewModel
     private var eventMonitor: Any?
     private var previouslyFrontmostApplication: NSRunningApplication?
+    private var shouldRestorePreviouslyFrontmostApplication = true
 
     var isVisible: Bool {
         window?.isVisible ?? false
@@ -87,13 +88,17 @@ final class LauncherWindowController: NSWindowController, NSWindowDelegate {
         // Remember the previous app so we can return focus after the launcher closes.
         let frontmostApplication = NSWorkspace.shared.frontmostApplication
         previouslyFrontmostApplication = frontmostApplication == NSRunningApplication.current ? nil : frontmostApplication
+        shouldRestorePreviouslyFrontmostApplication = true
 
         viewModel.refresh()
         positionPanelOnActiveDisplay()
-        NSApp.activate(ignoringOtherApps: true)
         window?.orderFrontRegardless()
         window?.makeKeyAndOrderFront(nil)
         viewModel.focusToken = UUID()
+    }
+
+    func suppressPreviousApplicationRestore() {
+        shouldRestorePreviouslyFrontmostApplication = false
     }
 
     func hide() {
@@ -119,11 +124,19 @@ final class LauncherWindowController: NSWindowController, NSWindowDelegate {
     }
 
     private func restorePreviouslyFrontmostApplicationIfNeeded() {
+        defer {
+            previouslyFrontmostApplication = nil
+            shouldRestorePreviouslyFrontmostApplication = true
+        }
+
+        guard shouldRestorePreviouslyFrontmostApplication else {
+            return
+        }
+
         guard let previousApplication = previouslyFrontmostApplication else {
             return
         }
 
-        previouslyFrontmostApplication = nil
         guard previousApplication != NSRunningApplication.current else {
             return
         }
