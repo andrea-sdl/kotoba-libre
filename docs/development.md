@@ -4,8 +4,8 @@ This project is a macOS-only Swift Package Manager application. There is no fron
 
 ## Requirements
 
-- macOS
-- Xcode / Apple toolchain with Swift 6.2 support
+- macOS 26 or newer
+- Xcode / Apple toolchain with Swift 6.2 support and the macOS 26 SDK
 - A local environment that can build AppKit, SwiftUI, and WebKit targets
 
 ## Primary Commands

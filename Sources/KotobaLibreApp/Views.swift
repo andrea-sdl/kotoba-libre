@@ -32,160 +32,167 @@ struct OnboardingFlowView: View {
     @FocusState private var focusedField: OnboardingField?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 28) {
-            HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 12) {
-                    AppLogoView()
-                    Text("Set up Kotoba Libre once, then launch LibreChat from anywhere.")
-                        .font(.title3)
-                        .foregroundStyle(.secondary)
-                }
+        ZStack {
+            AppGlassBackground()
 
-                Spacer()
-
-                HStack(spacing: 10) {
-                    ForEach(OnboardingStep.allCases, id: \.rawValue) { step in
-                        let symbolName = if currentStep.rawValue > step.rawValue {
-                            "checkmark.circle.fill"
-                        } else if currentStep == step {
-                            "circle.fill"
-                        } else {
-                            "circle"
+            GlassEffectContainer(spacing: 24) {
+                VStack(alignment: .leading, spacing: 24) {
+                    HStack(alignment: .top, spacing: 24) {
+                        VStack(alignment: .leading, spacing: 12) {
+                            AppLogoView()
+                            Text("Set up Kotoba Libre once, then launch LibreChat from anywhere.")
+                                .font(.title3)
+                                .foregroundStyle(.secondary)
                         }
 
-                        HStack(spacing: 8) {
-                            Image(systemName: symbolName)
-                            Text(step.title)
-                        }
-                        .font(.footnote.weight(.semibold))
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                        .background(
-                            Capsule(style: .continuous)
-                                .fill(currentStep == step ? Color.accentColor.opacity(0.16) : Color.secondary.opacity(0.10))
-                        )
-                        .foregroundStyle(currentStep.rawValue >= step.rawValue ? Color.accentColor : .secondary)
-                    }
-                }
-            }
+                        Spacer(minLength: 24)
 
-            Group {
-                switch currentStep {
-                case .instance:
-                    onboardingInstanceStep
-                case .shortcut:
-                    onboardingShortcutStep
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                        GlassEffectContainer(spacing: 10) {
+                            HStack(spacing: 10) {
+                                ForEach(OnboardingStep.allCases, id: \.rawValue) { step in
+                                    let symbolName = if currentStep.rawValue > step.rawValue {
+                                        "checkmark.circle.fill"
+                                    } else if currentStep == step {
+                                        "circle.fill"
+                                    } else {
+                                        "circle"
+                                    }
 
-            if !statusMessage.isEmpty {
-                Text(statusMessage)
-                    .font(.footnote)
-                    .foregroundStyle(statusIsError ? Color.red : .secondary)
-            }
-
-            HStack {
-                if currentStep == .shortcut {
-                    Button("Back") {
-                        withAnimation(.easeInOut(duration: 0.18)) {
-                            currentStep = .instance
+                                    HStack(spacing: 8) {
+                                        Image(systemName: symbolName)
+                                        Text(step.title)
+                                    }
+                                    .font(.footnote.weight(.semibold))
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 8)
+                                    .foregroundStyle(currentStep.rawValue >= step.rawValue ? Color.accentColor : .secondary)
+                                    .glassEffect(
+                                        .regular.tint(currentStep == step ? Color.accentColor.opacity(0.18) : Color.white.opacity(0.08)),
+                                        in: .capsule
+                                    )
+                                }
+                            }
                         }
                     }
-                }
 
-                Spacer()
+                    Group {
+                        switch currentStep {
+                        case .instance:
+                            onboardingInstanceStep
+                        case .shortcut:
+                            onboardingShortcutStep
+                        }
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
 
-                Button(currentStep == .instance ? "Continue" : "Finish Setup") {
-                    submitCurrentStep()
+                    if !statusMessage.isEmpty {
+                        GlassStatusBanner(message: statusMessage, isError: statusIsError)
+                    }
+
+                    GlassEffectContainer(spacing: 12) {
+                        HStack {
+                            if currentStep == .shortcut {
+                                Button("Back") {
+                                    withAnimation(.easeInOut(duration: 0.18)) {
+                                        currentStep = .instance
+                                    }
+                                }
+                                .buttonStyle(.glass)
+                            }
+
+                            Spacer()
+
+                            Button(currentStep == .instance ? "Continue" : "Finish Setup") {
+                                submitCurrentStep()
+                            }
+                            .buttonStyle(.glassProminent)
+                            .disabled(currentStep == .instance && !instanceValidation.valid)
+                        }
+                    }
                 }
-                .buttonStyle(.borderedProminent)
-                .disabled(currentStep == .instance && !instanceValidation.valid)
+                .padding(32)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
         }
-        .padding(32)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(
-            LinearGradient(
-                colors: [Color(nsColor: .windowBackgroundColor), Color.accentColor.opacity(0.12)],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-        )
         .onAppear {
             instanceBaseURL = appController.settings.instanceBaseUrl ?? ""
             focusedField = .instanceBaseURL
         }
-        .onChange(of: currentStep) { nextStep in
-            focusedField = nextStep == .instance ? .instanceBaseURL : nil
+        .onChange(of: currentStep) {
+            focusedField = currentStep == .instance ? .instanceBaseURL : nil
         }
     }
 
     private var onboardingInstanceStep: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            Text("Where is your LibreChat instance running?")
-                .font(.system(size: 28, weight: .bold, design: .rounded))
-            Text("Enter the base URL for the hosted or self-hosted LibreChat instance you want Kotoba Libre to open.")
-                .foregroundStyle(.secondary)
+        GlassPanel {
+            VStack(alignment: .leading, spacing: 18) {
+                Text("Where is your LibreChat instance running?")
+                    .font(.system(size: 28, weight: .bold, design: .rounded))
+                Text("Enter the base URL for the hosted or self-hosted LibreChat instance you want Kotoba Libre to open.")
+                    .foregroundStyle(.secondary)
 
-            VStack(alignment: .leading, spacing: 10) {
-                TextField("https://chat.example.com", text: $instanceBaseURL)
-                    .textFieldStyle(.roundedBorder)
-                    .disableAutocorrection(true)
-                    .focused($focusedField, equals: OnboardingField.instanceBaseURL)
-                    .onSubmit {
-                        if instanceValidation.valid {
-                            submitCurrentStep()
+                GlassField("LibreChat Base URL") {
+                    TextField("https://chat.example.com", text: $instanceBaseURL)
+                        .disableAutocorrection(true)
+                        .focused($focusedField, equals: OnboardingField.instanceBaseURL)
+                        .onSubmit {
+                            if instanceValidation.valid {
+                                submitCurrentStep()
+                            }
                         }
-                    }
+                        .glassTextInput()
+                }
 
-                Text(instanceValidation.valid ? "Looks good. We’ll keep navigation pinned to this host by default." : (instanceValidation.reason ?? "Enter a valid HTTPS URL."))
-                    .font(.footnote)
-                    .foregroundStyle(instanceValidation.valid ? .secondary : Color.red)
+                GlassStatusBanner(
+                    message: instanceValidation.valid ? "Looks good. We’ll keep navigation pinned to this host by default." : (instanceValidation.reason ?? "Enter a valid HTTPS URL."),
+                    isError: !instanceValidation.valid
+                )
             }
-
-            Spacer()
         }
     }
 
     private var onboardingShortcutStep: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            Text("Choose the shortcut that opens the launcher.")
-                .font(.system(size: 28, weight: .bold, design: .rounded))
-            Text("Record a new shortcut now, or keep the default if it already works for you. You can change it later from Settings.")
-                .foregroundStyle(.secondary)
+        GlassEffectContainer(spacing: 18) {
+            VStack(alignment: .leading, spacing: 18) {
+                GlassPanel {
+                    VStack(alignment: .leading, spacing: 16) {
+                        Text("Choose the shortcut that opens the launcher.")
+                            .font(.system(size: 28, weight: .bold, design: .rounded))
+                        Text("Record a new shortcut now, or keep the default if it already works for you. You can change it later from Settings.")
+                            .foregroundStyle(.secondary)
 
-            VStack(alignment: .leading, spacing: 14) {
-                Text("Current Shortcut")
-                    .font(.headline)
+                        VStack(alignment: .leading, spacing: 14) {
+                            Text("Current Shortcut")
+                                .font(.headline)
 
-                ShortcutPreviewView(shortcut: appController.shortcutDraft)
+                            ShortcutPreviewView(shortcut: appController.shortcutDraft)
 
-                HStack {
-                    Button(appController.isRecordingShortcut ? "Stop Recording" : "Record Shortcut") {
+                            HStack {
+                                Button(appController.isRecordingShortcut ? "Stop Recording" : "Record Shortcut") {
+                                    if appController.isRecordingShortcut {
+                                        appController.stopShortcutRecording()
+                                        setStatus("Shortcut capture canceled.", isError: false)
+                                    } else {
+                                        appController.beginShortcutRecording()
+                                        setStatus("Press the shortcut you want to use. Press Esc to cancel.", isError: false)
+                                    }
+                                }
+                                .buttonStyle(.glassProminent)
+
+                                Button("Use Default") {
+                                    appController.resetShortcutDraft()
+                                    setStatus("Shortcut reset to \(AppSettings.defaultShortcut).", isError: false)
+                                }
+                                .buttonStyle(.glass)
+                            }
+                        }
+
                         if appController.isRecordingShortcut {
-                            appController.stopShortcutRecording()
-                            setStatus("Shortcut capture canceled.", isError: false)
-                        } else {
-                            appController.beginShortcutRecording()
-                            setStatus("Press the shortcut you want to use. Press Esc to cancel.", isError: false)
+                            GlassStatusBanner(message: "Listening for a shortcut...", isError: false)
+                        } else if let registrationIssue = appController.shortcutRegistrationIssue {
+                            GlassStatusBanner(message: registrationIssue, isError: true)
                         }
                     }
-
-                    Button("Use Default") {
-                        appController.resetShortcutDraft()
-                        setStatus("Shortcut reset to \(AppSettings.defaultShortcut).", isError: false)
-                    }
-                }
-
-                if appController.isRecordingShortcut {
-                    Text("Listening for a shortcut...")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                } else if let registrationIssue = appController.shortcutRegistrationIssue {
-                    Text(registrationIssue)
-                        .font(.footnote)
-                        .foregroundStyle(Color.red)
                 }
 
                 MicrophonePermissionSection(
@@ -194,8 +201,6 @@ struct OnboardingFlowView: View {
                     description: "LibreChat can use your microphone for voice input. Kotoba Libre only requests microphone access so that LibreChat feature can work inside the app."
                 )
             }
-
-            Spacer()
         }
     }
 
@@ -257,7 +262,7 @@ private struct ShortcutPreviewView: View {
                     .font(.system(.body, design: .rounded).weight(.semibold))
                     .padding(.horizontal, 10)
                     .padding(.vertical, 6)
-                    .background(Capsule().fill(Color.secondary.opacity(0.14)))
+                    .glassEffect(.regular, in: .capsule)
             }
         }
     }
@@ -370,6 +375,127 @@ private func shortcutDisplayParts(_ shortcut: String) -> [String] {
     }
 }
 
+// AppGlassBackground adds a soft ambient backdrop so the glass surfaces have depth to refract.
+struct AppGlassBackground: View {
+    var body: some View {
+        ZStack {
+            LinearGradient(
+                colors: [
+                    Color(nsColor: .windowBackgroundColor),
+                    Color(nsColor: .underPageBackgroundColor),
+                    Color.accentColor.opacity(0.16)
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+
+            Circle()
+                .fill(Color.accentColor.opacity(0.24))
+                .frame(width: 320, height: 320)
+                .blur(radius: 100)
+                .offset(x: -220, y: -170)
+
+            Circle()
+                .fill(Color.white.opacity(0.18))
+                .frame(width: 260, height: 260)
+                .blur(radius: 90)
+                .offset(x: 250, y: -120)
+
+            Ellipse()
+                .fill(Color.accentColor.opacity(0.12))
+                .frame(width: 440, height: 240)
+                .blur(radius: 120)
+                .offset(x: 120, y: 220)
+        }
+        .ignoresSafeArea()
+    }
+}
+
+// GlassPanel keeps repeated page sections visually consistent across onboarding, settings, and sheets.
+struct GlassPanel<Content: View>: View {
+    let cornerRadius: CGFloat
+    let padding: CGFloat
+    @ViewBuilder let content: Content
+
+    init(cornerRadius: CGFloat = 24, padding: CGFloat = 20, @ViewBuilder content: () -> Content) {
+        self.cornerRadius = cornerRadius
+        self.padding = padding
+        self.content = content()
+    }
+
+    var body: some View {
+        content
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(padding)
+            .glassEffect(.regular, in: .rect(cornerRadius: cornerRadius))
+    }
+}
+
+// GlassStatusBanner surfaces validation and save feedback inside a compact glass capsule.
+struct GlassStatusBanner: View {
+    let message: String
+    let isError: Bool
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: isError ? "exclamationmark.triangle.fill" : "info.circle.fill")
+                .foregroundStyle(isError ? Color.red : Color.accentColor)
+
+            Text(message)
+                .foregroundStyle(isError ? Color.red : .secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .font(.footnote)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .glassEffect(
+            .regular.tint(isError ? Color.red.opacity(0.12) : Color.accentColor.opacity(0.10)),
+            in: .capsule
+        )
+        .accessibilityElement(children: .combine)
+    }
+}
+
+// GlassField groups a label with a single control so forms can stay readable without default grouped chrome.
+struct GlassField<Content: View>: View {
+    let title: String
+    @ViewBuilder let content: Content
+
+    init(_ title: String, @ViewBuilder content: () -> Content) {
+        self.title = title
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.secondary)
+
+            content
+        }
+    }
+}
+
+// GlassTextInputModifier gives text fields a consistent glass treatment while keeping native editing behavior.
+struct GlassTextInputModifier: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .textFieldStyle(.plain)
+            .font(.system(size: 15, weight: .medium, design: .rounded))
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .glassEffect(.regular, in: .rect(cornerRadius: 16))
+    }
+}
+
+extension View {
+    func glassTextInput() -> some View {
+        modifier(GlassTextInputModifier())
+    }
+}
+
 private enum SettingsTab: Int, Hashable {
     case agents
     case settings
@@ -444,7 +570,8 @@ struct SettingsRootView: View {
         }
         .padding(20)
         .frame(minWidth: 980, minHeight: 560, alignment: .topLeading)
-        .onChange(of: selectedTab) { nextTab in
+        .onChange(of: selectedTab) {
+            let nextTab = selectedTab
             guard !isIgnoringNextSelectionChange else {
                 isIgnoringNextSelectionChange = false
                 return
@@ -499,10 +626,10 @@ struct AgentEditorFields: View {
             }
         }
         TextField(destinationFieldTitle, text: $draft.urlTemplate)
-            .onChange(of: draft.urlTemplate) { nextValue in
-                normalizeAgentValueIfNeeded(nextValue)
+            .onChange(of: draft.urlTemplate) {
+                normalizeAgentValueIfNeeded(draft.urlTemplate)
             }
-            .onChange(of: draft.kind) { _ in
+            .onChange(of: draft.kind) {
                 normalizeAgentValueIfNeeded(draft.urlTemplate)
             }
 
@@ -596,6 +723,7 @@ struct AgentManagerView: View {
                 Button("Export JSON") { exportPresets() }
                 Button("Import JSON") { importPresets() }
                 Button("+ Add Agent") { resetDraft() }
+                    .buttonStyle(.borderedProminent)
             }
 
             HSplitView {
@@ -615,7 +743,8 @@ struct AgentManagerView: View {
                         EmptyAgentStateView()
                     }
                 }
-                .onChange(of: selectedPresetID) { newValue in
+                .onChange(of: selectedPresetID) {
+                    let newValue = selectedPresetID
                     // Selecting a row replaces the editable draft with the saved preset.
                     guard let newValue, let preset = appController.presets.first(where: { $0.id == newValue }) else {
                         return
@@ -656,13 +785,13 @@ struct AgentManagerView: View {
             didLoadInitialDraft = true
             resetDraft()
         }
-        .onChange(of: selectedPresetID) { _ in
+        .onChange(of: selectedPresetID) {
             updateDirtyState()
         }
-        .onChange(of: draftSnapshot) { _ in
+        .onChange(of: draftSnapshot) {
             updateDirtyState()
         }
-        .onChange(of: appController.settings.instanceBaseUrl) { _ in
+        .onChange(of: appController.settings.instanceBaseUrl) {
             updateDirtyState()
         }
     }
@@ -918,10 +1047,10 @@ struct SettingsPanelView: View {
             reload()
             refreshPreviewState()
         }
-        .onChange(of: draftState) { _ in
+        .onChange(of: draftState) {
             refreshPreviewState()
         }
-        .onChange(of: appController.settings) { _ in
+        .onChange(of: appController.settings) {
             refreshPreviewState()
         }
         .confirmationDialog("Remove incompatible agents?", isPresented: $isShowingCompatibilityConfirmation, titleVisibility: .visible) {
@@ -1132,7 +1261,7 @@ struct SystemPanelView: View {
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
-                VStack(alignment: .leading) {
+                VStack(alignment: .leading, spacing: 8) {
                     Text("Launcher Opacity \(Int(launcherOpacity))%")
                     Slider(value: $launcherOpacity, in: 50...100, step: 5)
                 }
@@ -1159,19 +1288,19 @@ struct SystemPanelView: View {
             navigationGuard.registerDiscardHandler(for: .system, handler: discardChanges)
             reload()
         }
-        .onChange(of: autostartEnabled) { _ in
+        .onChange(of: autostartEnabled) {
             autosaveSettings()
         }
-        .onChange(of: debugLoggingEnabled) { _ in
+        .onChange(of: debugLoggingEnabled) {
             autosaveSettings()
         }
-        .onChange(of: launcherOpacity) { _ in
+        .onChange(of: launcherOpacity) {
             autosaveSettings()
         }
-        .onChange(of: appVisibilityMode) { _ in
+        .onChange(of: appVisibilityMode) {
             autosaveSettings()
         }
-        .onChange(of: appController.settings) { _ in
+        .onChange(of: appController.settings) {
             reload()
         }
         .confirmationDialog("Reset configuration?", isPresented: $isShowingResetConfirmation, titleVisibility: .visible) {
@@ -1305,13 +1434,13 @@ struct ShortcutPanelView: View {
             navigationGuard.registerDiscardHandler(for: .shortcuts, handler: discardChanges)
             updateDirtyState()
         }
-        .onChange(of: appController.shortcutDraft) { _ in
+        .onChange(of: appController.shortcutDraft) {
             updateDirtyState()
         }
-        .onChange(of: appController.isRecordingShortcut) { _ in
+        .onChange(of: appController.isRecordingShortcut) {
             updateDirtyState()
         }
-        .onChange(of: appController.settings) { _ in
+        .onChange(of: appController.settings) {
             updateDirtyState()
         }
     }
@@ -1363,9 +1492,10 @@ struct LauncherRootView: View {
 
     var body: some View {
         let presets = viewModel.presets
+        let selectedPreset = presets.first { $0.id == viewModel.selectedPresetID }
 
-        VStack(spacing: 10) {
-            HStack(spacing: 14) {
+        VStack(spacing: 8) {
+            HStack(spacing: 12) {
                 Image(systemName: "magnifyingglass")
                     .font(.system(size: 18, weight: .medium))
                     .foregroundStyle(.secondary)
@@ -1377,53 +1507,117 @@ struct LauncherRootView: View {
                 )
                 .frame(maxWidth: .infinity, minHeight: 44)
 
-                Group {
-                    if presets.isEmpty {
-                        Text("No agents")
-                            .foregroundStyle(.secondary)
-                            .frame(width: 220, alignment: .trailing)
-                    } else {
-                        Picker("Agent", selection: $viewModel.selectedPresetID) {
-                            ForEach(presets) { preset in
-                                Text(preset.name).tag(Optional(preset.id))
-                            }
-                        }
-                        .labelsHidden()
-                        .pickerStyle(.menu)
-                        .font(.system(size: 15, weight: .medium, design: .rounded))
-                        .frame(width: 220, alignment: .trailing)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 8)
-                        .background(
-                            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                .fill(Color.white.opacity(0.58))
-                        )
+                if presets.isEmpty {
+                    Text("No agents")
+                        .foregroundStyle(.secondary)
+                        .frame(width: 236, alignment: .trailing)
+                } else {
+                    LauncherAgentMenu(
+                        presets: presets,
+                        selectedPresetID: viewModel.selectedPresetID,
+                        selectedPresetName: selectedPreset?.name ?? "Choose agent",
+                        defaultPresetID: viewModel.defaultPresetID
+                    ) { presetID in
+                        viewModel.selectedPresetID = presetID
                     }
                 }
             }
+            .accessibilityElement(children: .contain)
             .padding(.horizontal, 18)
-            .padding(.vertical, 16)
-            .frame(maxWidth: .infinity, minHeight: 78)
-            .background(
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .fill(Color(nsColor: .windowBackgroundColor).opacity(viewModel.opacity))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 18, style: .continuous)
-                            .stroke(Color.white.opacity(0.6), lineWidth: 1)
-                    )
-                    .shadow(color: .black.opacity(0.16), radius: 18, x: 0, y: 10)
-            )
+            .padding(.vertical, 10)
+            .frame(maxWidth: .infinity, minHeight: 64)
+            .glassEffect(.regular.tint(Color.white.opacity(max(0.08, viewModel.opacity * 0.08))), in: .rect(cornerRadius: 18))
+            .shadow(color: .black.opacity(0.16), radius: 18, x: 0, y: 10)
 
             if !viewModel.statusMessage.isEmpty {
-                Text(viewModel.statusMessage)
-                    .foregroundStyle(viewModel.isError ? Color.red : .secondary)
-                    .font(.footnote)
+                GlassStatusBanner(message: viewModel.statusMessage, isError: viewModel.isError)
             }
         }
         .padding(.horizontal, 14)
-        .padding(.vertical, 12)
+        .padding(.vertical, 8)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(Color.clear)
+    }
+}
+
+// LauncherAgentMenu presents the current agent as a compact control with a clearer visual hierarchy.
+private struct LauncherAgentMenu: View {
+    let presets: [Preset]
+    let selectedPresetID: String?
+    let selectedPresetName: String
+    let defaultPresetID: String?
+    let onSelect: (String) -> Void
+
+    var body: some View {
+        Menu {
+            ForEach(presets) { preset in
+                Button {
+                    onSelect(preset.id)
+                } label: {
+                    LauncherAgentMenuRow(
+                        presetName: preset.name,
+                        isSelected: preset.id == selectedPresetID,
+                        isDefault: preset.id == defaultPresetID
+                    )
+                }
+            }
+        } label: {
+            HStack(spacing: 10) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(defaultPresetID == selectedPresetID ? "Default agent" : "Selected agent")
+                        .font(.system(size: 11, weight: .semibold, design: .rounded))
+                        .foregroundStyle(.secondary)
+
+                    Text(selectedPresetName)
+                        .font(.system(size: 14, weight: .semibold, design: .rounded))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                }
+
+                Spacer(minLength: 10)
+
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Color.accentColor.opacity(0.88))
+            }
+            .frame(width: 236, alignment: .leading)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .glassEffect(.regular.interactive().tint(Color.accentColor.opacity(0.08)), in: .rect(cornerRadius: 14))
+            .shadow(color: .black.opacity(0.08), radius: 10, x: 0, y: 4)
+            .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .accessibilityLabel("Agent")
+        .accessibilityValue(selectedPresetName)
+        .accessibilityHint("Choose which agent the launcher uses.")
+    }
+}
+
+// LauncherAgentMenuRow keeps the menu entries consistent and highlights selection state.
+private struct LauncherAgentMenuRow: View {
+    let presetName: String
+    let isSelected: Bool
+    let isDefault: Bool
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: isSelected ? "checkmark.circle.fill" : (isDefault ? "star.circle.fill" : "circle"))
+                .foregroundStyle(isSelected ? Color.accentColor : .secondary)
+
+            Text(presetName)
+                .lineLimit(1)
+
+            if isDefault {
+                Spacer(minLength: 8)
+
+                Text("Default")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -1513,8 +1707,9 @@ struct AppLogoView: View {
             if let image = Self.iconImage {
                 Image(nsImage: image)
                     .resizable()
+                    .padding(6)
                     .frame(width: 56, height: 56)
-                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .glassEffect(.regular, in: .rect(cornerRadius: 18))
             }
             Text(appDisplayName)
                 .font(.system(size: 34, weight: .bold, design: .rounded))

@@ -44,6 +44,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         )
         window.title = appDisplayName
         window.minSize = minimumMainWindowSize
+        window.titlebarAppearsTransparent = true
         window.toolbarStyle = .unifiedCompact
         super.init(window: window)
         self.appController = appController

@@ -7,7 +7,7 @@ import KotobaLibreCore
 private enum LauncherPanelMetrics {
     static let preferredWidth: CGFloat = 860
     static let minimumWidth: CGFloat = 560
-    static let preferredHeight: CGFloat = 138
+    static let preferredHeight: CGFloat = 112
     static let horizontalInset: CGFloat = 32
     static let topInset: CGFloat = 88
     static let bottomInset: CGFloat = 24
@@ -92,6 +92,7 @@ final class LauncherWindowController: NSWindowController, NSWindowDelegate {
 
         viewModel.refresh()
         positionPanelOnActiveDisplay()
+        NSApp.activate(ignoringOtherApps: true)
         window?.orderFrontRegardless()
         window?.makeKeyAndOrderFront(nil)
         viewModel.focusToken = UUID()
@@ -143,7 +144,7 @@ final class LauncherWindowController: NSWindowController, NSWindowDelegate {
 
         DispatchQueue.main.async {
             // Activation is deferred so AppKit finishes hiding the launcher first.
-            previousApplication.activate(options: [.activateIgnoringOtherApps])
+            _ = previousApplication.activate()
         }
     }
 
@@ -241,6 +242,10 @@ final class LauncherViewModel: ObservableObject {
 
     var opacity: Double {
         appController?.settings.launcherOpacity ?? 0.95
+    }
+
+    var defaultPresetID: String? {
+        appController?.settings.defaultPresetId
     }
 
     func refresh() {
