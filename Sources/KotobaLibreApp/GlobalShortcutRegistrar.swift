@@ -29,7 +29,7 @@ final class GlobalShortcutRegistrar {
     }
 
     private var hotKeyRef: EventHotKeyRef?
-    private var eventHandler: EventHandlerRef?
+    private var carbonHotKeyIdentity: CarbonHotKeyIdentity?
     private var eventTap: CFMachPort?
     private var eventTapSource: CFRunLoopSource?
     private var activeDescriptor: ShortcutDescriptor?
@@ -37,6 +37,17 @@ final class GlobalShortcutRegistrar {
     private var registrationBackend: RegistrationBackend?
     private var lastTriggerTime: CFAbsoluteTime = 0
     private var lastCarbonStatus: OSStatus?
+    private lazy var hotKeySignature: OSType = {
+        OSType(UInt32(truncatingIfNeeded: Int(bitPattern: Unmanaged.passUnretained(self).toOpaque())))
+    }()
+
+    private struct CarbonHotKeyIdentity: Hashable {
+        let signature: OSType
+        let id: UInt32
+    }
+
+    nonisolated(unsafe) private static var carbonEventHandler: EventHandlerRef?
+    nonisolated(unsafe) private static var carbonDispatch: [CarbonHotKeyIdentity: () -> Void] = [:]
 
     // RuntimeStatus lets the settings UI explain why a shortcut did or did not register.
     struct RuntimeStatus {
@@ -101,6 +112,11 @@ final class GlobalShortcutRegistrar {
             self.hotKeyRef = nil
         }
 
+        if let carbonHotKeyIdentity {
+            Self.carbonDispatch.removeValue(forKey: carbonHotKeyIdentity)
+            self.carbonHotKeyIdentity = nil
+        }
+
         if let eventTapSource {
             CFRunLoopRemoveSource(CFRunLoopGetMain(), eventTapSource, .commonModes)
             self.eventTapSource = nil
@@ -162,7 +178,7 @@ final class GlobalShortcutRegistrar {
         try installCarbonHandlerIfNeeded()
 
         // Carbon needs a stable integer id so the callback can map back to this registration.
-        let hotKeyID = EventHotKeyID(signature: OSType(0x544C4853), id: descriptor.id)
+        let hotKeyID = EventHotKeyID(signature: hotKeySignature, id: descriptor.id)
         let status = RegisterEventHotKey(
             UInt32(descriptor.keyCode),
             descriptor.carbonModifiers,
@@ -177,10 +193,16 @@ final class GlobalShortcutRegistrar {
         guard status == noErr else {
             throw ShortcutRegistrationError.registrationFailed(descriptor.normalizedShortcut)
         }
+
+        let identity = CarbonHotKeyIdentity(signature: hotKeyID.signature, id: hotKeyID.id)
+        carbonHotKeyIdentity = identity
+        Self.carbonDispatch[identity] = { [weak self] in
+            self?.triggerShortcutIfNeeded()
+        }
     }
 
     private func installCarbonHandlerIfNeeded() throws {
-        guard eventHandler == nil else {
+        guard Self.carbonEventHandler == nil else {
             return
         }
 
@@ -189,14 +211,13 @@ final class GlobalShortcutRegistrar {
             eventKind: UInt32(kEventHotKeyPressed)
         )
 
-        // Carbon callbacks are C functions. Unmanaged is the bridge that carries Swift self through userData.
-        let callback: EventHandlerUPP = { _, _, userData in
-            guard let userData else {
+        // Carbon callbacks are C functions, so routing is kept in a class-level dispatch table.
+        let callback: EventHandlerUPP = { _, event, _ in
+            guard let event else {
                 return noErr
             }
 
-            let registrar = Unmanaged<GlobalShortcutRegistrar>.fromOpaque(userData).takeUnretainedValue()
-            registrar.triggerShortcutIfNeeded()
+            GlobalShortcutRegistrar.dispatchCarbonHotKeyEvent(event)
             return noErr
         }
 
@@ -205,8 +226,8 @@ final class GlobalShortcutRegistrar {
             callback,
             1,
             &eventType,
-            Unmanaged.passUnretained(self).toOpaque(),
-            &eventHandler
+            nil,
+            &Self.carbonEventHandler
         )
 
         lastCarbonStatus = status
@@ -343,6 +364,26 @@ final class GlobalShortcutRegistrar {
 
     private var activeShortcut: String {
         activeDescriptor?.normalizedShortcut ?? "unknown"
+    }
+
+    private static func dispatchCarbonHotKeyEvent(_ event: EventRef) {
+        var hotKeyID = EventHotKeyID()
+        let status = GetEventParameter(
+            event,
+            EventParamName(kEventParamDirectObject),
+            EventParamType(typeEventHotKeyID),
+            nil,
+            MemoryLayout<EventHotKeyID>.size,
+            nil,
+            &hotKeyID
+        )
+
+        guard status == noErr else {
+            return
+        }
+
+        let identity = CarbonHotKeyIdentity(signature: hotKeyID.signature, id: hotKeyID.id)
+        carbonDispatch[identity]?()
     }
 
     private func triggerShortcutIfNeeded() {

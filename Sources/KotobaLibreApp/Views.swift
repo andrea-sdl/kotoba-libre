@@ -1741,12 +1741,10 @@ struct LauncherRootView: View {
                 }
             }
             .background(
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .fill(Color(nsColor: .windowBackgroundColor).opacity(viewModel.opacity))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 18, style: .continuous)
-                            .stroke(Color.black.opacity(0.12), lineWidth: 1)
-                    )
+                LauncherPanelSurface(
+                    opacity: viewModel.opacity,
+                    presentationMode: viewModel.presentationMode
+                )
             )
             .shadow(color: .black.opacity(0.16), radius: 18, x: 0, y: 10)
 
@@ -1787,6 +1785,216 @@ struct LauncherRootView: View {
             return "Transcribing your last words and preparing the prompt."
         }
     }
+}
+
+// LauncherPanelSurface keeps the launcher glass readable while letting a soft halo drift around it.
+private struct LauncherPanelSurface: View {
+    let opacity: Double
+    let presentationMode: LauncherPresentation
+
+    var body: some View {
+        ZStack {
+            LauncherAmbientGlow(presentationMode: presentationMode)
+                .padding(-52)
+                .blendMode(.screen)
+                .opacity(presentationMode == .voice ? 0.92 : 0.80)
+
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(Color(nsColor: .windowBackgroundColor).opacity(opacity))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .stroke(Color.black.opacity(0.12), lineWidth: 1)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .stroke(Color.white.opacity(presentationMode == .voice ? 0.16 : 0.10), lineWidth: 1)
+                        .blur(radius: 1.6)
+                )
+                .overlay(
+                    LauncherAmbientGlow(presentationMode: presentationMode)
+                        .padding(-10)
+                        .blendMode(.screen)
+                        .opacity(presentationMode == .voice ? 0.78 : 0.62)
+                        .mask {
+                            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                .stroke(lineWidth: presentationMode == .voice ? 14 : 11)
+                                .blur(radius: 6)
+                        }
+                )
+        }
+    }
+}
+
+// LauncherAmbientGlow paints several blurred color tides and masks them into a subtle animated halo.
+private struct LauncherAmbientGlow: View {
+    let presentationMode: LauncherPresentation
+
+    var body: some View {
+        TimelineView(.animation) { context in
+            GeometryReader { proxy in
+                let timestamp = context.date.timeIntervalSinceReferenceDate
+                let size = proxy.size
+
+                ZStack {
+                    ForEach(glowBlobs.indices, id: \.self) { index in
+                        let blob = glowBlobs[index]
+                        Ellipse()
+                            .fill(
+                                RadialGradient(
+                                    colors: [
+                                        blob.color.opacity(blob.opacity * glowStrength),
+                                        blob.color.opacity(blob.opacity * glowStrength * 0.42),
+                                        .clear
+                                    ],
+                                    center: .center,
+                                    startRadius: 0,
+                                    endRadius: max(size.width * blob.widthFactor, size.height * blob.heightFactor) * 0.5
+                                )
+                            )
+                            .frame(
+                                width: size.width * blob.widthFactor,
+                                height: size.height * blob.heightFactor
+                            )
+                            .rotationEffect(rotation(for: blob, at: timestamp))
+                            .offset(
+                                x: horizontalOffset(for: blob, at: timestamp, size: size),
+                                y: verticalOffset(for: blob, at: timestamp, size: size)
+                            )
+                            .blur(radius: blob.blur)
+                    }
+                }
+                .frame(width: size.width, height: size.height)
+                .mask {
+                    RoundedRectangle(cornerRadius: 34, style: .continuous)
+                        .stroke(lineWidth: presentationMode == .voice ? 72 : 62)
+                        .blur(radius: 22)
+                        .padding(-20)
+                }
+                .opacity(presentationMode == .voice ? 1.0 : 0.92)
+                .saturation(1.14)
+                .allowsHitTesting(false)
+            }
+        }
+        .accessibilityHidden(true)
+    }
+
+    private var glowStrength: Double {
+        presentationMode == .voice ? 1.16 : 1.0
+    }
+
+    private var glowBlobs: [LauncherGlowBlob] {
+        [
+            LauncherGlowBlob(
+                color: Color(red: 0.50, green: 0.84, blue: 1.00),
+                widthFactor: 0.78,
+                heightFactor: 1.24,
+                baseX: -0.32,
+                baseY: -0.10,
+                travelX: 0.05,
+                travelY: 0.08,
+                baseRotation: -22,
+                rotationTravel: 7,
+                speed: 0.44,
+                phase: 0.3,
+                blur: 42,
+                opacity: 0.84
+            ),
+            LauncherGlowBlob(
+                color: Color(red: 1.00, green: 0.78, blue: 0.67),
+                widthFactor: 0.70,
+                heightFactor: 1.08,
+                baseX: 0.34,
+                baseY: -0.18,
+                travelX: 0.06,
+                travelY: 0.07,
+                baseRotation: 18,
+                rotationTravel: 8,
+                speed: 0.38,
+                phase: 1.4,
+                blur: 40,
+                opacity: 0.76
+            ),
+            LauncherGlowBlob(
+                color: Color(red: 0.69, green: 0.94, blue: 0.82),
+                widthFactor: 0.92,
+                heightFactor: 0.92,
+                baseX: 0.08,
+                baseY: 0.34,
+                travelX: 0.08,
+                travelY: 0.05,
+                baseRotation: -4,
+                rotationTravel: 6,
+                speed: 0.30,
+                phase: 2.2,
+                blur: 44,
+                opacity: 0.70
+            ),
+            LauncherGlowBlob(
+                color: Color(red: 0.90, green: 0.66, blue: 0.94),
+                widthFactor: 0.82,
+                heightFactor: 1.00,
+                baseX: -0.14,
+                baseY: 0.26,
+                travelX: 0.07,
+                travelY: 0.06,
+                baseRotation: 24,
+                rotationTravel: 9,
+                speed: 0.34,
+                phase: 3.1,
+                blur: 42,
+                opacity: 0.66
+            ),
+            LauncherGlowBlob(
+                color: Color(red: 0.76, green: 0.78, blue: 1.00),
+                widthFactor: 0.66,
+                heightFactor: 1.16,
+                baseX: 0.36,
+                baseY: 0.14,
+                travelX: 0.05,
+                travelY: 0.09,
+                baseRotation: -30,
+                rotationTravel: 7,
+                speed: 0.42,
+                phase: 4.0,
+                blur: 38,
+                opacity: 0.64
+            )
+        ]
+    }
+
+    private func horizontalOffset(for blob: LauncherGlowBlob, at timestamp: TimeInterval, size: CGSize) -> CGFloat {
+        let primaryWave = sin((timestamp * blob.speed) + blob.phase)
+        let secondaryWave = sin((timestamp * blob.speed * 0.62) + (blob.phase * 1.4))
+        return (size.width * blob.baseX) + (size.width * blob.travelX * CGFloat((primaryWave + (secondaryWave * 0.55)) / 1.55))
+    }
+
+    private func verticalOffset(for blob: LauncherGlowBlob, at timestamp: TimeInterval, size: CGSize) -> CGFloat {
+        let rollingWave = cos((timestamp * blob.speed * 0.84) + blob.phase)
+        let reboundWave = sin((timestamp * blob.speed * 1.18) + (blob.phase * 0.72))
+        return (size.height * blob.baseY) + (size.height * blob.travelY * CGFloat((rollingWave + (reboundWave * 0.45)) / 1.45))
+    }
+
+    private func rotation(for blob: LauncherGlowBlob, at timestamp: TimeInterval) -> Angle {
+        let drift = sin((timestamp * blob.speed * 0.58) + blob.phase)
+        return .degrees(blob.baseRotation + (drift * blob.rotationTravel))
+    }
+}
+
+// LauncherGlowBlob keeps each glow lobe configurable without turning the animation code into magic numbers.
+private struct LauncherGlowBlob {
+    let color: Color
+    let widthFactor: CGFloat
+    let heightFactor: CGFloat
+    let baseX: CGFloat
+    let baseY: CGFloat
+    let travelX: CGFloat
+    let travelY: CGFloat
+    let baseRotation: Double
+    let rotationTravel: Double
+    let speed: Double
+    let phase: Double
+    let blur: CGFloat
+    let opacity: Double
 }
 
 // VoiceLauncherIndicator gives voice mode a distinct animated listening surface without showing raw text.
