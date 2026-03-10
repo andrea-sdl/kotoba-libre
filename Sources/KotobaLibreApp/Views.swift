@@ -664,7 +664,7 @@ struct SettingsRootView: View {
                 .tag(SettingsTab.about)
         }
         .padding(20)
-        .frame(minWidth: 980, minHeight: 560, alignment: .topLeading)
+        .frame(minWidth: 980, minHeight: 640, alignment: .topLeading)
         .onChange(of: selectedTab) {
             let nextTab = selectedTab
             guard !isIgnoringNextSelectionChange else {
@@ -1350,13 +1350,18 @@ struct SystemPanelView: View {
                 Toggle("Enable debug logs", isOn: $debugLoggingEnabled)
                 VStack(alignment: .leading, spacing: 8) {
                     Text("App Visibility")
-                    Picker("App Visibility", selection: $appVisibilityMode) {
-                        ForEach(AppVisibilityMode.allCases, id: \.self) { mode in
-                            Text(mode.settingsLabel)
-                                .tag(mode)
+                    HStack(alignment: .center, spacing: 16) {
+                        Spacer()
+
+                        Picker("App Visibility", selection: $appVisibilityMode) {
+                            ForEach(AppVisibilityMode.allCases, id: \.self) { mode in
+                                Text(mode.settingsLabel)
+                                    .tag(mode)
+                            }
                         }
+                        .labelsHidden()
+                        .pickerStyle(.menu)
                     }
-                    .pickerStyle(.menu)
 
                     Text(appVisibilityMode.settingsDescription)
                         .font(.footnote)
