@@ -268,6 +268,7 @@ private struct MicrophonePermissionSection: View {
     @ObservedObject var appController: AppController
     let title: String
     let description: String
+    var showsCardBackground: Bool = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -305,11 +306,9 @@ private struct MicrophonePermissionSection: View {
             }
             .frame(maxWidth: .infinity, alignment: .center)
         }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(Color.secondary.opacity(0.08))
-        )
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(showsCardBackground ? 16 : 0)
+        .background(backgroundView)
         .onAppear {
             appController.refreshMicrophonePermissionState()
         }
@@ -341,6 +340,14 @@ private struct MicrophonePermissionSection: View {
             return .secondary
         case .notDetermined, .denied, .restricted:
             return .orange
+        }
+    }
+
+    @ViewBuilder
+    private var backgroundView: some View {
+        if showsCardBackground {
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(Color.secondary.opacity(0.08))
         }
     }
 }
@@ -1129,20 +1136,17 @@ struct SystemPanelView: View {
                     Text("Launcher Opacity \(Int(launcherOpacity))%")
                     Slider(value: $launcherOpacity, in: 50...100, step: 5)
                 }
-            }
-            .formStyle(.grouped)
-
-            MicrophonePermissionSection(
-                appController: appController,
-                title: "LibreChat Microphone Access",
-                description: "LibreChat can record from the microphone for voice input. Kotoba Libre only requests this permission so that LibreChat feature can work when you use it."
-            )
-
-            HStack {
+                MicrophonePermissionSection(
+                    appController: appController,
+                    title: "LibreChat Microphone Access",
+                    description: "LibreChat can record from the microphone for voice input. Kotoba Libre only requests this permission so that LibreChat feature can work when you use it.",
+                    showsCardBackground: false
+                )
                 Button("Reset Config", role: .destructive) {
                     isShowingResetConfirmation = true
                 }
             }
+            .formStyle(.grouped)
 
             if !statusMessage.isEmpty {
                 Text(statusMessage)
