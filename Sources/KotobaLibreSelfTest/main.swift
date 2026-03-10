@@ -32,6 +32,7 @@ struct KotobaLibreSelfTest {
             AppSettings(
                 instanceBaseUrl: "https://chat.example.com",
                 globalShortcut: AppSettings.defaultShortcut,
+                voiceGlobalShortcut: AppSettings.defaultVoiceShortcut,
                 autostartEnabled: false,
                 restrictHostToInstanceHost: true,
                 defaultPresetId: "preset-1",
@@ -47,6 +48,7 @@ struct KotobaLibreSelfTest {
             AppSettings(
                 instanceBaseUrl: "https://chat.example.com",
                 globalShortcut: "commandorcontrol + option + v",
+                voiceGlobalShortcut: "ctrl + shift + m",
                 autostartEnabled: false,
                 restrictHostToInstanceHost: true,
                 defaultPresetId: "preset-1",
@@ -57,8 +59,17 @@ struct KotobaLibreSelfTest {
             )
         )
         expect(normalizedSettings.globalShortcut == "CmdOrCtrl+Alt+KeyV", "settingsNormalizeShortcutAliases")
+        expect(normalizedSettings.voiceGlobalShortcut == "Ctrl+Shift+KeyM", "settingsNormalizeVoiceShortcutAliases")
         expect(normalizedSettings.appVisibilityMode == .dockAndMenuBar, "settingsPreserveVisibilityMode")
         expect(normalizedSettings.debugLoggingEnabled, "settingsPreserveDebugLoggingFlag")
+        expect(KotobaLibreCore.validateShortcutConfiguration(normalizedSettings).valid, "settingsAllowDistinctTextAndVoiceShortcuts")
+
+        let conflictingShortcuts = AppSettings(
+            instanceBaseUrl: "https://chat.example.com",
+            globalShortcut: "CmdOrCtrl+Shift+Space",
+            voiceGlobalShortcut: "commandorcontrol + shift + space"
+        )
+        expect(!KotobaLibreCore.validateShortcutConfiguration(conflictingShortcuts).valid, "settingsRejectMatchingTextAndVoiceShortcuts")
 
         let openURLParsed = try KotobaLibreCore.parseDeepLink("kotobalibre://open?url=https%3A%2F%2Fchat.example.com%2Fc%2F123")
         expect(openURLParsed == .openURL("https://chat.example.com/c/123"), "deepLinkOpenURLIsParsed")
@@ -164,6 +175,7 @@ struct KotobaLibreSelfTest {
         let decodedLegacySettings = try JSONDecoder().decode(AppSettings.self, from: legacySettingsJSON)
         expect(decodedLegacySettings.appVisibilityMode == .dockOnly, "settingsDecodeLegacyVisibilityDefault")
         expect(!decodedLegacySettings.debugLoggingEnabled, "settingsDecodeLegacyDebugLoggingDefault")
+        expect(decodedLegacySettings.voiceGlobalShortcut == AppSettings.defaultVoiceShortcut, "settingsDecodeLegacyVoiceShortcutDefault")
         expect(AppResources.iconPNGURL?.lastPathComponent == "AppIcon.png", "appResourcesResolvePNG")
         expect(AppResources.iconICNSURL?.lastPathComponent == "AppIcon.icns", "appResourcesResolveICNS")
 
@@ -192,7 +204,7 @@ struct KotobaLibreSelfTest {
         expect(try store.loadPresets().isEmpty, "storeResetLoadsEmptyPresets")
 
         if failures.isEmpty {
-            print("KotobaLibreSelfTest: all checks passed (\(47) assertions)")
+            print("KotobaLibreSelfTest: all checks passed (\(50) assertions)")
             return
         }
 

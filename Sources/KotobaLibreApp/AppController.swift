@@ -15,6 +15,11 @@ struct WebAddAgentCandidate: Equatable {
 // It owns persisted state, window controllers, global shortcuts, and app-level side effects.
 @MainActor
 final class AppController: NSObject, ObservableObject {
+    enum ShortcutDraftTarget {
+        case launcher
+        case voiceLauncher
+    }
+
     enum RuntimeMode {
         case standard
         case smokeTest
@@ -77,17 +82,30 @@ final class AppController: NSObject, ObservableObject {
         lastCarbonStatusDescription: "n/a"
     )
     @Published var shortcutDraft: String = AppSettings.defaultShortcut
-    @Published var isRecordingShortcut = false
+    @Published var voiceShortcutDraft: String = AppSettings.defaultVoiceShortcut
+    @Published private var recordingShortcutTarget: ShortcutDraftTarget?
     @Published private(set) var microphonePermissionState = MicrophonePermissionState.current
     @Published private(set) var isRequestingMicrophonePermission = false
+    @Published private(set) var speechRecognitionPermissionState = SpeechRecognitionPermissionState.current
+    @Published private(set) var isRequestingSpeechRecognitionPermission = false
+    @Published private(set) var voiceShortcutRegistrationIssue: String?
 
     private let store: AppDataStore
     private let runtimeMode: RuntimeMode
     private let shortcutRegistrar = GlobalShortcutRegistrar()
+    private let voiceShortcutRegistrar = GlobalShortcutRegistrar()
     private var statusItem: NSStatusItem?
     private lazy var mainWindowController = MainWindowController(appController: self, store: store)
     private lazy var settingsWindowController = SettingsWindowController(appController: self)
     private lazy var launcherWindowController = LauncherWindowController(appController: self)
+
+    var isRecordingShortcut: Bool {
+        recordingShortcutTarget == .launcher
+    }
+
+    var isRecordingVoiceShortcut: Bool {
+        recordingShortcutTarget == .voiceLauncher
+    }
 
     init(store: AppDataStore? = nil, runtimeMode: RuntimeMode = .standard) {
         self.store = try! (store ?? AppDataStore())
@@ -116,13 +134,15 @@ final class AppController: NSObject, ObservableObject {
         }
 
         shortcutDraft = settings.globalShortcut
+        voiceShortcutDraft = settings.voiceGlobalShortcut
         refreshMicrophonePermissionState()
+        refreshSpeechRecognitionPermissionState()
         setupApplicationMenu()
         applyAppIcon()
         applyAppVisibilityMode(settings.appVisibilityMode)
         if runtimeMode.shouldRegisterSystemIntegrations {
             try? syncAutostart(enabled: settings.autostartEnabled)
-            registerGlobalShortcutIfPossible(promptForPermission: false)
+            registerGlobalShortcutsIfPossible(promptForPermission: false)
         } else {
             refreshShortcutDiagnostics()
         }
@@ -164,7 +184,11 @@ final class AppController: NSObject, ObservableObject {
     }
 
     func showLauncherWindow() {
-        launcherWindowController.showAndFocus()
+        launcherWindowController.showAndFocus(presentation: .text)
+    }
+
+    func showVoiceLauncherWindow() {
+        launcherWindowController.showAndFocus(presentation: .voice)
     }
 
     func refreshMicrophonePermissionState() {
@@ -184,6 +208,23 @@ final class AppController: NSObject, ObservableObject {
         }
     }
 
+    func refreshSpeechRecognitionPermissionState() {
+        speechRecognitionPermissionState = .current
+    }
+
+    func requestSpeechRecognitionPermission() {
+        refreshSpeechRecognitionPermissionState()
+        guard speechRecognitionPermissionState == .notDetermined else {
+            return
+        }
+
+        isRequestingSpeechRecognitionPermission = true
+        SpeechRecognitionPermissionState.requestSystemAccess { [weak self] updatedState in
+            self?.isRequestingSpeechRecognitionPermission = false
+            self?.speechRecognitionPermissionState = updatedState
+        }
+    }
+
     func openMicrophonePrivacySettings() {
         guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone") else {
             return
@@ -192,16 +233,63 @@ final class AppController: NSObject, ObservableObject {
         openExternally(url)
     }
 
+    func openSpeechRecognitionPrivacySettings() {
+        guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_SpeechRecognition") else {
+            return
+        }
+
+        openExternally(url)
+    }
+
+    func ensureVoiceModePermissions() async throws {
+        refreshMicrophonePermissionState()
+        if microphonePermissionState == .notDetermined {
+            isRequestingMicrophonePermission = true
+            let updatedState = await MicrophonePermissionState.requestSystemAccess()
+            isRequestingMicrophonePermission = false
+            microphonePermissionState = updatedState
+        }
+
+        guard microphonePermissionState == .granted else {
+            throw KotobaLibreError.invalidDestination("Microphone access is required for voice mode.")
+        }
+
+        refreshSpeechRecognitionPermissionState()
+        if speechRecognitionPermissionState == .notDetermined {
+            isRequestingSpeechRecognitionPermission = true
+            let updatedState = await SpeechRecognitionPermissionState.requestSystemAccess()
+            isRequestingSpeechRecognitionPermission = false
+            speechRecognitionPermissionState = updatedState
+        }
+
+        guard speechRecognitionPermissionState == .granted else {
+            throw KotobaLibreError.invalidDestination("Speech recognition access is required for voice mode.")
+        }
+    }
+
     func hideLauncherWindow() {
         launcherWindowController.hide()
     }
 
     func toggleLauncherWindow() {
-        if launcherWindowController.isVisible {
+        if launcherWindowController.isVisible && launcherWindowController.presentationMode == .text {
             launcherWindowController.hide()
         } else {
             showLauncherWindow()
         }
+    }
+
+    func toggleVoiceLauncherWindow() {
+        if launcherWindowController.isVisible {
+            if launcherWindowController.presentationMode == .voice {
+                launcherWindowController.finishVoiceCaptureAndSubmit()
+            } else {
+                showVoiceLauncherWindow()
+            }
+            return
+        }
+
+        showVoiceLauncherWindow()
     }
 
     func openExternally(_ url: URL) {
@@ -247,6 +335,10 @@ final class AppController: NSObject, ObservableObject {
         let previousHost = try KotobaLibreCore.settingsInstanceHost(settings)
         var normalized = KotobaLibreCore.normalizeSettings(nextSettings)
         normalized = try KotobaLibreCore.normalizeInstanceBaseURL(normalized)
+        let shortcutValidation = KotobaLibreCore.validateShortcutConfiguration(normalized)
+        guard shortcutValidation.valid else {
+            throw KotobaLibreError.invalidDestination(shortcutValidation.reason ?? "Invalid shortcut configuration")
+        }
         let nextHost = try KotobaLibreCore.settingsInstanceHost(normalized)
         // Revalidation only matters when host pinning is on and the effective host changed.
         let shouldRevalidatePresets =
@@ -279,6 +371,7 @@ final class AppController: NSObject, ObservableObject {
         }
         settings = normalized
         shortcutDraft = normalized.globalShortcut
+        voiceShortcutDraft = normalized.voiceGlobalShortcut
         do {
             try persistSettings()
             if !removedPresetIDs.isEmpty {
@@ -291,7 +384,7 @@ final class AppController: NSObject, ObservableObject {
         } catch {
             restoreTransientState(settings: previousSettings, presets: previousPresets)
             if runtimeMode.shouldRegisterSystemIntegrations {
-                registerGlobalShortcutIfPossible(promptForPermission: false)
+                registerGlobalShortcutsIfPossible(promptForPermission: false)
             } else {
                 refreshShortcutDiagnostics()
             }
@@ -300,7 +393,7 @@ final class AppController: NSObject, ObservableObject {
 
         // Re-register after a successful save so the latest shortcut and visibility settings take effect.
         if runtimeMode.shouldRegisterSystemIntegrations {
-            registerGlobalShortcutIfPossible(promptForPermission: true)
+            registerGlobalShortcutsIfPossible(promptForPermission: true)
         } else {
             refreshShortcutDiagnostics()
         }
@@ -327,7 +420,8 @@ final class AppController: NSObject, ObservableObject {
         settings = AppSettings()
         presets = []
         shortcutDraft = AppSettings.defaultShortcut
-        isRecordingShortcut = false
+        voiceShortcutDraft = AppSettings.defaultVoiceShortcut
+        recordingShortcutTarget = nil
         settingsWindowController.hide()
 
         do {
@@ -336,7 +430,7 @@ final class AppController: NSObject, ObservableObject {
             }
         } catch {
             if runtimeMode.shouldRegisterSystemIntegrations {
-                registerGlobalShortcutIfPossible(promptForPermission: false)
+                registerGlobalShortcutsIfPossible(promptForPermission: false)
             } else {
                 refreshShortcutDiagnostics()
             }
@@ -348,7 +442,7 @@ final class AppController: NSObject, ObservableObject {
 
         applyAppVisibilityMode(settings.appVisibilityMode)
         if runtimeMode.shouldRegisterSystemIntegrations {
-            registerGlobalShortcutIfPossible(promptForPermission: false)
+            registerGlobalShortcutsIfPossible(promptForPermission: false)
         } else {
             refreshShortcutDiagnostics()
         }
@@ -369,9 +463,24 @@ final class AppController: NSObject, ObservableObject {
         _ = try saveSettings(updated)
     }
 
+    func saveVoiceShortcutDraft() throws {
+        var updated = settings
+        updated.voiceGlobalShortcut = voiceShortcutDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        _ = try saveSettings(updated)
+    }
+
     func resetShortcutDraft() {
         shortcutDraft = AppSettings.defaultShortcut
-        isRecordingShortcut = false
+        if recordingShortcutTarget == .launcher {
+            stopShortcutRecording()
+        }
+    }
+
+    func resetVoiceShortcutDraft() {
+        voiceShortcutDraft = AppSettings.defaultVoiceShortcut
+        if recordingShortcutTarget == .voiceLauncher {
+            stopShortcutRecording()
+        }
     }
 
     func discardShortcutDraftChanges() {
@@ -381,19 +490,37 @@ final class AppController: NSObject, ObservableObject {
         }
     }
 
+    func discardVoiceShortcutDraftChanges() {
+        voiceShortcutDraft = settings.voiceGlobalShortcut
+        if isRecordingVoiceShortcut {
+            stopShortcutRecording()
+        }
+    }
+
     func beginShortcutRecording() {
-        suspendGlobalShortcut()
-        isRecordingShortcut = true
+        beginShortcutRecording(for: .launcher)
+    }
+
+    func beginVoiceShortcutRecording() {
+        beginShortcutRecording(for: .voiceLauncher)
     }
 
     func stopShortcutRecording() {
-        isRecordingShortcut = false
+        recordingShortcutTarget = nil
         resumeSavedShortcutRegistration(promptForPermission: false)
     }
 
     func captureShortcut(_ shortcut: String) {
-        shortcutDraft = shortcut
-        isRecordingShortcut = false
+        switch recordingShortcutTarget {
+        case .launcher:
+            shortcutDraft = shortcut
+        case .voiceLauncher:
+            voiceShortcutDraft = shortcut
+        case nil:
+            return
+        }
+
+        recordingShortcutTarget = nil
         resumeSavedShortcutRegistration(promptForPermission: false)
     }
 
@@ -538,7 +665,7 @@ final class AppController: NSObject, ObservableObject {
     }
 
     func handleShortcutKeyEvent(_ event: NSEvent) -> Bool {
-        guard isRecordingShortcut else {
+        guard recordingShortcutTarget != nil else {
             return false
         }
 
@@ -622,21 +749,29 @@ final class AppController: NSObject, ObservableObject {
         settings = previousSettings
         presets = previousPresets
         shortcutDraft = previousSettings.globalShortcut
+        voiceShortcutDraft = previousSettings.voiceGlobalShortcut
     }
 
-    private func suspendGlobalShortcut() {
-        // While recording, the current global shortcut is turned off to avoid self-trigger loops.
+    private func beginShortcutRecording(for target: ShortcutDraftTarget) {
+        suspendGlobalShortcuts()
+        recordingShortcutTarget = target
+    }
+
+    private func suspendGlobalShortcuts() {
+        // While recording, both global shortcuts are turned off to avoid self-trigger loops.
         shortcutRegistrar.unregisterCurrentShortcut()
+        voiceShortcutRegistrar.unregisterCurrentShortcut()
         shortcutRegistrationIssue = nil
+        voiceShortcutRegistrationIssue = nil
         refreshShortcutDiagnostics()
     }
 
     private func resumeSavedShortcutRegistration(promptForPermission: Bool) {
-        guard !isRecordingShortcut else {
+        guard recordingShortcutTarget == nil else {
             return
         }
 
-        registerGlobalShortcutIfPossible(promptForPermission: promptForPermission)
+        registerGlobalShortcutsIfPossible(promptForPermission: promptForPermission)
     }
 
     private func registerGlobalShortcut(promptForPermission: Bool) throws {
@@ -649,12 +784,27 @@ final class AppController: NSObject, ObservableObject {
         refreshShortcutDiagnostics()
     }
 
-    private func registerGlobalShortcutIfPossible(promptForPermission: Bool) {
+    private func registerVoiceShortcut(promptForPermission: Bool) throws {
+        try voiceShortcutRegistrar.register(shortcut: settings.voiceGlobalShortcut, promptForPermission: promptForPermission) { [weak self] in
+            Task { @MainActor in
+                self?.toggleVoiceLauncherWindow()
+            }
+        }
+        voiceShortcutRegistrationIssue = nil
+    }
+
+    private func registerGlobalShortcutsIfPossible(promptForPermission: Bool) {
         do {
             try registerGlobalShortcut(promptForPermission: promptForPermission)
         } catch {
             shortcutRegistrationIssue = error.localizedDescription
             refreshShortcutDiagnostics()
+        }
+
+        do {
+            try registerVoiceShortcut(promptForPermission: promptForPermission)
+        } catch {
+            voiceShortcutRegistrationIssue = error.localizedDescription
         }
     }
 

@@ -29,6 +29,7 @@ This target is intentionally UI-free so behavior can be validated in the self-te
 - Main web content window
 - Settings window
 - Launcher panel
+- Voice launcher mode
 - Onboarding flow
 - Global shortcut capture and registration
 - Launch-at-login integration
@@ -73,9 +74,10 @@ Kotoba Libre uses three main native window types:
 ### Launcher panel
 
 - Floating `NSPanel`
-- Opened by the configured global shortcut
-- Lets the user pick a preset from a compact glass selector and submit prompt text
-- Hides on focus loss and restores the previously frontmost app
+- Opened by the configured text shortcut or voice shortcut
+- Reuses one controller for a text prompt mode and a persistent voice mode
+- Lets the user pick a preset from a compact glass selector and submit prompt text or spoken transcription
+- Restores the previously frontmost app after launcher-driven navigation finishes
 
 ## App Presence Modes
 
@@ -102,7 +104,7 @@ If `settings.json` does not exist or does not contain an instance URL:
 1. The app boots the main window
 2. The main window renders the onboarding flow
 3. The user enters the LibreChat base URL
-4. The user confirms or records the launcher shortcut
+4. The user confirms or records the text launcher shortcut
 5. Settings are saved and the main web view opens
 
 ### Reset
@@ -125,10 +127,20 @@ Global shortcut registration is handled by `GlobalShortcutRegistrar`.
 
 Current behavior:
 
+- Registers separate global shortcuts for text and voice launchers
 - Tries Carbon hotkeys first
 - Installs an event tap when permissions allow
 - Falls back to event-tap-only registration when Carbon registration fails
 - Surfaces diagnostics for backend choice and permission state
+
+## Voice Mode
+
+Voice mode is built on native Apple microphone capture plus speech transcription.
+
+- Opening the voice shortcut shows the launcher in voice presentation mode
+- The panel stays visible until the user clicks Cancel or presses the voice shortcut again
+- Pressing the voice shortcut a second time finalizes transcription and routes the resulting prompt through the same preset-opening path used by the text launcher
+- The System tab exposes both microphone and speech-recognition permission state because voice mode needs both
 
 This design keeps common shortcuts working while still supporting cases that need Accessibility or Input Monitoring.
 

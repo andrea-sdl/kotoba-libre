@@ -8,6 +8,7 @@ The app gives LibreChat a focused desktop shell with:
 - A native settings window for instance configuration, agents, and shortcuts
 - Configurable app presence modes: dock only, dock + menu bar, or menu bar only
 - A Spotlight-style launcher opened through a global keyboard shortcut
+- A persistent voice launcher with its own shortcut, animated listening state, and Apple speech transcription
 - Deep links for opening settings, presets, and direct destinations
 - JSON import/export for agent presets
 - Unsigned `.app`, `.dmg`, and `.zip` packaging for internal distribution
@@ -124,7 +125,7 @@ From the System tab, users can also choose whether Kotoba Libre appears:
 
 When the menu bar item is enabled, it includes actions for opening Settings, showing the LibreChat window, and quitting the app.
 
-The System tab also includes microphone permission status, debug logging, and a destructive reset action that clears config and returns the app to onboarding.
+The System tab also includes microphone and speech-recognition permission status, debug logging, and a destructive reset action that clears config and returns the app to onboarding.
 
 When host restriction is enabled and you change the configured LibreChat instance to a different host, Kotoba Libre re-validates saved agents, offers an export step first, and removes any incompatible agents after you confirm the change.
 
@@ -136,6 +137,13 @@ The launcher is a floating panel that:
 - Lets the user pick an agent from a styled glass selector
 - Passes prompt text into LibreChat URLs
 - Falls back gracefully when no instance or presets are configured
+
+Voice mode adds a second floating launcher that:
+
+- Opens with its own dedicated shortcut
+- Starts recording immediately with an animated listening indicator instead of a text field
+- Keeps the panel visible until you click Cancel or press the voice shortcut again
+- Finishes transcription and sends the spoken prompt to the selected agent when you trigger the shortcut again
 
 ## Deep Links
 
