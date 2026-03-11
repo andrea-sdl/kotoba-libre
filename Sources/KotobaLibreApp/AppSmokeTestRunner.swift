@@ -82,6 +82,8 @@ final class AppSmokeTestRunner {
 
         snapshot = appController.smokeTestSnapshot()
         try expect(snapshot.launcherWindowVisible, "launcher window should open")
+        try expect(snapshot.launcherWindowKey, "launcher window should become key when opened")
+        try expect(snapshot.mainWindowKey == false, "main window should not stay key while the launcher is open")
     }
 
     private func assertPresetLaunch(presetID: String) async throws {
