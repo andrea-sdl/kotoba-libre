@@ -10,6 +10,53 @@ CONTENTS_DIR="${APP_DIR}/Contents"
 MACOS_DIR="${CONTENTS_DIR}/MacOS"
 RESOURCES_DIR="${CONTENTS_DIR}/Resources"
 ENTITLEMENTS_PATH="scripts/KotobaLibre.entitlements"
+GENERATED_ENTITLEMENTS_PATH="${OUT_DIR}/KotobaLibre.generated.entitlements"
+ASSOCIATED_DOMAINS_VALUE="${KOTOBA_ASSOCIATED_DOMAINS:-}"
+
+build_associated_domains_xml() {
+  local raw_domain domain normalized_domain
+  local -a raw_domains=()
+
+  IFS=',' read -r -a raw_domains <<< "${ASSOCIATED_DOMAINS_VALUE}"
+  for raw_domain in "${raw_domains[@]}"; do
+    domain="$(printf '%s' "${raw_domain}" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+    if [[ -z "${domain}" ]]; then
+      continue
+    fi
+
+    if [[ "${domain}" == webcredentials:* ]]; then
+      normalized_domain="${domain}"
+    else
+      normalized_domain="webcredentials:${domain}"
+    fi
+
+    printf '    <string>%s</string>\n' "${normalized_domain}"
+  done
+}
+
+write_generated_entitlements() {
+  local output_path="$1"
+  local associated_domains_xml="$2"
+
+  cat > "${output_path}" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "https://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- WebKit media capture on macOS relies on the host app advertising capture capability. -->
+    <key>com.apple.security.device.audio-input</key>
+    <true/>
+    <key>com.apple.security.device.camera</key>
+    <true/>
+    <!-- Passkeys and security-key WebAuthn in WKWebView only work for associated webcredentials domains. -->
+    <key>com.apple.developer.associated-domains</key>
+    <array>
+${associated_domains_xml}
+    </array>
+</dict>
+</plist>
+EOF
+}
 
 if [[ ! "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
   echo "Invalid version: ${VERSION}" >&2
@@ -89,7 +136,14 @@ cat > "${CONTENTS_DIR}/Info.plist" <<EOF
 </plist>
 EOF
 
-codesign --force --deep --sign - --entitlements "${ENTITLEMENTS_PATH}" --identifier "${BUNDLE_IDENTIFIER}" --timestamp=none "${APP_DIR}"
+SIGNING_ENTITLEMENTS_PATH="${ENTITLEMENTS_PATH}"
+if [[ -n "${ASSOCIATED_DOMAINS_VALUE}" ]]; then
+  associated_domains_xml="$(build_associated_domains_xml)"
+  write_generated_entitlements "${GENERATED_ENTITLEMENTS_PATH}" "${associated_domains_xml}"
+  SIGNING_ENTITLEMENTS_PATH="${GENERATED_ENTITLEMENTS_PATH}"
+fi
+
+codesign --force --deep --sign - --entitlements "${SIGNING_ENTITLEMENTS_PATH}" --identifier "${BUNDLE_IDENTIFIER}" --timestamp=none "${APP_DIR}"
 
 echo "Built app bundle:"
 echo "- ${APP_DIR}"

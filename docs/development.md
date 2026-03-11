@@ -40,6 +40,12 @@ Build the distributable app and unsigned archives:
 ./scripts/build-app.sh
 ```
 
+Build with passkey and security-key support for specific relying-party domains:
+
+```bash
+KOTOBA_ASSOCIATED_DOMAINS="chat.example.com,login.example.com" ./scripts/build-app.sh
+```
+
 ## Day-to-Day Workflow
 
 1. Make code changes in `Sources/`.
@@ -47,6 +53,8 @@ Build the distributable app and unsigned archives:
 3. Run `swift run KotobaLibreApp --smoke-test` for an automated native UI smoke test.
 4. Run `swift run KotobaLibreApp` when you need a manual UI or system-integration check.
 5. Run `./scripts/build-app.sh` before finishing work.
+
+If you need passkeys in `WKWebView`, package the app with `KOTOBA_ASSOCIATED_DOMAINS` set to the relying-party hosts. Apple requires those hosts to be declared as `webcredentials` associated domains in the app entitlements, so a single build cannot support arbitrary runtime-selected domains.
 
 ## Where To Make Changes
 

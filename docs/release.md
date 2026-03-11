@@ -39,13 +39,21 @@ You can also pass an explicit version:
 ./scripts/build-app.sh 0.1.0
 ```
 
+For passkey and security-key login support in `WKWebView`, package with the relying-party hosts declared up front:
+
+```bash
+KOTOBA_ASSOCIATED_DOMAINS="chat.example.com,login.example.com" ./scripts/build-app.sh
+```
+
+The build script turns those entries into `webcredentials:` associated domains before signing the app bundle.
+
 The build script:
 
 1. Builds `KotobaLibreApp` in release mode
 2. Creates `dist-artifacts/Kotoba Libre.app`
 3. Copies bundled resources, including the app icon
 4. Writes `Info.plist`
-5. Applies an ad-hoc signature
+5. Applies an ad-hoc signature, optionally including generated `webcredentials` associated-domain entitlements
 6. Creates unsigned `.dmg` and `.zip` artifacts
 
 ## Expected Artifacts

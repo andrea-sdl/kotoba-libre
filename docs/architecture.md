@@ -27,6 +27,7 @@ This target is intentionally UI-free so behavior can be validated in the self-te
 - Dock/menu bar visibility mode switching
 - Menu bar status item actions
 - Main web content window
+- Popup web windows created by LibreChat flows, even when those popup windows navigate to another HTTPS host
 - Settings window
 - Launcher panel
 - Voice launcher mode
@@ -39,6 +40,8 @@ The UI stack is mixed by design:
 - AppKit manages windows, menus, and system integration
 - SwiftUI renders onboarding, settings, sheets, and launcher content with native Glass surfaces
 - WebKit renders LibreChat content inside `WKWebView`
+- Likely OAuth popup flows can be promoted into `ASWebAuthenticationSession` when their redirect URI returns through `kotobalibre://...`, otherwise they fall back to the external browser instead of staying trapped in `WKWebView`
+- Passkeys inside `WKWebView` are limited to build-configured `webcredentials` associated domains
 
 ### `KotobaLibreSelfTest`
 
