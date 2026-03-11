@@ -1267,17 +1267,36 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
             const locationValue = () => `${window.location.pathname}${window.location.search}${window.location.hash}`;
             const isAtTargetLocation = () => locationValue() === targetAppPath;
             const delay = (ms) => new Promise((resolve) => window.setTimeout(resolve, ms));
-            const waitForTargetLocation = async (timeoutMs) => {
+            const nextVisualTick = () =>
+              new Promise((resolve) => {
+                if (typeof window.requestAnimationFrame === "function") {
+                  window.requestAnimationFrame(() => resolve());
+                  return;
+                }
+                window.setTimeout(resolve, 16);
+              });
+            const waitForCondition = async (predicate, timeoutMs, intervalMs = 30) => {
               const started = Date.now();
               while (Date.now() - started < timeoutMs) {
-                if (isAtTargetLocation()) return true;
-                await delay(60);
+                if (predicate()) return true;
+                await delay(intervalMs);
               }
-              return isAtTargetLocation();
+              return predicate();
             };
+            const waitForResult = async (resolver, timeoutMs = 5000, intervalMs = 30) => {
+              const started = Date.now();
+              while (Date.now() - started < timeoutMs) {
+                const result = resolver();
+                if (result) return result;
+                await delay(intervalMs);
+              }
+              return resolver();
+            };
+            const waitForTargetLocation = async (timeoutMs) =>
+              await waitForCondition(isAtTargetLocation, timeoutMs, 30);
             const waitForRouteToApply = async () => {
-              await delay(0);
-              await delay(80);
+              await nextVisualTick();
+              await nextVisualTick();
             };
             const pushWithHistory = (value) => {
               if (!(window.history && typeof window.history.pushState === "function")) return false;
@@ -1329,7 +1348,8 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
               }
               await waitForRouteToApply();
               if (timeoutMs > 0) {
-                await delay(timeoutMs);
+                const reached = await waitForTargetLocation(timeoutMs);
+                log("navigateWithHistoryAndWait target location", { appPath, reached });
               }
               log("navigateWithHistoryAndWait complete", appPath);
               return true;
@@ -1340,15 +1360,8 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
               log("navigateInternally falling back to history", routerPath);
               return await navigateWithHistoryAndWait(value, timeoutMs);
             };
-            const waitForElement = async (resolver, timeoutMs = 5000) => {
-              const started = Date.now();
-              while (Date.now() - started < timeoutMs) {
-                const result = resolver();
-                if (result) return result;
-                await delay(60);
-              }
-              return resolver();
-            };
+            const waitForElement = async (resolver, timeoutMs = 5000) =>
+              await waitForResult(resolver, timeoutMs, 30);
             const setTextareaValue = (textarea, value) => {
               const prototype = window.HTMLTextAreaElement?.prototype;
               const descriptor = prototype && Object.getOwnPropertyDescriptor(prototype, "value");
@@ -1359,6 +1372,10 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
               }
               textarea.dispatchEvent(new Event("input", { bubbles: true }));
               textarea.dispatchEvent(new Event("change", { bubbles: true }));
+            };
+            const waitForTextareaValue = async (textarea, value, timeoutMs = 180) => {
+              if (!(textarea instanceof HTMLTextAreaElement)) return false;
+              return await waitForCondition(() => textarea.value === value, timeoutMs, 16);
             };
             const submitPromptViaChatForm = async (prompt, previousTextarea = null) => {
               if (!prompt) return true;
@@ -1376,14 +1393,14 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
                 return false;
               }
               setTextareaValue(textarea, prompt);
-              await delay(120);
+              await waitForTextareaValue(textarea, prompt, 180);
               if (textarea.value !== prompt) {
                 log("submitPromptViaChatForm restoring prompt after rerender", {
                   expected: prompt,
                   actual: textarea.value,
                 });
                 setTextareaValue(textarea, prompt);
-                await delay(120);
+                await waitForTextareaValue(textarea, prompt, 180);
               }
               textarea.focus();
               textarea.setSelectionRange(prompt.length, prompt.length);
@@ -1481,6 +1498,8 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
                 typeof value.newConversation === "function" &&
                 Object.prototype.hasOwnProperty.call(value, "conversation"),
               );
+            const waitForChatContext = async (timeoutMs = 240) =>
+              await waitForResult(() => getChatContext(), timeoutMs, 20);
             const waitForChatContextConversation = async (agentId, timeoutMs = 5000) => {
               const started = Date.now();
               while (Date.now() - started < timeoutMs) {
@@ -1498,7 +1517,7 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
                   });
                   return chatContext;
                 }
-                await delay(60);
+                await delay(30);
               }
               log("waitForChatContextConversation timed out", agentId);
               return getChatContext();
@@ -1510,7 +1529,7 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
               if (!agentId) return false;
               const prompt = next.searchParams.get("prompt") ?? next.searchParams.get("q") ?? "";
               try {
-                const chatContext = getChatContext();
+                const chatContext = await waitForChatContext(240);
                 if (!chatContext) {
                   log("startAgentChatViaReactContext missing chat context");
                   return false;
@@ -1642,7 +1661,7 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
                 log("performSubmitRouteRemount failed to navigate to remount path");
                 return false;
               }
-              await delay(120);
+              await waitForRouteToApply();
               const result = await navigateInternally(targetRouterPath, 1400);
               log("performSubmitRouteRemount result", result);
               return result;
