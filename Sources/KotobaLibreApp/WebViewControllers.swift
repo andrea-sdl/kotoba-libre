@@ -482,12 +482,9 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
     private final class PopupWindowController: NSWindowController, NSWindowDelegate {
         private static let defaultSize = NSSize(width: 720, height: 640)
 
-        let hostedWebView: WKWebView
         var onClose: (() -> Void)?
 
         init(webView: WKWebView, windowFeatures: WKWindowFeatures) {
-            self.hostedWebView = webView
-
             let requestedWidth = CGFloat(windowFeatures.width?.doubleValue ?? Double(Self.defaultSize.width))
             let requestedHeight = CGFloat(windowFeatures.height?.doubleValue ?? Double(Self.defaultSize.height))
             let initialSize = NSSize(
@@ -688,7 +685,7 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
             host ?? webView.url?.host?.lowercased()
         }
 
-        if promotePopupNavigationToAuthenticationSessionIfNeeded(url, webView: webView) {
+        if promotePopupAuthenticationRequestIfNeeded(url, webView: webView) {
             decisionHandler(.cancel)
             return
         }
@@ -903,11 +900,7 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
         popupNavigationPolicies[ObjectIdentifier(webView)] ?? externalNavigationPolicy
     }
 
-    private func startAuthenticationSessionIfSupported(for url: URL) -> Bool {
-        guard looksLikeAuthenticationURL(url) else {
-            return false
-        }
-
+    private func startAuthenticationSessionIfPossible(for url: URL) -> Bool {
         guard let callbackScheme = authenticationCallbackScheme(in: url) else {
             return false
         }
@@ -920,7 +913,7 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
             return false
         }
 
-        if startAuthenticationSessionIfSupported(for: url) {
+        if startAuthenticationSessionIfPossible(for: url) {
             debugLog("KotobaLibre Auth: routed popup through ASWebAuthenticationSession -> \(url.absoluteString)")
             return true
         }
@@ -930,7 +923,7 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
         return true
     }
 
-    private func promotePopupNavigationToAuthenticationSessionIfNeeded(_ url: URL, webView: WKWebView) -> Bool {
+    private func promotePopupAuthenticationRequestIfNeeded(_ url: URL, webView: WKWebView) -> Bool {
         guard popupWindowControllers[ObjectIdentifier(webView)] != nil else {
             return false
         }
