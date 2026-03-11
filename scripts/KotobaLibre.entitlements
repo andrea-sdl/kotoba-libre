@@ -7,5 +7,6 @@
     <true/>
     <key>com.apple.security.device.camera</key>
     <true/>
+    <!-- Passkey-associated domains are injected at build time when KOTOBA_ASSOCIATED_DOMAINS is set. -->
 </dict>
 </plist>

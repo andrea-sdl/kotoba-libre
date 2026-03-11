@@ -1,4 +1,5 @@
 import AppKit
+import AuthenticationServices
 import Foundation
 import ServiceManagement
 import SwiftUI
@@ -14,7 +15,7 @@ struct WebAddAgentCandidate: Equatable {
 // AppController is the main coordinator for the desktop app.
 // It owns persisted state, window controllers, global shortcuts, and app-level side effects.
 @MainActor
-final class AppController: NSObject, ObservableObject {
+final class AppController: NSObject, ObservableObject, ASWebAuthenticationPresentationContextProviding {
     enum ShortcutDraftTarget {
         case launcher
         case voiceLauncher
@@ -97,6 +98,7 @@ final class AppController: NSObject, ObservableObject {
     private let shortcutRegistrar = GlobalShortcutRegistrar()
     private let voiceShortcutRegistrar = GlobalShortcutRegistrar()
     private var statusItem: NSStatusItem?
+    private var activeAuthenticationSession: ASWebAuthenticationSession?
     private lazy var mainWindowController = MainWindowController(appController: self, store: store)
     private lazy var settingsWindowController = SettingsWindowController(appController: self)
     private lazy var launcherWindowController = LauncherWindowController(appController: self)
@@ -302,7 +304,32 @@ final class AppController: NSObject, ObservableObject {
         NSWorkspace.shared.open(url)
     }
 
+    func startAuthenticationSession(for url: URL, callbackURLScheme: String) -> Bool {
+        guard runtimeMode.shouldOpenExternalURLs else {
+            return false
+        }
+
+        activeAuthenticationSession?.cancel()
+
+        let session = ASWebAuthenticationSession(url: url, callbackURLScheme: callbackURLScheme) { [weak self] callbackURL, error in
+            Task { @MainActor in
+                self?.handleAuthenticationSessionCompletion(callbackURL: callbackURL, error: error)
+            }
+        }
+        session.presentationContextProvider = self
+        session.prefersEphemeralWebBrowserSession = false
+        activeAuthenticationSession = session
+
+        let started = session.start()
+        if !started {
+            activeAuthenticationSession = nil
+        }
+        return started
+    }
+
     func applicationWillTerminate() {
+        activeAuthenticationSession?.cancel()
+        activeAuthenticationSession = nil
         mainWindowController.persistStateForTermination()
     }
 
@@ -697,6 +724,20 @@ final class AppController: NSObject, ObservableObject {
         }
     }
 
+    private func handleAuthenticationSessionCompletion(callbackURL: URL?, error: Error?) {
+        activeAuthenticationSession = nil
+
+        guard let callbackURL else {
+            return
+        }
+
+        do {
+            try handleDeepLink(callbackURL.absoluteString)
+        } catch {
+            NSSound.beep()
+        }
+    }
+
     private func openResolvedURL(_ url: URL, preferMainWindow: Bool = false) throws {
         let instanceHost = try KotobaLibreCore.settingsInstanceHost(settings)
         if launcherWindowController.isVisible {
@@ -717,6 +758,10 @@ final class AppController: NSObject, ObservableObject {
         )
 
         hideLauncherWindow()
+    }
+
+    func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
+        mainWindowController.window ?? NSApp.keyWindow ?? NSApp.windows.first ?? ASPresentationAnchor()
     }
 
     private func shouldOpenExternally(_ url: URL, instanceHost: String?) -> Bool {

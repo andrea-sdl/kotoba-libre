@@ -9,6 +9,9 @@ The app gives LibreChat a focused desktop shell with:
 - Configurable app presence modes: dock only, dock + menu bar, or menu bar only
 - A Spotlight-style launcher opened through a global keyboard shortcut
 - A persistent voice launcher with its own shortcut, animated listening state, and Apple speech transcription
+- Native WebKit popup windows when LibreChat opens secondary flows, including cross-domain HTTPS popup navigation
+- Best-effort browser-backed OAuth handling for popup auth flows, with `ASWebAuthenticationSession` for `kotobalibre://...` callbacks and browser fallback otherwise
+- Passkey and security-key login support for build-configured `webcredentials` domains
 - Deep links for opening settings, presets, and direct destinations
 - JSON import/export for agent presets
 - Unsigned `.app`, `.dmg`, and `.zip` packaging for internal distribution
@@ -85,6 +88,14 @@ Build the distributable app bundle and unsigned artifacts:
 ```bash
 ./scripts/build-app.sh
 ```
+
+Enable passkey and security-key support for specific relying-party domains:
+
+```bash
+KOTOBA_ASSOCIATED_DOMAINS="chat.example.com,login.example.com" ./scripts/build-app.sh
+```
+
+Those entries are normalized to `webcredentials:` entitlements at packaging time. WKWebView passkeys only work for domains you ship in the app entitlements, so arbitrary runtime instance URLs cannot all be supported by one unsigned build.
 
 Generated artifacts:
 
