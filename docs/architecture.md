@@ -75,6 +75,7 @@ Kotoba Libre uses three main native window types:
 
 - Floating `NSPanel`
 - Opened by the configured text shortcut or voice shortcut
+- Keeps the launcher panel frontmost without surfacing the main window until a submission opens a destination
 - Reuses one controller for a text prompt mode and a persistent voice mode
 - Lets the user pick a preset from a compact glass selector and submit prompt text or spoken transcription
 - Restores the previously frontmost app after launcher-driven navigation finishes

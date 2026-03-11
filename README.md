@@ -134,6 +134,7 @@ When host restriction is enabled and you change the configured LibreChat instanc
 The launcher is a floating panel that:
 
 - Opens with the configured global shortcut
+- Stays in front by itself instead of surfacing the main LibreChat window until a launch is submitted
 - Lets the user pick an agent from a styled glass selector
 - Passes prompt text into LibreChat URLs
 - Falls back gracefully when no instance or presets are configured

@@ -100,8 +100,8 @@ final class LauncherWindowController: NSWindowController, NSWindowDelegate {
 
         viewModel.prepareForPresentation(presentation)
         positionPanelOnActiveDisplay(presentation: presentation)
-        NSApp.activate(ignoringOtherApps: true)
         window?.orderFrontRegardless()
+        // The launcher should accept typing without surfacing the main window until a submission opens it.
         window?.makeKeyAndOrderFront(nil)
         viewModel.focusToken = UUID()
     }

@@ -63,8 +63,10 @@ final class AppController: NSObject, ObservableObject {
         let presetCount: Int
         let defaultPresetID: String?
         let mainWindowVisible: Bool
+        let mainWindowKey: Bool
         let settingsWindowVisible: Bool
         let launcherWindowVisible: Bool
+        let launcherWindowKey: Bool
         let mainContentKind: MainWindowController.ContentKind
     }
 
@@ -731,8 +733,10 @@ final class AppController: NSObject, ObservableObject {
             presetCount: presets.count,
             defaultPresetID: settings.defaultPresetId,
             mainWindowVisible: mainWindowController.window?.isVisible ?? false,
+            mainWindowKey: mainWindowController.window?.isKeyWindow ?? false,
             settingsWindowVisible: settingsWindowController.isVisible,
             launcherWindowVisible: launcherWindowController.isVisible,
+            launcherWindowKey: launcherWindowController.window?.isKeyWindow ?? false,
             mainContentKind: mainWindowController.contentKind
         )
     }
