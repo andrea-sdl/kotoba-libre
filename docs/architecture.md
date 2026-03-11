@@ -131,8 +131,9 @@ Global shortcut registration is handled by `GlobalShortcutRegistrar`.
 
 Current behavior:
 
-- Registers separate global shortcuts for text and voice launchers
+- Registers separate global shortcuts for the text launcher, voice launcher, and main app window
 - Tries Carbon hotkeys first
+- Uses an event-tap-only path for shortcuts that include `Fn`
 - Installs an event tap when permissions allow
 - Falls back to event-tap-only registration when Carbon registration fails
 - Surfaces diagnostics for backend choice and permission state
@@ -144,6 +145,7 @@ Voice mode is built on native Apple microphone capture plus speech transcription
 - Opening the voice shortcut shows the launcher in voice presentation mode
 - The panel stays visible until the user clicks Cancel or presses the voice shortcut again
 - Pressing the voice shortcut a second time finalizes transcription and routes the resulting prompt through the same preset-opening path used by the text launcher
+- The show-window shortcut toggles the main window without opening the launcher
 - The System tab exposes both microphone and speech-recognition permission state because voice mode needs both
 
 This design keeps common shortcuts working while still supporting cases that need Accessibility or Input Monitoring.

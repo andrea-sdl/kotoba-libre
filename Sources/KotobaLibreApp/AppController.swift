@@ -19,6 +19,7 @@ final class AppController: NSObject, ObservableObject, ASWebAuthenticationPresen
     enum ShortcutDraftTarget {
         case launcher
         case voiceLauncher
+        case appWindow
     }
 
     enum RuntimeMode {
@@ -86,17 +87,20 @@ final class AppController: NSObject, ObservableObject, ASWebAuthenticationPresen
     )
     @Published var shortcutDraft: String = AppSettings.defaultShortcut
     @Published var voiceShortcutDraft: String = AppSettings.defaultVoiceShortcut
+    @Published var showAppWindowShortcutDraft: String = AppSettings.defaultShowAppWindowShortcut
     @Published private var recordingShortcutTarget: ShortcutDraftTarget?
     @Published private(set) var microphonePermissionState = MicrophonePermissionState.current
     @Published private(set) var isRequestingMicrophonePermission = false
     @Published private(set) var speechRecognitionPermissionState = SpeechRecognitionPermissionState.current
     @Published private(set) var isRequestingSpeechRecognitionPermission = false
     @Published private(set) var voiceShortcutRegistrationIssue: String?
+    @Published private(set) var showAppWindowShortcutRegistrationIssue: String?
 
     private let store: AppDataStore
     private let runtimeMode: RuntimeMode
     private let shortcutRegistrar = GlobalShortcutRegistrar()
     private let voiceShortcutRegistrar = GlobalShortcutRegistrar()
+    private let showAppWindowShortcutRegistrar = GlobalShortcutRegistrar()
     private var statusItem: NSStatusItem?
     private var activeAuthenticationSession: ASWebAuthenticationSession?
     private lazy var mainWindowController = MainWindowController(appController: self, store: store)
@@ -109,6 +113,10 @@ final class AppController: NSObject, ObservableObject, ASWebAuthenticationPresen
 
     var isRecordingVoiceShortcut: Bool {
         recordingShortcutTarget == .voiceLauncher
+    }
+
+    var isRecordingShowAppWindowShortcut: Bool {
+        recordingShortcutTarget == .appWindow
     }
 
     init(store: AppDataStore? = nil, runtimeMode: RuntimeMode = .standard) {
@@ -139,6 +147,7 @@ final class AppController: NSObject, ObservableObject, ASWebAuthenticationPresen
 
         shortcutDraft = settings.globalShortcut
         voiceShortcutDraft = settings.voiceGlobalShortcut
+        showAppWindowShortcutDraft = settings.showAppWindowShortcut
         refreshMicrophonePermissionState()
         refreshSpeechRecognitionPermissionState()
         setupApplicationMenu()
@@ -170,6 +179,15 @@ final class AppController: NSObject, ObservableObject, ASWebAuthenticationPresen
 
         refreshMainWindowContent(openHomeIfNeeded: false)
         mainWindowController.showAndFocus()
+    }
+
+    func togglePrimaryWindow() {
+        if mainWindowController.isVisible {
+            mainWindowController.hide()
+            return
+        }
+
+        restoreOrOpenPrimaryWindow()
     }
 
     func handleOpen(urls: [URL]) {
@@ -401,6 +419,7 @@ final class AppController: NSObject, ObservableObject, ASWebAuthenticationPresen
         settings = normalized
         shortcutDraft = normalized.globalShortcut
         voiceShortcutDraft = normalized.voiceGlobalShortcut
+        showAppWindowShortcutDraft = normalized.showAppWindowShortcut
         do {
             try persistSettings()
             if !removedPresetIDs.isEmpty {
@@ -450,6 +469,7 @@ final class AppController: NSObject, ObservableObject, ASWebAuthenticationPresen
         presets = []
         shortcutDraft = AppSettings.defaultShortcut
         voiceShortcutDraft = AppSettings.defaultVoiceShortcut
+        showAppWindowShortcutDraft = AppSettings.defaultShowAppWindowShortcut
         recordingShortcutTarget = nil
         settingsWindowController.hide()
 
@@ -498,6 +518,12 @@ final class AppController: NSObject, ObservableObject, ASWebAuthenticationPresen
         _ = try saveSettings(updated)
     }
 
+    func saveShowAppWindowShortcutDraft() throws {
+        var updated = settings
+        updated.showAppWindowShortcut = showAppWindowShortcutDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        _ = try saveSettings(updated)
+    }
+
     func resetShortcutDraft() {
         shortcutDraft = AppSettings.defaultShortcut
         if recordingShortcutTarget == .launcher {
@@ -508,6 +534,13 @@ final class AppController: NSObject, ObservableObject, ASWebAuthenticationPresen
     func resetVoiceShortcutDraft() {
         voiceShortcutDraft = AppSettings.defaultVoiceShortcut
         if recordingShortcutTarget == .voiceLauncher {
+            stopShortcutRecording()
+        }
+    }
+
+    func resetShowAppWindowShortcutDraft() {
+        showAppWindowShortcutDraft = AppSettings.defaultShowAppWindowShortcut
+        if recordingShortcutTarget == .appWindow {
             stopShortcutRecording()
         }
     }
@@ -526,12 +559,23 @@ final class AppController: NSObject, ObservableObject, ASWebAuthenticationPresen
         }
     }
 
+    func discardShowAppWindowShortcutDraftChanges() {
+        showAppWindowShortcutDraft = settings.showAppWindowShortcut
+        if isRecordingShowAppWindowShortcut {
+            stopShortcutRecording()
+        }
+    }
+
     func beginShortcutRecording() {
         beginShortcutRecording(for: .launcher)
     }
 
     func beginVoiceShortcutRecording() {
         beginShortcutRecording(for: .voiceLauncher)
+    }
+
+    func beginShowAppWindowShortcutRecording() {
+        beginShortcutRecording(for: .appWindow)
     }
 
     func stopShortcutRecording() {
@@ -545,6 +589,8 @@ final class AppController: NSObject, ObservableObject, ASWebAuthenticationPresen
             shortcutDraft = shortcut
         case .voiceLauncher:
             voiceShortcutDraft = shortcut
+        case .appWindow:
+            showAppWindowShortcutDraft = shortcut
         case nil:
             return
         }
@@ -799,6 +845,7 @@ final class AppController: NSObject, ObservableObject, ASWebAuthenticationPresen
         presets = previousPresets
         shortcutDraft = previousSettings.globalShortcut
         voiceShortcutDraft = previousSettings.voiceGlobalShortcut
+        showAppWindowShortcutDraft = previousSettings.showAppWindowShortcut
     }
 
     private func beginShortcutRecording(for target: ShortcutDraftTarget) {
@@ -807,11 +854,13 @@ final class AppController: NSObject, ObservableObject, ASWebAuthenticationPresen
     }
 
     private func suspendGlobalShortcuts() {
-        // While recording, both global shortcuts are turned off to avoid self-trigger loops.
+        // While recording, all global shortcuts are turned off to avoid self-trigger loops.
         shortcutRegistrar.unregisterCurrentShortcut()
         voiceShortcutRegistrar.unregisterCurrentShortcut()
+        showAppWindowShortcutRegistrar.unregisterCurrentShortcut()
         shortcutRegistrationIssue = nil
         voiceShortcutRegistrationIssue = nil
+        showAppWindowShortcutRegistrationIssue = nil
         refreshShortcutDiagnostics()
     }
 
@@ -842,6 +891,15 @@ final class AppController: NSObject, ObservableObject, ASWebAuthenticationPresen
         voiceShortcutRegistrationIssue = nil
     }
 
+    private func registerShowAppWindowShortcut(promptForPermission: Bool) throws {
+        try showAppWindowShortcutRegistrar.register(shortcut: settings.showAppWindowShortcut, promptForPermission: promptForPermission) { [weak self] in
+            Task { @MainActor in
+                self?.togglePrimaryWindow()
+            }
+        }
+        showAppWindowShortcutRegistrationIssue = nil
+    }
+
     private func registerGlobalShortcutsIfPossible(promptForPermission: Bool) {
         do {
             try registerGlobalShortcut(promptForPermission: promptForPermission)
@@ -854,6 +912,12 @@ final class AppController: NSObject, ObservableObject, ASWebAuthenticationPresen
             try registerVoiceShortcut(promptForPermission: promptForPermission)
         } catch {
             voiceShortcutRegistrationIssue = error.localizedDescription
+        }
+
+        do {
+            try registerShowAppWindowShortcut(promptForPermission: promptForPermission)
+        } catch {
+            showAppWindowShortcutRegistrationIssue = error.localizedDescription
         }
     }
 

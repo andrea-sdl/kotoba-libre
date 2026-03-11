@@ -106,12 +106,21 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         showAndFocus()
     }
 
+    var isVisible: Bool {
+        window?.isVisible ?? false
+    }
+
     func showAndFocus() {
         // The first show restores a saved frame. Later shows only clamp the frame to current screens.
         applyInitialWindowFrameIfNeeded()
         normalizeWindowFrameToAvailableScreens(centerIfNeeded: savedWindowFrame == nil)
         window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    func hide() {
+        persistWindowFrame()
+        window?.orderOut(nil)
     }
 
     func resetToDefaultSize() {

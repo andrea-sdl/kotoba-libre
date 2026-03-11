@@ -65,14 +65,14 @@ final class GlobalShortcutRegistrar {
         let modifierTokens = KotobaLibreCore.normalizeShortcutValue(shortcut)
             .split(separator: "+")
             .map(String.init)
-            .filter { ["CmdOrCtrl", "Ctrl", "Alt", "Shift"].contains($0) }
+            .filter { ["CmdOrCtrl", "Ctrl", "Alt", "Shift", "Fn"].contains($0) }
 
         guard !modifierTokens.isEmpty else {
             return false
         }
 
-        return !modifierTokens.allSatisfy { token in
-            token == "Alt" || token == "Shift"
+        return modifierTokens.contains { token in
+            token == "CmdOrCtrl" || token == "Ctrl" || token == "Fn"
         }
     }
 
@@ -90,6 +90,12 @@ final class GlobalShortcutRegistrar {
 
         self.activeDescriptor = descriptor
         self.onShortcutPressed = onShortcutPressed
+
+        if descriptor.prefersEventTapOnly {
+            try installEventTapFallback(descriptor: descriptor, promptForPermission: promptForPermission)
+            registrationBackend = .eventTapOnly
+            return
+        }
 
         do {
             // Prefer Carbon because it works in the background without extra permissions on supported shortcuts.
@@ -147,7 +153,7 @@ final class GlobalShortcutRegistrar {
 
     static func shortcutString(from event: NSEvent) -> String? {
         // This converts a live key press into the same token format used in settings storage.
-        let flags = event.modifierFlags.intersection([.command, .control, .option, .shift])
+        let flags = event.modifierFlags.intersection([.command, .control, .option, .shift, .function])
         guard !flags.isEmpty else {
             return nil
         }
@@ -169,6 +175,9 @@ final class GlobalShortcutRegistrar {
         }
         if flags.contains(.shift) {
             parts.append("Shift")
+        }
+        if flags.contains(.function) {
+            parts.append("Fn")
         }
         parts.append(key)
         return KotobaLibreCore.normalizeShortcutValue(parts.joined(separator: "+"))
@@ -401,7 +410,8 @@ final class GlobalShortcutRegistrar {
         .maskCommand,
         .maskControl,
         .maskAlternate,
-        .maskShift
+        .maskShift,
+        .maskSecondaryFn
     ]
 
     private static func keyToken(for event: NSEvent) -> String? {
@@ -471,6 +481,7 @@ private struct ShortcutDescriptor {
     let keyCode: Int
     let carbonModifiers: UInt32
     let requiredEventFlags: CGEventFlags
+    let prefersEventTapOnly: Bool
 
     init(shortcut: String) throws {
         let normalized = KotobaLibreCore.normalizeShortcutValue(shortcut)
@@ -497,12 +508,14 @@ private struct ShortcutDescriptor {
             case "Shift":
                 carbonModifiers |= UInt32(shiftKey)
                 requiredEventFlags.insert(.maskShift)
+            case "Fn":
+                requiredEventFlags.insert(.maskSecondaryFn)
             default:
                 keyToken = token
             }
         }
 
-        guard carbonModifiers != 0, let keyToken, let keyCode = Self.keyCode(for: keyToken) else {
+        guard !requiredEventFlags.isEmpty, let keyToken, let keyCode = Self.keyCode(for: keyToken) else {
             throw ShortcutRegistrationError.invalidShortcut(shortcut)
         }
 
@@ -511,6 +524,7 @@ private struct ShortcutDescriptor {
         self.keyCode = keyCode
         self.carbonModifiers = carbonModifiers
         self.requiredEventFlags = requiredEventFlags
+        self.prefersEventTapOnly = requiredEventFlags.contains(.maskSecondaryFn)
     }
 
     private static func keyCode(for token: String) -> Int? {
@@ -589,7 +603,7 @@ enum ShortcutRegistrationError: LocalizedError {
         case let .registrationFailed(value):
             return "Failed to register global shortcut: \(value)"
         case let .unsupportedBySystemPolicy(value):
-            return "macOS does not allow '\(value)' as a global shortcut. Use a shortcut that includes Control or Command."
+            return "macOS does not allow '\(value)' as a global shortcut. Use a shortcut that includes Control, Command, or Fn."
         case let .accessibilityPermissionRequired(value):
             return "Kotoba Libre needs Accessibility permission to use '\(value)' when Carbon registration is unavailable. Allow Kotoba Libre in System Settings > Privacy & Security > Accessibility, then relaunch the app if macOS asks for it."
         case let .inputMonitoringPermissionRequired(value):

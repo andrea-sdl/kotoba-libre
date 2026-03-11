@@ -60,10 +60,12 @@ public struct Preset: Codable, Equatable, Identifiable, Sendable {
 public struct AppSettings: Codable, Equatable, Sendable {
     public static let defaultShortcut = "CmdOrCtrl+Shift+Space"
     public static let defaultVoiceShortcut = "CmdOrCtrl+Alt+V"
+    public static let defaultShowAppWindowShortcut = "Ctrl+Alt+KeyK"
 
     public var instanceBaseUrl: String?
     public var globalShortcut: String
     public var voiceGlobalShortcut: String
+    public var showAppWindowShortcut: String
     public var autostartEnabled: Bool
     public var restrictHostToInstanceHost: Bool
     public var defaultPresetId: String?
@@ -76,6 +78,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         case instanceBaseUrl
         case globalShortcut
         case voiceGlobalShortcut
+        case showAppWindowShortcut
         case autostartEnabled
         case restrictHostToInstanceHost
         case defaultPresetId
@@ -89,6 +92,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         instanceBaseUrl: String? = nil,
         globalShortcut: String = AppSettings.defaultShortcut,
         voiceGlobalShortcut: String = AppSettings.defaultVoiceShortcut,
+        showAppWindowShortcut: String = AppSettings.defaultShowAppWindowShortcut,
         autostartEnabled: Bool = false,
         restrictHostToInstanceHost: Bool = true,
         defaultPresetId: String? = nil,
@@ -100,6 +104,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         self.instanceBaseUrl = instanceBaseUrl
         self.globalShortcut = globalShortcut
         self.voiceGlobalShortcut = voiceGlobalShortcut
+        self.showAppWindowShortcut = showAppWindowShortcut
         self.autostartEnabled = autostartEnabled
         self.restrictHostToInstanceHost = restrictHostToInstanceHost
         self.defaultPresetId = defaultPresetId
@@ -115,6 +120,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         instanceBaseUrl = try container.decodeIfPresent(String.self, forKey: .instanceBaseUrl)
         globalShortcut = try container.decodeIfPresent(String.self, forKey: .globalShortcut) ?? AppSettings.defaultShortcut
         voiceGlobalShortcut = try container.decodeIfPresent(String.self, forKey: .voiceGlobalShortcut) ?? AppSettings.defaultVoiceShortcut
+        showAppWindowShortcut = try container.decodeIfPresent(String.self, forKey: .showAppWindowShortcut) ?? AppSettings.defaultShowAppWindowShortcut
         autostartEnabled = try container.decodeIfPresent(Bool.self, forKey: .autostartEnabled) ?? false
         restrictHostToInstanceHost = try container.decodeIfPresent(Bool.self, forKey: .restrictHostToInstanceHost) ?? true
         defaultPresetId = try container.decodeIfPresent(String.self, forKey: .defaultPresetId)
@@ -129,6 +135,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         try container.encodeIfPresent(instanceBaseUrl, forKey: .instanceBaseUrl)
         try container.encode(globalShortcut, forKey: .globalShortcut)
         try container.encode(voiceGlobalShortcut, forKey: .voiceGlobalShortcut)
+        try container.encode(showAppWindowShortcut, forKey: .showAppWindowShortcut)
         try container.encode(autostartEnabled, forKey: .autostartEnabled)
         try container.encode(restrictHostToInstanceHost, forKey: .restrictHostToInstanceHost)
         try container.encodeIfPresent(defaultPresetId, forKey: .defaultPresetId)
@@ -220,9 +227,15 @@ public enum KotobaLibreCore {
             return "Alt"
         case "⇧", "shift":
             return "Shift"
+        case "fn", "function":
+            return "Fn"
         case "spacebar", "space":
             return "Space"
         default:
+            if lower.hasPrefix("f"), let functionKeyNumber = Int(lower.dropFirst()), (1...24).contains(functionKeyNumber) {
+                return "F\(functionKeyNumber)"
+            }
+
             if trimmed.count == 1, let scalar = trimmed.unicodeScalars.first {
                 if CharacterSet.letters.contains(scalar) {
                     return "Key\(trimmed.uppercased())"
@@ -268,6 +281,8 @@ public enum KotobaLibreCore {
         normalized.globalShortcut = shortcut.isEmpty ? AppSettings.defaultShortcut : shortcut
         let voiceShortcut = normalizeShortcutValue(normalized.voiceGlobalShortcut)
         normalized.voiceGlobalShortcut = voiceShortcut.isEmpty ? AppSettings.defaultVoiceShortcut : voiceShortcut
+        let showAppWindowShortcut = normalizeShortcutValue(normalized.showAppWindowShortcut)
+        normalized.showAppWindowShortcut = showAppWindowShortcut.isEmpty ? AppSettings.defaultShowAppWindowShortcut : showAppWindowShortcut
 
         if let defaultPresetID = normalized.defaultPresetId?.trimmingCharacters(in: .whitespacesAndNewlines), !defaultPresetID.isEmpty {
             normalized.defaultPresetId = defaultPresetID
@@ -282,8 +297,13 @@ public enum KotobaLibreCore {
 
     public static func validateShortcutConfiguration(_ settings: AppSettings) -> ValidationResult {
         let normalizedSettings = normalizeSettings(settings)
-        guard normalizedSettings.globalShortcut != normalizedSettings.voiceGlobalShortcut else {
-            return ValidationResult(valid: false, reason: "Launcher and voice shortcuts must be different")
+        let shortcuts = [
+            normalizedSettings.globalShortcut,
+            normalizedSettings.voiceGlobalShortcut,
+            normalizedSettings.showAppWindowShortcut
+        ]
+        guard Set(shortcuts).count == shortcuts.count else {
+            return ValidationResult(valid: false, reason: "Text launcher, voice launcher, and app window shortcuts must be different")
         }
 
         return ValidationResult(valid: true)

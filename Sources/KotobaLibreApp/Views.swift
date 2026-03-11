@@ -464,6 +464,8 @@ private func shortcutDisplayParts(_ shortcut: String) -> [String] {
             return "⌥"
         case "Shift":
             return "⇧"
+        case "Fn":
+            return "fn"
         default:
             return token.replacingOccurrences(of: "Key", with: "").replacingOccurrences(of: "Digit", with: "")
         }
@@ -1211,6 +1213,7 @@ struct SettingsPanelView: View {
             instanceBaseUrl: instanceBaseURL,
             globalShortcut: appController.settings.globalShortcut,
             voiceGlobalShortcut: appController.settings.voiceGlobalShortcut,
+            showAppWindowShortcut: appController.settings.showAppWindowShortcut,
             autostartEnabled: appController.settings.autostartEnabled,
             restrictHostToInstanceHost: restrictHost,
             defaultPresetId: appController.settings.defaultPresetId,
@@ -1486,6 +1489,7 @@ struct SystemPanelView: View {
             instanceBaseUrl: appController.settings.instanceBaseUrl,
             globalShortcut: appController.settings.globalShortcut,
             voiceGlobalShortcut: appController.settings.voiceGlobalShortcut,
+            showAppWindowShortcut: appController.settings.showAppWindowShortcut,
             autostartEnabled: autostartEnabled,
             restrictHostToInstanceHost: appController.settings.restrictHostToInstanceHost,
             defaultPresetId: appController.settings.defaultPresetId,
@@ -1497,7 +1501,7 @@ struct SystemPanelView: View {
     }
 }
 
-// ShortcutPanelView lets the user record and save the global launcher shortcut.
+// ShortcutPanelView lets the user record and save the app's global shortcuts.
 struct ShortcutPanelView: View {
     @ObservedObject var appController: AppController
     @EnvironmentObject private var navigationGuard: SettingsNavigationGuard
@@ -1508,7 +1512,7 @@ struct ShortcutPanelView: View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Shortcuts")
                 .font(.largeTitle.bold())
-            Text("Configure separate shortcuts for typed prompts and voice mode.")
+            Text("Configure separate shortcuts for typed prompts, voice mode, and the main app window.")
                 .foregroundStyle(.secondary)
 
             Form {
@@ -1587,6 +1591,44 @@ struct ShortcutPanelView: View {
                             .foregroundStyle(Color.red)
                     }
                 }
+
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Show App Window Shortcut")
+                        .font(.headline)
+                    Text("Shows the main Kotoba Libre window, and hides it again if you press the shortcut while it is already visible.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                    ShortcutPreviewView(shortcut: appController.showAppWindowShortcutDraft)
+
+                    HStack {
+                        Button(appController.isRecordingShowAppWindowShortcut ? "Stop" : "Record Shortcut") {
+                            if appController.isRecordingShowAppWindowShortcut {
+                                appController.stopShortcutRecording()
+                                setStatus("Show window shortcut capture canceled.", isError: false)
+                            } else {
+                                appController.beginShowAppWindowShortcutRecording()
+                                setStatus("Press a key combination (Esc to cancel).", isError: false)
+                            }
+                        }
+                        Button("Reset Default") {
+                            appController.resetShowAppWindowShortcutDraft()
+                            do {
+                                try appController.saveShowAppWindowShortcutDraft()
+                                setStatus("Reset to default: \(AppSettings.defaultShowAppWindowShortcut)", isError: false)
+                            } catch {
+                                setStatus(error.localizedDescription, isError: true)
+                            }
+                        }
+                    }
+
+                    if appController.isRecordingShowAppWindowShortcut {
+                        Text("Listening for a shortcut...")
+                            .foregroundStyle(.secondary)
+                    } else if let registrationIssue = appController.showAppWindowShortcutRegistrationIssue {
+                        Text(registrationIssue)
+                            .foregroundStyle(Color.red)
+                    }
+                }
             }
             .formStyle(.grouped)
 
@@ -1607,11 +1649,17 @@ struct ShortcutPanelView: View {
         .onChange(of: appController.voiceShortcutDraft) {
             updateDirtyState()
         }
+        .onChange(of: appController.showAppWindowShortcutDraft) {
+            updateDirtyState()
+        }
         .onChange(of: appController.isRecordingShortcut) { previousValue, newValue in
             handleTextRecordingChange(from: previousValue, to: newValue)
         }
         .onChange(of: appController.isRecordingVoiceShortcut) { previousValue, newValue in
             handleVoiceRecordingChange(from: previousValue, to: newValue)
+        }
+        .onChange(of: appController.isRecordingShowAppWindowShortcut) { previousValue, newValue in
+            handleShowAppWindowRecordingChange(from: previousValue, to: newValue)
         }
         .onChange(of: appController.settings) {
             updateDirtyState()
@@ -1626,6 +1674,7 @@ struct ShortcutPanelView: View {
     private func discardChanges() {
         appController.discardShortcutDraftChanges()
         appController.discardVoiceShortcutDraftChanges()
+        appController.discardShowAppWindowShortcutDraftChanges()
         updateDirtyState()
     }
 
@@ -1665,13 +1714,33 @@ struct ShortcutPanelView: View {
         }
     }
 
+    private func handleShowAppWindowRecordingChange(from previousValue: Bool, to newValue: Bool) {
+        updateDirtyState()
+        guard previousValue, !newValue else {
+            return
+        }
+
+        guard appController.showAppWindowShortcutDraft != appController.settings.showAppWindowShortcut else {
+            return
+        }
+
+        do {
+            try appController.saveShowAppWindowShortcutDraft()
+            setStatus("Show app window shortcut saved.", isError: false)
+        } catch {
+            setStatus(error.localizedDescription, isError: true)
+        }
+    }
+
     private func updateDirtyState() {
         // Recording mode counts as unsaved work because the user has started an in-progress edit.
         let isDirty =
             appController.shortcutDraft != appController.settings.globalShortcut ||
             appController.voiceShortcutDraft != appController.settings.voiceGlobalShortcut ||
+            appController.showAppWindowShortcutDraft != appController.settings.showAppWindowShortcut ||
             appController.isRecordingShortcut ||
-            appController.isRecordingVoiceShortcut
+            appController.isRecordingVoiceShortcut ||
+            appController.isRecordingShowAppWindowShortcut
         navigationGuard.setDirty(isDirty, for: .shortcuts)
     }
 }
