@@ -9,6 +9,7 @@ The app gives LibreChat a focused desktop shell with:
 - Configurable app presence modes: dock only, dock + menu bar, or menu bar only
 - A Spotlight-style launcher opened through a global keyboard shortcut
 - A persistent voice launcher with its own shortcut, animated listening state, and Apple speech transcription
+- A dedicated shortcut for bringing the main app window to the front
 - Native WebKit popup windows when LibreChat opens secondary flows, including cross-domain HTTPS popup navigation
 - Best-effort browser-backed OAuth handling for popup auth flows, with `ASWebAuthenticationSession` for `kotobalibre://...` callbacks and browser fallback otherwise
 - Passkey and security-key login support for build-configured `webcredentials` domains
@@ -136,6 +137,12 @@ From the System tab, users can also choose whether Kotoba Libre appears:
 
 When the menu bar item is enabled, it includes actions for opening Settings, showing the LibreChat window, and quitting the app.
 
+The Shortcuts tab now manages three separate shortcuts:
+
+- Text launcher
+- Voice launcher
+- Show app window, which defaults to `Ctrl+Option+K`
+
 The System tab also includes microphone and speech-recognition permission status, debug logging, and a destructive reset action that clears config and returns the app to onboarding.
 
 When host restriction is enabled and you change the configured LibreChat instance to a different host, Kotoba Libre re-validates saved agents, offers an export step first, and removes any incompatible agents after you confirm the change.
@@ -156,6 +163,12 @@ Voice mode adds a second floating launcher that:
 - Starts recording immediately with an animated listening indicator instead of a text field
 - Keeps the panel visible until you click Cancel or press the voice shortcut again
 - Finishes transcription and sends the spoken prompt to the selected agent when you trigger the shortcut again
+
+The main app window can also be surfaced directly with its own shortcut:
+
+- Defaults to `Ctrl+Option+K`
+- Shows the main Kotoba Libre window without opening the launcher
+- Hides the main window again when you trigger it a second time
 
 ## Deep Links
 

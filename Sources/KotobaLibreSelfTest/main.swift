@@ -43,12 +43,14 @@ struct KotobaLibreSelfTest {
 
         expect(KotobaLibreCore.normalizeShortcutValue("⌘ + ⇧ + space") == "CmdOrCtrl+Shift+Space", "shortcutSymbolsAreNormalized cmd")
         expect(KotobaLibreCore.normalizeShortcutValue("ctrl + k") == "Ctrl+KeyK", "shortcutSymbolsAreNormalized ctrl")
+        expect(KotobaLibreCore.normalizeShortcutValue("ctrl + option + k") == "Ctrl+Alt+KeyK", "shortcutSymbolsAreNormalized showAppWindowDefault")
 
         let normalizedSettings = KotobaLibreCore.normalizeSettings(
             AppSettings(
                 instanceBaseUrl: "https://chat.example.com",
                 globalShortcut: "commandorcontrol + option + v",
                 voiceGlobalShortcut: "ctrl + shift + m",
+                showAppWindowShortcut: "ctrl + option + k",
                 autostartEnabled: false,
                 restrictHostToInstanceHost: true,
                 defaultPresetId: "preset-1",
@@ -60,6 +62,7 @@ struct KotobaLibreSelfTest {
         )
         expect(normalizedSettings.globalShortcut == "CmdOrCtrl+Alt+KeyV", "settingsNormalizeShortcutAliases")
         expect(normalizedSettings.voiceGlobalShortcut == "Ctrl+Shift+KeyM", "settingsNormalizeVoiceShortcutAliases")
+        expect(normalizedSettings.showAppWindowShortcut == "Ctrl+Alt+KeyK", "settingsNormalizeShowAppWindowShortcutAliases")
         expect(normalizedSettings.appVisibilityMode == .dockAndMenuBar, "settingsPreserveVisibilityMode")
         expect(normalizedSettings.debugLoggingEnabled, "settingsPreserveDebugLoggingFlag")
         expect(KotobaLibreCore.validateShortcutConfiguration(normalizedSettings).valid, "settingsAllowDistinctTextAndVoiceShortcuts")
@@ -70,6 +73,14 @@ struct KotobaLibreSelfTest {
             voiceGlobalShortcut: "commandorcontrol + shift + space"
         )
         expect(!KotobaLibreCore.validateShortcutConfiguration(conflictingShortcuts).valid, "settingsRejectMatchingTextAndVoiceShortcuts")
+
+        let duplicateWindowShortcutSettings = AppSettings(
+            instanceBaseUrl: "https://chat.example.com",
+            globalShortcut: "CmdOrCtrl+Shift+Space",
+            voiceGlobalShortcut: "Ctrl+Shift+KeyM",
+            showAppWindowShortcut: "commandorcontrol + shift + space"
+        )
+        expect(!KotobaLibreCore.validateShortcutConfiguration(duplicateWindowShortcutSettings).valid, "settingsRejectMatchingAppWindowShortcut")
 
         let openURLParsed = try KotobaLibreCore.parseDeepLink("kotobalibre://open?url=https%3A%2F%2Fchat.example.com%2Fc%2F123")
         expect(openURLParsed == .openURL("https://chat.example.com/c/123"), "deepLinkOpenURLIsParsed")
@@ -176,6 +187,7 @@ struct KotobaLibreSelfTest {
         expect(decodedLegacySettings.appVisibilityMode == .dockOnly, "settingsDecodeLegacyVisibilityDefault")
         expect(!decodedLegacySettings.debugLoggingEnabled, "settingsDecodeLegacyDebugLoggingDefault")
         expect(decodedLegacySettings.voiceGlobalShortcut == AppSettings.defaultVoiceShortcut, "settingsDecodeLegacyVoiceShortcutDefault")
+        expect(decodedLegacySettings.showAppWindowShortcut == AppSettings.defaultShowAppWindowShortcut, "settingsDecodeLegacyShowAppWindowShortcutDefault")
         expect(AppResources.iconPNGURL?.lastPathComponent == "AppIcon.png", "appResourcesResolvePNG")
         expect(AppResources.iconICNSURL?.lastPathComponent == "AppIcon.icns", "appResourcesResolveICNS")
 
