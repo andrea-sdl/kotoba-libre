@@ -7,8 +7,8 @@ import WebKit
 // The main window and embedded web view live together in this file because they share one navigation flow.
 private let defaultMainWindowSize = NSSize(width: 800, height: 600)
 private let minimumMainWindowSize = NSSize(width: 700, height: 480)
-private let onboardingWindowSize = NSSize(width: 860, height: 620)
-private let onboardingMinimumWindowSize = NSSize(width: 860, height: 620)
+private let onboardingWindowSize = NSSize(width: 804, height: 540)
+private let onboardingMinimumWindowSize = NSSize(width: 804, height: 540)
 
 // These identifiers keep the main window toolbar definition local to the web window controller file.
 private enum MainWindowToolbarItem {

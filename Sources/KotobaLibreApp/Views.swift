@@ -12,7 +12,7 @@ private enum OnboardingStep: Int, CaseIterable {
     var title: String {
         switch self {
         case .instance:
-            return "LibreChat Instance"
+            return "Instance"
         case .permissions:
             return "Permissions"
         case .complete:
@@ -23,22 +23,22 @@ private enum OnboardingStep: Int, CaseIterable {
     var headline: String {
         switch self {
         case .instance:
-            return "Connect your LibreChat home"
+            return "Choose your LibreChat home"
         case .permissions:
-            return "Enable the features you want"
+            return "Turn on voice features when you want them"
         case .complete:
-            return "Setup is complete"
+            return "You're ready to go"
         }
     }
 
     var detail: String {
         switch self {
         case .instance:
-            return "Add the base URL once and Kotoba Libre will keep navigation anchored to that instance."
+            return "Add the one LibreChat base URL Kotoba Libre should use everywhere."
         case .permissions:
-            return "Microphone and speech recognition are optional, but they unlock voice features when you want them."
+            return "Voice permissions are optional. You can allow them now or later when you first use voice input."
         case .complete:
-            return "Your instance and optional permissions are ready. Open LibreChat to start using the app."
+            return "Your instance is configured and the app is ready to open LibreChat."
         }
     }
 
@@ -52,6 +52,17 @@ private enum OnboardingStep: Int, CaseIterable {
             return "sparkles"
         }
     }
+
+    var sidebarDetail: String {
+        switch self {
+        case .instance:
+            return "Set the LibreChat URL"
+        case .permissions:
+            return "Optional voice access"
+        case .complete:
+            return "Save and open LibreChat"
+        }
+    }
 }
 
 private enum OnboardingField: Hashable {
@@ -60,8 +71,8 @@ private enum OnboardingField: Hashable {
 
 // OnboardingFlowView is the first-run experience shown when no instance URL exists yet.
 struct OnboardingFlowView: View {
-    private static let wizardWidth: CGFloat = 820
-    private static let wizardHeight: CGFloat = 560
+    private static let wizardWidth: CGFloat = 804
+    private static let wizardHeight: CGFloat = 540
 
     @ObservedObject var appController: AppController
     @State private var currentStep: OnboardingStep = .instance
@@ -73,31 +84,18 @@ struct OnboardingFlowView: View {
     var body: some View {
         HStack(spacing: 0) {
             OnboardingSidebar(currentStep: currentStep)
-                .frame(width: 236)
+                .frame(width: 212)
                 .frame(maxHeight: .infinity, alignment: .topLeading)
-                .padding(.vertical, 6)
+                .padding(.vertical, 4)
 
             Divider()
 
-            VStack(alignment: .leading, spacing: 20) {
-                Label("Step \(currentStep.rawValue + 1) of \(OnboardingStep.allCases.count)", systemImage: currentStep.symbolName)
-                    .font(.footnote.weight(.semibold))
-                    .foregroundStyle(.secondary)
-
-                Text(currentStep.headline)
-                    .font(.system(size: 25, weight: .bold, design: .rounded))
-                    .lineLimit(2)
-                    .minimumScaleFactor(0.88)
-
-                Text(currentStep.detail)
-                    .font(.body)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-
+            VStack(alignment: .leading, spacing: 24) {
+                OnboardingStepHeader(step: currentStep)
                 currentStepView
                     .frame(maxWidth: .infinity, alignment: .topLeading)
 
-                Spacer(minLength: 12)
+                Spacer(minLength: 8)
 
                 Divider()
 
@@ -111,15 +109,16 @@ struct OnboardingFlowView: View {
                     onPrimaryAction: submitCurrentStep
                 )
             }
-            .padding(.leading, 28)
+            .padding(.leading, 30)
             .padding(.trailing, 20)
-            .padding(.vertical, 22)
+            .padding(.vertical, 24)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
-        .padding(24)
+        .padding(22)
         .background {
             AppGlassBackground()
         }
+        .fontDesign(.serif)
         .frame(width: Self.wizardWidth, height: Self.wizardHeight)
         .onAppear {
             instanceBaseURL = appController.settings.instanceBaseUrl ?? ""
@@ -147,76 +146,32 @@ struct OnboardingFlowView: View {
     }
 
     private var onboardingInstanceStep: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            GlassField("LibreChat Base URL") {
-                TextField("https://chat.example.com", text: $instanceBaseURL)
-                    .disableAutocorrection(true)
-                    .focused($focusedField, equals: OnboardingField.instanceBaseURL)
-                    .onSubmit {
-                        if instanceValidation.valid {
-                            submitCurrentStep()
-                        }
-                    }
-                    .glassTextInput()
-            }
-
-            Text("Use the full hosted or self-hosted HTTPS base URL for the LibreChat home you want Kotoba Libre to open.")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
+        OnboardingInstanceStepView(
+            instanceBaseURL: $instanceBaseURL,
+            focusedField: $focusedField,
+            validation: instanceValidation,
+            onSubmit: submitCurrentStep
+        )
     }
 
     private var onboardingPermissionsStep: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            OnboardingMicrophonePermissionRow(appController: appController)
-            OnboardingSpeechPermissionRow(appController: appController)
-
-            Text("You can skip these for now and enable them later in Settings.")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-        }
+        OnboardingPermissionsStepView(appController: appController)
     }
 
     private var onboardingCompleteStep: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            OnboardingConfettiView()
-                .frame(height: 118)
-                .overlay(alignment: .center) {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 44, weight: .semibold))
-                        .foregroundStyle(Color.accentColor)
-                        .glassEffect(.regular.tint(Color.white.opacity(0.14)), in: .circle)
-                }
-
-            VStack(alignment: .leading, spacing: 10) {
-                Text("Everything is ready.")
-                    .font(.title3.weight(.semibold))
-
-                Text("When you continue, Kotoba Libre will save your setup and open your LibreChat instance.")
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            HStack(spacing: 12) {
-                Label(instanceBaseURL.trimmingCharacters(in: .whitespacesAndNewlines), systemImage: "network")
-                    .font(.footnote.weight(.semibold))
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .fill(Color.primary.opacity(0.04))
-                    )
-            }
-        }
+        OnboardingCompleteStepView(
+            instanceBaseURL: instanceBaseURL,
+            microphonePermissionState: appController.microphonePermissionState,
+            speechPermissionState: appController.speechRecognitionPermissionState
+        )
     }
 
     private var primaryActionTitle: String {
         switch currentStep {
         case .instance:
-            return "Next: Permissions"
+            return "Continue"
         case .permissions:
-            return "Next: Complete"
+            return "Continue"
         case .complete:
             return "Start Using LibreChat"
         }
@@ -232,23 +187,22 @@ struct OnboardingFlowView: View {
     }
 
     private var footerMessage: String {
+        if currentStep == .instance {
+            return ""
+        }
+
         if !statusMessage.isEmpty {
             return statusMessage
         }
 
-        switch currentStep {
-        case .instance:
-            return instanceValidation.valid
-                ? "Looks good. Embedded navigation will stay pinned to this host."
-                : (instanceValidation.reason ?? "Enter your LibreChat base URL to continue.")
-        case .permissions:
-            return "Voice permissions are optional. You can continue even if you leave them off."
-        case .complete:
-            return "One last step: save this setup and open LibreChat."
-        }
+        return ""
     }
 
     private var footerMessageIsError: Bool {
+        if currentStep == .instance {
+            return false
+        }
+
         if !statusMessage.isEmpty {
             return statusIsError
         }
@@ -281,7 +235,8 @@ struct OnboardingFlowView: View {
         switch currentStep {
         case .instance:
             guard instanceValidation.valid else {
-                setStatus(instanceValidation.reason ?? "Enter a valid LibreChat URL.", isError: true)
+                setStatus("", isError: false)
+                focusedField = .instanceBaseURL
                 return
             }
 
@@ -343,12 +298,188 @@ struct OnboardingFlowView: View {
 
 }
 
+// OnboardingStepHeader keeps the active step title and supporting copy consistent across pages.
+private struct OnboardingStepHeader: View {
+    let step: OnboardingStep
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("Step \(step.rawValue + 1) of \(OnboardingStep.allCases.count)", systemImage: step.symbolName)
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.secondary)
+
+            Text(step.headline)
+                .font(.system(size: 29, weight: .bold, design: .serif))
+                .lineLimit(2)
+                .minimumScaleFactor(0.92)
+
+            Text(step.detail)
+                .font(.body)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+
+// OnboardingInstanceStepView keeps the URL entry step focused on one decision and validates near the field.
+private struct OnboardingInstanceStepView: View {
+    @Binding var instanceBaseURL: String
+    @FocusState.Binding var focusedField: OnboardingField?
+    let validation: ValidationResult
+    let onSubmit: () -> Void
+
+    private var trimmedValue: String {
+        instanceBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var shouldShowValidation: Bool {
+        !trimmedValue.isEmpty
+    }
+
+    var body: some View {
+        GlassPanel(cornerRadius: 22, padding: 18) {
+            VStack(alignment: .leading, spacing: 14) {
+                GlassField("LibreChat Base URL") {
+                    TextField("https://chat.example.com", text: $instanceBaseURL)
+                        .disableAutocorrection(true)
+                        .focused($focusedField, equals: OnboardingField.instanceBaseURL)
+                        .onSubmit {
+                            if validation.valid {
+                                onSubmit()
+                            }
+                        }
+                        .glassTextInput()
+                }
+
+                Text("Use the full hosted or self-hosted HTTPS URL for the LibreChat home you want this app to open.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if shouldShowValidation {
+                    OnboardingValidationRow(
+                        message: validation.valid
+                            ? "That URL looks valid and ready to use."
+                            : (validation.reason ?? "Enter a valid LibreChat URL."),
+                        isValid: validation.valid
+                    )
+                }
+            }
+        }
+    }
+}
+
+// OnboardingPermissionsStepView defers optional voice permissions to a dedicated, skippable review step.
+private struct OnboardingPermissionsStepView: View {
+    @ObservedObject var appController: AppController
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            OnboardingMicrophonePermissionRow(appController: appController)
+            OnboardingSpeechPermissionRow(appController: appController)
+
+            Text("Kotoba Libre only prompts for these when you choose Allow, and you can turn them on later in Settings.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+
+// OnboardingCompleteStepView confirms the setup choices before the final save.
+private struct OnboardingCompleteStepView: View {
+    let instanceBaseURL: String
+    let microphonePermissionState: MicrophonePermissionState
+    let speechPermissionState: SpeechRecognitionPermissionState
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            OnboardingConfettiView()
+                .frame(height: 116)
+                .overlay(alignment: .center) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 44, weight: .semibold))
+                        .foregroundStyle(Color.accentColor)
+                        .glassEffect(.regular.tint(Color.white.opacity(0.14)), in: .circle)
+                }
+
+            GlassPanel(cornerRadius: 22, padding: 18) {
+                VStack(alignment: .leading, spacing: 14) {
+                    Text("Review your setup")
+                        .font(.title3.weight(.semibold))
+
+                    OnboardingSummaryRow(
+                        title: "LibreChat home",
+                        value: instanceBaseURL.trimmingCharacters(in: .whitespacesAndNewlines),
+                        systemImage: "network"
+                    )
+                    OnboardingSummaryRow(
+                        title: "Voice input",
+                        value: permissionSummary(for: microphonePermissionState),
+                        systemImage: "mic"
+                    )
+                    OnboardingSummaryRow(
+                        title: "Speech recognition",
+                        value: permissionSummary(for: speechPermissionState),
+                        systemImage: "waveform"
+                    )
+                }
+            }
+        }
+    }
+
+    private func permissionSummary(for state: MicrophonePermissionState) -> String {
+        switch state {
+        case .granted:
+            return "Ready"
+        case .notDetermined:
+            return "Not enabled yet"
+        case .denied:
+            return "Blocked in System Settings"
+        case .restricted:
+            return "Restricted on this Mac"
+        }
+    }
+
+    private func permissionSummary(for state: SpeechRecognitionPermissionState) -> String {
+        switch state {
+        case .granted:
+            return "Ready"
+        case .notDetermined:
+            return "Not enabled yet"
+        case .denied:
+            return "Blocked in System Settings"
+        case .restricted:
+            return "Restricted on this Mac"
+        }
+    }
+}
+
+// OnboardingValidationRow keeps success and error feedback close to the field it refers to.
+private struct OnboardingValidationRow: View {
+    let message: String
+    let isValid: Bool
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: isValid ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                .foregroundStyle(isValid ? Color.accentColor : Color.red)
+
+            Text(message)
+                .font(.footnote)
+                .foregroundStyle(isValid ? .secondary : Color.red)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .accessibilityElement(children: .combine)
+    }
+}
+
 // OnboardingSidebar gives the wizard a compact left rail with progress and product context.
 private struct OnboardingSidebar: View {
     let currentStep: OnboardingStep
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
+        VStack(alignment: .leading, spacing: 20) {
             HStack(spacing: 12) {
                 if let image = AppLogoView.iconImage {
                     Image(nsImage: image)
@@ -359,7 +490,7 @@ private struct OnboardingSidebar: View {
                 }
 
                 Text(appDisplayName)
-                    .font(.title2.weight(.bold))
+                    .font(.system(size: 22, weight: .bold, design: .serif))
                     .lineLimit(2)
                     .minimumScaleFactor(0.9)
             }
@@ -386,14 +517,8 @@ private struct OnboardingStepBadge: View {
     let step: OnboardingStep
     let currentStep: OnboardingStep
 
-    private var statusSymbolName: String {
-        if currentStep.rawValue > step.rawValue {
-            return "checkmark.circle.fill"
-        }
-        if currentStep == step {
-            return "circle.fill"
-        }
-        return "circle"
+    private var isCompleted: Bool {
+        currentStep.rawValue > step.rawValue
     }
 
     private var tint: Color {
@@ -402,12 +527,11 @@ private struct OnboardingStepBadge: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
-            Image(systemName: statusSymbolName)
-                .font(.body.weight(.semibold))
+            stepMarker
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(step.title)
-                Text(step == currentStep ? step.headline : " ")
+                Text(step.sidebarDetail)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -433,6 +557,27 @@ private struct OnboardingStepBadge: View {
         }
         return "up next"
     }
+
+    @ViewBuilder
+    private var stepMarker: some View {
+        if isCompleted {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.body.weight(.semibold))
+        } else {
+            ZStack {
+                Circle()
+                    .strokeBorder(currentStep == step ? tint : Color.secondary.opacity(0.55), lineWidth: currentStep == step ? 0 : 1.4)
+                    .background(
+                        Circle()
+                            .fill(currentStep == step ? tint : Color.clear)
+                    )
+                Text("\(step.rawValue + 1)")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(currentStep == step ? Color.white : .secondary)
+            }
+            .frame(width: 20, height: 20)
+        }
+    }
 }
 
 // OnboardingFooterBar anchors feedback and navigation inside the wizard without extra stacked panels.
@@ -447,17 +592,23 @@ private struct OnboardingFooterBar: View {
 
     var body: some View {
         HStack(spacing: 16) {
-            OnboardingInlineMessage(message: message, isError: isError)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            if !message.isEmpty {
+                OnboardingInlineMessage(message: message, isError: isError)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                Spacer(minLength: 0)
+            }
 
             if currentStep != .instance {
                 Button("Back", action: onBack)
                     .buttonStyle(.glass)
+                    .keyboardShortcut(.cancelAction)
             }
 
             Button(primaryActionTitle, action: onPrimaryAction)
                 .buttonStyle(.glassProminent)
                 .disabled(isPrimaryDisabled)
+                .keyboardShortcut(.defaultAction)
         }
     }
 }
@@ -481,82 +632,28 @@ private struct OnboardingInlineMessage: View {
     }
 }
 
-// OnboardingShortcutCard groups each shortcut configuration into a compact reusable block.
-private struct OnboardingShortcutCard: View {
-    enum LayoutStyle {
-        case compact
-        case regular
-    }
-
+// OnboardingSummaryRow highlights the final setup state in a compact review list.
+private struct OnboardingSummaryRow: View {
     let title: String
-    let description: String
-    let shortcut: String
-    let isRecording: Bool
-    let issue: String?
-    let recordLabel: String
-    let defaultLabel: String
-    let layoutStyle: LayoutStyle
-    let onRecord: () -> Void
-    let onReset: () -> Void
+    let value: String
+    let systemImage: String
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(title)
-                .font(.subheadline.weight(.semibold))
+        HStack(spacing: 12) {
+            Image(systemName: systemImage)
+                .foregroundStyle(Color.accentColor)
+                .frame(width: 18)
 
-            Text(description)
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            ShortcutPreviewView(shortcut: shortcut)
-
-            buttonLayout
-
-            Text(statusMessage)
-                .font(.footnote)
-                .foregroundStyle(statusColor)
-                .opacity(statusMessage.isEmpty ? 0 : 1)
-        }
-        .padding(14)
-        .background(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(Color.primary.opacity(0.03))
-        )
-    }
-
-    @ViewBuilder
-    private var buttonLayout: some View {
-        switch layoutStyle {
-        case .compact:
-            VStack(alignment: .leading, spacing: 8) {
-                Button(recordLabel, action: onRecord)
-                    .buttonStyle(.glassProminent)
-
-                Button(defaultLabel, action: onReset)
-                    .buttonStyle(.glass)
-            }
-        case .regular:
-            HStack {
-                Button(recordLabel, action: onRecord)
-                    .buttonStyle(.glassProminent)
-
-                Button(defaultLabel, action: onReset)
-                    .buttonStyle(.glass)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Text(value)
+                    .font(.body.weight(.semibold))
+                    .textSelection(.enabled)
             }
         }
-    }
-
-    private var statusMessage: String {
-        if isRecording {
-            return "Listening for a shortcut..."
-        }
-
-        return issue ?? ""
-    }
-
-    private var statusColor: Color {
-        issue == nil ? .secondary : .red
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -1060,7 +1157,7 @@ struct GlassTextInputModifier: ViewModifier {
     func body(content: Content) -> some View {
         content
             .textFieldStyle(.plain)
-            .font(.system(size: 15, weight: .medium, design: .rounded))
+            .font(.system(size: 15, weight: .medium, design: .serif))
             .padding(.horizontal, 14)
             .padding(.vertical, 12)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -1147,6 +1244,7 @@ struct SettingsRootView: View {
                 .tag(SettingsTab.about)
         }
         .padding(20)
+        .fontDesign(.serif)
         .frame(minWidth: 980, minHeight: 640, alignment: .topLeading)
         .onChange(of: selectedTab) {
             let nextTab = selectedTab
