@@ -6,7 +6,6 @@ import KotobaLibreCore
 // onboarding, settings tabs, and the floating launcher UI.
 private enum OnboardingStep: Int, CaseIterable {
     case instance
-    case shortcuts
     case permissions
     case complete
 
@@ -14,8 +13,6 @@ private enum OnboardingStep: Int, CaseIterable {
         switch self {
         case .instance:
             return "LibreChat Instance"
-        case .shortcuts:
-            return "Shortcuts"
         case .permissions:
             return "Permissions"
         case .complete:
@@ -27,8 +24,6 @@ private enum OnboardingStep: Int, CaseIterable {
         switch self {
         case .instance:
             return "Connect your LibreChat home"
-        case .shortcuts:
-            return "Choose your launch shortcuts"
         case .permissions:
             return "Enable the features you want"
         case .complete:
@@ -40,12 +35,10 @@ private enum OnboardingStep: Int, CaseIterable {
         switch self {
         case .instance:
             return "Add the base URL once and Kotoba Libre will keep navigation anchored to that instance."
-        case .shortcuts:
-            return "Configure shortcuts for text launch, voice launch, and showing the main app window."
         case .permissions:
             return "Microphone and speech recognition are optional, but they unlock voice features when you want them."
         case .complete:
-            return "Your instance, shortcuts, and optional permissions are ready. Open LibreChat to start using the app."
+            return "Your instance and optional permissions are ready. Open LibreChat to start using the app."
         }
     }
 
@@ -53,8 +46,6 @@ private enum OnboardingStep: Int, CaseIterable {
         switch self {
         case .instance:
             return "network"
-        case .shortcuts:
-            return "command"
         case .permissions:
             return "hand.raised"
         case .complete:
@@ -148,8 +139,6 @@ struct OnboardingFlowView: View {
         switch currentStep {
         case .instance:
             onboardingInstanceStep
-        case .shortcuts:
-            onboardingShortcutsStep
         case .permissions:
             onboardingPermissionsStep
         case .complete:
@@ -175,62 +164,6 @@ struct OnboardingFlowView: View {
                 .font(.footnote)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-        }
-    }
-
-    private var onboardingShortcutsStep: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .top, spacing: 12) {
-                OnboardingShortcutCard(
-                    title: "Text Launcher",
-                    description: "Opens the launcher with the text prompt field ready.",
-                    shortcut: appController.shortcutDraft,
-                    isRecording: appController.isRecordingShortcut,
-                    issue: appController.shortcutRegistrationIssue,
-                    recordLabel: appController.isRecordingShortcut ? "Stop" : "Record",
-                    defaultLabel: "Default",
-                    layoutStyle: .compact,
-                    onRecord: toggleLauncherShortcutRecording,
-                    onReset: resetLauncherShortcut
-                )
-                .frame(maxWidth: .infinity, alignment: .topLeading)
-
-                OnboardingShortcutCard(
-                    title: "Voice Launcher",
-                    description: "Opens voice mode and sends the transcript on the next trigger.",
-                    shortcut: appController.voiceShortcutDraft,
-                    isRecording: appController.isRecordingVoiceShortcut,
-                    issue: appController.voiceShortcutRegistrationIssue,
-                    recordLabel: appController.isRecordingVoiceShortcut ? "Stop" : "Record",
-                    defaultLabel: "Default",
-                    layoutStyle: .compact,
-                    onRecord: toggleVoiceShortcutRecording,
-                    onReset: resetVoiceShortcut
-                )
-                .frame(maxWidth: .infinity, alignment: .topLeading)
-            }
-
-            OnboardingShortcutCard(
-                title: "Show App Window",
-                description: "Shows the main Kotoba Libre window without opening the launcher.",
-                shortcut: appController.showAppWindowShortcutDraft,
-                isRecording: appController.isRecordingShowAppWindowShortcut,
-                issue: appController.showAppWindowShortcutRegistrationIssue,
-                recordLabel: appController.isRecordingShowAppWindowShortcut ? "Stop Recording" : "Record Shortcut",
-                defaultLabel: "Use Default",
-                layoutStyle: .regular,
-                onRecord: toggleAppWindowShortcutRecording,
-                onReset: resetAppWindowShortcut
-            )
-
-            HStack {
-                Spacer()
-
-                Button("Next: Permissions") {
-                    submitCurrentStep()
-                }
-                .buttonStyle(.glassProminent)
-            }
         }
     }
 
@@ -274,15 +207,6 @@ struct OnboardingFlowView: View {
                         RoundedRectangle(cornerRadius: 12, style: .continuous)
                             .fill(Color.primary.opacity(0.04))
                     )
-
-                Label(appController.shortcutDraft, systemImage: "command")
-                    .font(.footnote.weight(.semibold))
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .fill(Color.primary.opacity(0.04))
-                    )
             }
         }
     }
@@ -290,8 +214,6 @@ struct OnboardingFlowView: View {
     private var primaryActionTitle: String {
         switch currentStep {
         case .instance:
-            return "Next: Shortcuts"
-        case .shortcuts:
             return "Next: Permissions"
         case .permissions:
             return "Next: Complete"
@@ -304,7 +226,7 @@ struct OnboardingFlowView: View {
         switch currentStep {
         case .instance:
             return !instanceValidation.valid
-        case .shortcuts, .permissions, .complete:
+        case .permissions, .complete:
             return false
         }
     }
@@ -319,14 +241,6 @@ struct OnboardingFlowView: View {
             return instanceValidation.valid
                 ? "Looks good. Embedded navigation will stay pinned to this host."
                 : (instanceValidation.reason ?? "Enter your LibreChat base URL to continue.")
-        case .shortcuts:
-            if isRecordingAnyShortcut {
-                return "Listening for a shortcut. Press Esc to cancel."
-            }
-            if let registrationIssue = firstShortcutIssue {
-                return registrationIssue
-            }
-            return "Record all three shortcuts now, or keep the defaults and change them later in Settings."
         case .permissions:
             return "Voice permissions are optional. You can continue even if you leave them off."
         case .complete:
@@ -342,23 +256,9 @@ struct OnboardingFlowView: View {
         switch currentStep {
         case .instance:
             return !instanceValidation.valid
-        case .shortcuts:
-            return firstShortcutIssue != nil
         case .permissions, .complete:
             return false
         }
-    }
-
-    private var isRecordingAnyShortcut: Bool {
-        appController.isRecordingShortcut ||
-        appController.isRecordingVoiceShortcut ||
-        appController.isRecordingShowAppWindowShortcut
-    }
-
-    private var firstShortcutIssue: String? {
-        appController.shortcutRegistrationIssue ??
-        appController.voiceShortcutRegistrationIssue ??
-        appController.showAppWindowShortcutRegistrationIssue
     }
 
     private var instanceValidation: ValidationResult {
@@ -385,11 +285,6 @@ struct OnboardingFlowView: View {
                 return
             }
 
-            withAnimation(.easeInOut(duration: 0.18)) {
-                currentStep = .shortcuts
-            }
-            setStatus("", isError: false)
-        case .shortcuts:
             withAnimation(.easeInOut(duration: 0.18)) {
                 currentStep = .permissions
             }
@@ -420,10 +315,8 @@ struct OnboardingFlowView: View {
             switch currentStep {
             case .instance:
                 currentStep = .instance
-            case .shortcuts:
-                currentStep = .instance
             case .permissions:
-                currentStep = .shortcuts
+                currentStep = .instance
             case .complete:
                 currentStep = .permissions
             }
@@ -448,50 +341,6 @@ struct OnboardingFlowView: View {
         appController.refreshSpeechRecognitionPermissionState()
     }
 
-    private func toggleLauncherShortcutRecording() {
-        if appController.isRecordingShortcut {
-            appController.stopShortcutRecording()
-            setStatus("Shortcut capture canceled.", isError: false)
-        } else {
-            appController.beginShortcutRecording()
-            setStatus("Press the shortcut you want to use. Press Esc to cancel.", isError: false)
-        }
-    }
-
-    private func toggleVoiceShortcutRecording() {
-        if appController.isRecordingVoiceShortcut {
-            appController.stopShortcutRecording()
-            setStatus("Voice shortcut capture canceled.", isError: false)
-        } else {
-            appController.beginVoiceShortcutRecording()
-            setStatus("Press the shortcut you want to use. Press Esc to cancel.", isError: false)
-        }
-    }
-
-    private func toggleAppWindowShortcutRecording() {
-        if appController.isRecordingShowAppWindowShortcut {
-            appController.stopShortcutRecording()
-            setStatus("Show window shortcut capture canceled.", isError: false)
-        } else {
-            appController.beginShowAppWindowShortcutRecording()
-            setStatus("Press the shortcut you want to use. Press Esc to cancel.", isError: false)
-        }
-    }
-
-    private func resetLauncherShortcut() {
-        appController.resetShortcutDraft()
-        setStatus("Shortcut reset to \(AppSettings.defaultShortcut).", isError: false)
-    }
-
-    private func resetVoiceShortcut() {
-        appController.resetVoiceShortcutDraft()
-        setStatus("Shortcut reset to \(AppSettings.defaultVoiceShortcut).", isError: false)
-    }
-
-    private func resetAppWindowShortcut() {
-        appController.resetShowAppWindowShortcutDraft()
-        setStatus("Shortcut reset to \(AppSettings.defaultShowAppWindowShortcut).", isError: false)
-    }
 }
 
 // OnboardingSidebar gives the wizard a compact left rail with progress and product context.
@@ -606,11 +455,9 @@ private struct OnboardingFooterBar: View {
                     .buttonStyle(.glass)
             }
 
-            if currentStep != .shortcuts {
-                Button(primaryActionTitle, action: onPrimaryAction)
-                    .buttonStyle(.glassProminent)
-                    .disabled(isPrimaryDisabled)
-            }
+            Button(primaryActionTitle, action: onPrimaryAction)
+                .buttonStyle(.glassProminent)
+                .disabled(isPrimaryDisabled)
         }
     }
 }

@@ -108,12 +108,11 @@ Generated artifacts:
 
 ### First launch
 
-If no settings exist, the main window opens a four-step onboarding flow:
+If no settings exist, the main window opens a three-step onboarding flow:
 
 1. Enter the LibreChat base URL
-2. Confirm or record the text, voice, and show-window shortcuts
-3. Review optional permissions for voice features
-4. Finish setup and open LibreChat
+2. Review optional permissions for voice features
+3. Finish setup and open LibreChat
 
 The onboarding window opens as a compact wizard so first-run setup stays focused without needing an internal scroll area.
 
