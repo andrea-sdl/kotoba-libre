@@ -68,6 +68,14 @@ final class LauncherWindowController: NSWindowController, NSWindowDelegate {
         viewModel.presentationMode
     }
 
+    var selectedPresetID: String? {
+        viewModel.selectedPresetID
+    }
+
+    func selectPreset(id: String?) {
+        viewModel.selectedPresetID = id
+    }
+
     init(appController: AppController) {
         self.appController = appController
         self.viewModel = LauncherViewModel(appController: appController)
@@ -321,7 +329,7 @@ final class LauncherViewModel: ObservableObject {
         voiceFinishTask = nil
         statusMessage = ""
         isError = false
-        ensureSelectedPreset()
+        resetSelectionToDefaultPreset()
 
         guard validateSharedLauncherState() else {
             cancelVoiceCapture(resetStatus: false)
@@ -486,7 +494,7 @@ final class LauncherViewModel: ObservableObject {
         latestVoiceTranscript = ""
         voiceState = .idle
         voiceAudioLevel = 0.12
-        ensureSelectedPreset()
+        resetSelectionToDefaultPreset()
         statusMessage = ""
         isError = false
     }
@@ -517,8 +525,12 @@ final class LauncherViewModel: ObservableObject {
 
     private func ensureSelectedPreset() {
         if selectedPresetID == nil {
-            selectedPresetID = appController?.settings.defaultPresetId ?? presets.first?.id
+            resetSelectionToDefaultPreset()
         }
+    }
+
+    private func resetSelectionToDefaultPreset() {
+        selectedPresetID = appController?.settings.defaultPresetId ?? presets.first?.id
     }
 
     private func observeAppController(_ appController: AppController) {
@@ -544,9 +556,9 @@ final class LauncherViewModel: ObservableObject {
         }
 
         if let selectedPresetID, !appController.presets.contains(where: { $0.id == selectedPresetID }) {
-            self.selectedPresetID = appController.settings.defaultPresetId ?? presets.first?.id
+            resetSelectionToDefaultPreset()
         } else if self.selectedPresetID == nil {
-            self.selectedPresetID = appController.settings.defaultPresetId ?? presets.first?.id
+            resetSelectionToDefaultPreset()
         }
 
         objectWillChange.send()
