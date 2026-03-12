@@ -459,10 +459,17 @@ final class AppController: NSObject, ObservableObject, ASWebAuthenticationPresen
         return SettingsSaveResult(removedPresets: preview.incompatiblePresets)
     }
 
-    func completeOnboarding(instanceBaseURL: String, shortcut: String) throws {
+    func completeOnboarding(
+        instanceBaseURL: String,
+        launcherShortcut: String,
+        voiceShortcut: String,
+        showAppWindowShortcut: String
+    ) throws {
         var updated = settings
         updated.instanceBaseUrl = instanceBaseURL
-        updated.globalShortcut = shortcut
+        updated.globalShortcut = launcherShortcut
+        updated.voiceGlobalShortcut = voiceShortcut
+        updated.showAppWindowShortcut = showAppWindowShortcut
 
         _ = try saveSettings(updated)
         settingsWindowController.hide()

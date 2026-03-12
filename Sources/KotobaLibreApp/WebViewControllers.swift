@@ -6,7 +6,9 @@ import WebKit
 
 // The main window and embedded web view live together in this file because they share one navigation flow.
 private let defaultMainWindowSize = NSSize(width: 800, height: 600)
-private let minimumMainWindowSize = NSSize(width: 800, height: 600)
+private let minimumMainWindowSize = NSSize(width: 700, height: 480)
+private let onboardingWindowSize = NSSize(width: 860, height: 620)
+private let onboardingMinimumWindowSize = NSSize(width: 860, height: 620)
 
 // These identifiers keep the main window toolbar definition local to the web window controller file.
 private enum MainWindowToolbarItem {
@@ -66,6 +68,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         }
 
         updateAddAgentCandidate(nil)
+        applyWindowSizing(for: .onboarding)
+        window?.toolbar = nil
         let hostingController = NSHostingController(
             rootView: OnboardingFlowView(appController: appController)
         )
@@ -74,6 +78,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
 
     func showWebView(settings: AppSettings) {
         // The web controller is reused so session state and browser history survive UI switches.
+        applyWindowSizing(for: .web)
+        installToolbar()
         let controller = ensureWebController()
         controller.debugLoggingEnabled = settings.debugLoggingEnabled
         window?.contentViewController = controller
@@ -86,6 +92,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         }
 
         updateAddAgentCandidate(nil)
+        applyWindowSizing(for: .web)
+        installToolbar()
         let controller = ensureWebController()
         controller.debugLoggingEnabled = settings.debugLoggingEnabled
         window?.contentViewController = controller
@@ -94,6 +102,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
 
     func open(url: URL, settings: AppSettings, instanceHost: String?, forceEmbedAllHosts: Bool = false) {
         updateAddAgentCandidate(nil)
+        installToolbar()
         let controller = ensureWebController()
         controller.debugLoggingEnabled = settings.debugLoggingEnabled
         window?.contentViewController = controller
@@ -124,7 +133,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     }
 
     func resetToDefaultSize() {
-        window?.setContentSize(defaultMainWindowSize)
+        let targetSize = contentKind == .onboarding ? onboardingWindowSize : defaultMainWindowSize
+        window?.setContentSize(targetSize)
         window?.center()
         normalizeWindowFrameToAvailableScreens(centerIfNeeded: true)
         persistWindowFrame()
@@ -311,8 +321,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
 
     private func adjustedFrame(_ frame: NSRect, in visibleFrame: NSRect, centerIfNeeded: Bool) -> NSRect {
         var adjustedFrame = frame.standardized
-        adjustedFrame.size.width = min(max(adjustedFrame.width, minimumMainWindowSize.width), visibleFrame.width)
-        adjustedFrame.size.height = min(max(adjustedFrame.height, minimumMainWindowSize.height), visibleFrame.height)
+        let minimumSize = window?.minSize ?? minimumMainWindowSize
+        adjustedFrame.size.width = min(max(adjustedFrame.width, minimumSize.width), visibleFrame.width)
+        adjustedFrame.size.height = min(max(adjustedFrame.height, minimumSize.height), visibleFrame.height)
 
         let needsCentering = centerIfNeeded || intersectionArea(of: visibleFrame, and: adjustedFrame) == 0
         if needsCentering {
@@ -361,6 +372,23 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         }
 
         hasCompletedInitialFrameSetup = true
+    }
+
+    private func applyWindowSizing(for contentKind: ContentKind) {
+        guard let window else {
+            return
+        }
+
+        let minimumSize = contentKind == .onboarding ? onboardingMinimumWindowSize : minimumMainWindowSize
+        window.minSize = minimumSize
+
+        guard !hasCompletedInitialFrameSetup else {
+            normalizeWindowFrameToAvailableScreens()
+            return
+        }
+
+        let defaultSize = contentKind == .onboarding ? onboardingWindowSize : defaultMainWindowSize
+        window.setContentSize(defaultSize)
     }
 
     private static func loadSavedWindowFrame(from store: AppDataStore) -> NSRect? {
@@ -438,7 +466,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     }
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.flexibleSpace, MainWindowToolbarItem.addAgent]
+        return [.flexibleSpace, MainWindowToolbarItem.addAgent]
     }
 
     func toolbar(

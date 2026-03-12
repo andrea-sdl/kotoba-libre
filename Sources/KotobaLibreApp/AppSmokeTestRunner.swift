@@ -50,7 +50,9 @@ final class AppSmokeTestRunner {
     private func completeOnboardingAndCreatePreset() async throws -> Preset {
         try appController.completeOnboarding(
             instanceBaseURL: "https://chat.example.com",
-            shortcut: AppSettings.defaultShortcut
+            launcherShortcut: AppSettings.defaultShortcut,
+            voiceShortcut: AppSettings.defaultVoiceShortcut,
+            showAppWindowShortcut: AppSettings.defaultShowAppWindowShortcut
         )
         await settle()
 

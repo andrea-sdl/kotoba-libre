@@ -6,14 +6,59 @@ import KotobaLibreCore
 // onboarding, settings tabs, and the floating launcher UI.
 private enum OnboardingStep: Int, CaseIterable {
     case instance
-    case shortcut
+    case shortcuts
+    case permissions
+    case complete
 
     var title: String {
         switch self {
         case .instance:
             return "LibreChat Instance"
-        case .shortcut:
-            return "Launcher Shortcut"
+        case .shortcuts:
+            return "Shortcuts"
+        case .permissions:
+            return "Permissions"
+        case .complete:
+            return "Complete"
+        }
+    }
+
+    var headline: String {
+        switch self {
+        case .instance:
+            return "Connect your LibreChat home"
+        case .shortcuts:
+            return "Choose your launch shortcuts"
+        case .permissions:
+            return "Enable the features you want"
+        case .complete:
+            return "Setup is complete"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .instance:
+            return "Add the base URL once and Kotoba Libre will keep navigation anchored to that instance."
+        case .shortcuts:
+            return "Configure shortcuts for text launch, voice launch, and showing the main app window."
+        case .permissions:
+            return "Microphone and speech recognition are optional, but they unlock voice features when you want them."
+        case .complete:
+            return "Your instance, shortcuts, and optional permissions are ready. Open LibreChat to start using the app."
+        }
+    }
+
+    var symbolName: String {
+        switch self {
+        case .instance:
+            return "network"
+        case .shortcuts:
+            return "command"
+        case .permissions:
+            return "hand.raised"
+        case .complete:
+            return "sparkles"
         }
     }
 }
@@ -24,6 +69,9 @@ private enum OnboardingField: Hashable {
 
 // OnboardingFlowView is the first-run experience shown when no instance URL exists yet.
 struct OnboardingFlowView: View {
+    private static let wizardWidth: CGFloat = 820
+    private static let wizardHeight: CGFloat = 560
+
     @ObservedObject var appController: AppController
     @State private var currentStep: OnboardingStep = .instance
     @State private var instanceBaseURL = ""
@@ -32,182 +80,285 @@ struct OnboardingFlowView: View {
     @FocusState private var focusedField: OnboardingField?
 
     var body: some View {
-        ZStack {
-            AppGlassBackground()
+        HStack(spacing: 0) {
+            OnboardingSidebar(currentStep: currentStep)
+                .frame(width: 236)
+                .frame(maxHeight: .infinity, alignment: .topLeading)
+                .padding(.vertical, 6)
 
-            GlassEffectContainer(spacing: 24) {
-                VStack(alignment: .leading, spacing: 24) {
-                    HStack(alignment: .top, spacing: 24) {
-                        VStack(alignment: .leading, spacing: 12) {
-                            AppLogoView()
-                            Text("Set up Kotoba Libre once, then launch LibreChat from anywhere.")
-                                .font(.title3)
-                                .foregroundStyle(.secondary)
-                        }
+            Divider()
 
-                        Spacer(minLength: 24)
+            VStack(alignment: .leading, spacing: 20) {
+                Label("Step \(currentStep.rawValue + 1) of \(OnboardingStep.allCases.count)", systemImage: currentStep.symbolName)
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(.secondary)
 
-                        GlassEffectContainer(spacing: 10) {
-                            HStack(spacing: 10) {
-                                ForEach(OnboardingStep.allCases, id: \.rawValue) { step in
-                                    let symbolName = if currentStep.rawValue > step.rawValue {
-                                        "checkmark.circle.fill"
-                                    } else if currentStep == step {
-                                        "circle.fill"
-                                    } else {
-                                        "circle"
-                                    }
+                Text(currentStep.headline)
+                    .font(.system(size: 25, weight: .bold, design: .rounded))
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.88)
 
-                                    HStack(spacing: 8) {
-                                        Image(systemName: symbolName)
-                                        Text(step.title)
-                                    }
-                                    .font(.footnote.weight(.semibold))
-                                    .padding(.horizontal, 12)
-                                    .padding(.vertical, 8)
-                                    .foregroundStyle(currentStep.rawValue >= step.rawValue ? Color.accentColor : .secondary)
-                                    .glassEffect(
-                                        .regular.tint(currentStep == step ? Color.accentColor.opacity(0.18) : Color.white.opacity(0.08)),
-                                        in: .capsule
-                                    )
-                                }
-                            }
-                        }
-                    }
+                Text(currentStep.detail)
+                    .font(.body)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
 
-                    Group {
-                        switch currentStep {
-                        case .instance:
-                            onboardingInstanceStep
-                        case .shortcut:
-                            onboardingShortcutStep
-                        }
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                currentStepView
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
 
-                    if !statusMessage.isEmpty {
-                        GlassStatusBanner(message: statusMessage, isError: statusIsError)
-                    }
+                Spacer(minLength: 12)
 
-                    GlassEffectContainer(spacing: 12) {
-                        HStack {
-                            if currentStep == .shortcut {
-                                Button("Back") {
-                                    withAnimation(.easeInOut(duration: 0.18)) {
-                                        currentStep = .instance
-                                    }
-                                }
-                                .buttonStyle(.glass)
-                            }
+                Divider()
 
-                            Spacer()
-
-                            Button(currentStep == .instance ? "Continue" : "Finish Setup") {
-                                submitCurrentStep()
-                            }
-                            .buttonStyle(.glassProminent)
-                            .disabled(currentStep == .instance && !instanceValidation.valid)
-                        }
-                    }
-                }
-                .padding(32)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                OnboardingFooterBar(
+                    currentStep: currentStep,
+                    primaryActionTitle: primaryActionTitle,
+                    message: footerMessage,
+                    isError: footerMessageIsError,
+                    isPrimaryDisabled: primaryActionDisabled,
+                    onBack: showPreviousStep,
+                    onPrimaryAction: submitCurrentStep
+                )
             }
+            .padding(.leading, 28)
+            .padding(.trailing, 20)
+            .padding(.vertical, 22)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
+        .padding(24)
+        .background {
+            AppGlassBackground()
+        }
+        .frame(width: Self.wizardWidth, height: Self.wizardHeight)
         .onAppear {
             instanceBaseURL = appController.settings.instanceBaseUrl ?? ""
             focusedField = .instanceBaseURL
         }
         .onChange(of: currentStep) {
             focusedField = currentStep == .instance ? .instanceBaseURL : nil
+            refreshShortcutPermissionsIfNeeded()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            refreshShortcutPermissionsIfNeeded()
+        }
+    }
+
+    @ViewBuilder
+    private var currentStepView: some View {
+        switch currentStep {
+        case .instance:
+            onboardingInstanceStep
+        case .shortcuts:
+            onboardingShortcutsStep
+        case .permissions:
+            onboardingPermissionsStep
+        case .complete:
+            onboardingCompleteStep
         }
     }
 
     private var onboardingInstanceStep: some View {
-        GlassPanel {
-            VStack(alignment: .leading, spacing: 18) {
-                Text("Where is your LibreChat instance running?")
-                    .font(.system(size: 28, weight: .bold, design: .rounded))
-                Text("Enter the base URL for the hosted or self-hosted LibreChat instance you want Kotoba Libre to open.")
-                    .foregroundStyle(.secondary)
-
-                GlassField("LibreChat Base URL") {
-                    TextField("https://chat.example.com", text: $instanceBaseURL)
-                        .disableAutocorrection(true)
-                        .focused($focusedField, equals: OnboardingField.instanceBaseURL)
-                        .onSubmit {
-                            if instanceValidation.valid {
-                                submitCurrentStep()
-                            }
+        VStack(alignment: .leading, spacing: 12) {
+            GlassField("LibreChat Base URL") {
+                TextField("https://chat.example.com", text: $instanceBaseURL)
+                    .disableAutocorrection(true)
+                    .focused($focusedField, equals: OnboardingField.instanceBaseURL)
+                    .onSubmit {
+                        if instanceValidation.valid {
+                            submitCurrentStep()
                         }
-                        .glassTextInput()
-                }
+                    }
+                    .glassTextInput()
+            }
 
-                GlassStatusBanner(
-                    message: instanceValidation.valid ? "Looks good. We’ll keep navigation pinned to this host by default." : (instanceValidation.reason ?? "Enter a valid HTTPS URL."),
-                    isError: !instanceValidation.valid
+            Text("Use the full hosted or self-hosted HTTPS base URL for the LibreChat home you want Kotoba Libre to open.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private var onboardingShortcutsStep: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top, spacing: 12) {
+                OnboardingShortcutCard(
+                    title: "Text Launcher",
+                    description: "Opens the launcher with the text prompt field ready.",
+                    shortcut: appController.shortcutDraft,
+                    isRecording: appController.isRecordingShortcut,
+                    issue: appController.shortcutRegistrationIssue,
+                    recordLabel: appController.isRecordingShortcut ? "Stop" : "Record",
+                    defaultLabel: "Default",
+                    layoutStyle: .compact,
+                    onRecord: toggleLauncherShortcutRecording,
+                    onReset: resetLauncherShortcut
                 )
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+
+                OnboardingShortcutCard(
+                    title: "Voice Launcher",
+                    description: "Opens voice mode and sends the transcript on the next trigger.",
+                    shortcut: appController.voiceShortcutDraft,
+                    isRecording: appController.isRecordingVoiceShortcut,
+                    issue: appController.voiceShortcutRegistrationIssue,
+                    recordLabel: appController.isRecordingVoiceShortcut ? "Stop" : "Record",
+                    defaultLabel: "Default",
+                    layoutStyle: .compact,
+                    onRecord: toggleVoiceShortcutRecording,
+                    onReset: resetVoiceShortcut
+                )
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+            }
+
+            OnboardingShortcutCard(
+                title: "Show App Window",
+                description: "Shows the main Kotoba Libre window without opening the launcher.",
+                shortcut: appController.showAppWindowShortcutDraft,
+                isRecording: appController.isRecordingShowAppWindowShortcut,
+                issue: appController.showAppWindowShortcutRegistrationIssue,
+                recordLabel: appController.isRecordingShowAppWindowShortcut ? "Stop Recording" : "Record Shortcut",
+                defaultLabel: "Use Default",
+                layoutStyle: .regular,
+                onRecord: toggleAppWindowShortcutRecording,
+                onReset: resetAppWindowShortcut
+            )
+
+            HStack {
+                Spacer()
+
+                Button("Next: Permissions") {
+                    submitCurrentStep()
+                }
+                .buttonStyle(.glassProminent)
             }
         }
     }
 
-    private var onboardingShortcutStep: some View {
-        GlassEffectContainer(spacing: 18) {
-            VStack(alignment: .leading, spacing: 18) {
-                GlassPanel {
-                    VStack(alignment: .leading, spacing: 16) {
-                        Text("Choose the shortcut that opens the launcher.")
-                            .font(.system(size: 28, weight: .bold, design: .rounded))
-                        Text("Record a new shortcut now, or keep the default if it already works for you. You can change it later from Settings.")
-                            .foregroundStyle(.secondary)
+    private var onboardingPermissionsStep: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            OnboardingMicrophonePermissionRow(appController: appController)
+            OnboardingSpeechPermissionRow(appController: appController)
 
-                        VStack(alignment: .leading, spacing: 14) {
-                            Text("Current Shortcut")
-                                .font(.headline)
+            Text("You can skip these for now and enable them later in Settings.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        }
+    }
 
-                            ShortcutPreviewView(shortcut: appController.shortcutDraft)
-
-                            HStack {
-                                Button(appController.isRecordingShortcut ? "Stop Recording" : "Record Shortcut") {
-                                    if appController.isRecordingShortcut {
-                                        appController.stopShortcutRecording()
-                                        setStatus("Shortcut capture canceled.", isError: false)
-                                    } else {
-                                        appController.beginShortcutRecording()
-                                        setStatus("Press the shortcut you want to use. Press Esc to cancel.", isError: false)
-                                    }
-                                }
-                                .buttonStyle(.glassProminent)
-
-                                Button("Use Default") {
-                                    appController.resetShortcutDraft()
-                                    setStatus("Shortcut reset to \(AppSettings.defaultShortcut).", isError: false)
-                                }
-                                .buttonStyle(.glass)
-                            }
-                        }
-
-                        if appController.isRecordingShortcut {
-                            GlassStatusBanner(message: "Listening for a shortcut...", isError: false)
-                        } else if let registrationIssue = appController.shortcutRegistrationIssue {
-                            GlassStatusBanner(message: registrationIssue, isError: true)
-                        }
-                    }
+    private var onboardingCompleteStep: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            OnboardingConfettiView()
+                .frame(height: 118)
+                .overlay(alignment: .center) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 44, weight: .semibold))
+                        .foregroundStyle(Color.accentColor)
+                        .glassEffect(.regular.tint(Color.white.opacity(0.14)), in: .circle)
                 }
 
-                MicrophonePermissionSection(
-                    appController: appController,
-                    title: "LibreChat Voice Input",
-                    description: "LibreChat can use your microphone for voice input. Kotoba Libre only requests microphone access so that LibreChat feature can work inside the app."
-                )
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Everything is ready.")
+                    .font(.title3.weight(.semibold))
 
-                SpeechRecognitionPermissionSection(
-                    appController: appController,
-                    title: "Voice Launcher Transcription",
-                    description: "Voice mode uses Apple speech recognition to turn your recording into a prompt. You can configure its dedicated shortcut later in Settings."
-                )
+                Text("When you continue, Kotoba Libre will save your setup and open your LibreChat instance.")
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            HStack(spacing: 12) {
+                Label(instanceBaseURL.trimmingCharacters(in: .whitespacesAndNewlines), systemImage: "network")
+                    .font(.footnote.weight(.semibold))
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .fill(Color.primary.opacity(0.04))
+                    )
+
+                Label(appController.shortcutDraft, systemImage: "command")
+                    .font(.footnote.weight(.semibold))
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .fill(Color.primary.opacity(0.04))
+                    )
             }
         }
+    }
+
+    private var primaryActionTitle: String {
+        switch currentStep {
+        case .instance:
+            return "Next: Shortcuts"
+        case .shortcuts:
+            return "Next: Permissions"
+        case .permissions:
+            return "Next: Complete"
+        case .complete:
+            return "Start Using LibreChat"
+        }
+    }
+
+    private var primaryActionDisabled: Bool {
+        switch currentStep {
+        case .instance:
+            return !instanceValidation.valid
+        case .shortcuts, .permissions, .complete:
+            return false
+        }
+    }
+
+    private var footerMessage: String {
+        if !statusMessage.isEmpty {
+            return statusMessage
+        }
+
+        switch currentStep {
+        case .instance:
+            return instanceValidation.valid
+                ? "Looks good. Embedded navigation will stay pinned to this host."
+                : (instanceValidation.reason ?? "Enter your LibreChat base URL to continue.")
+        case .shortcuts:
+            if isRecordingAnyShortcut {
+                return "Listening for a shortcut. Press Esc to cancel."
+            }
+            if let registrationIssue = firstShortcutIssue {
+                return registrationIssue
+            }
+            return "Record all three shortcuts now, or keep the defaults and change them later in Settings."
+        case .permissions:
+            return "Voice permissions are optional. You can continue even if you leave them off."
+        case .complete:
+            return "One last step: save this setup and open LibreChat."
+        }
+    }
+
+    private var footerMessageIsError: Bool {
+        if !statusMessage.isEmpty {
+            return statusIsError
+        }
+
+        switch currentStep {
+        case .instance:
+            return !instanceValidation.valid
+        case .shortcuts:
+            return firstShortcutIssue != nil
+        case .permissions, .complete:
+            return false
+        }
+    }
+
+    private var isRecordingAnyShortcut: Bool {
+        appController.isRecordingShortcut ||
+        appController.isRecordingVoiceShortcut ||
+        appController.isRecordingShowAppWindowShortcut
+    }
+
+    private var firstShortcutIssue: String? {
+        appController.shortcutRegistrationIssue ??
+        appController.voiceShortcutRegistrationIssue ??
+        appController.showAppWindowShortcutRegistrationIssue
     }
 
     private var instanceValidation: ValidationResult {
@@ -226,7 +377,7 @@ struct OnboardingFlowView: View {
     }
 
     private func submitCurrentStep() {
-        // The first step validates locally. The second step performs the real persisted save.
+        // Each step only advances when its local requirements are satisfied. Saving happens at the end.
         switch currentStep {
         case .instance:
             guard instanceValidation.valid else {
@@ -235,14 +386,27 @@ struct OnboardingFlowView: View {
             }
 
             withAnimation(.easeInOut(duration: 0.18)) {
-                currentStep = .shortcut
+                currentStep = .shortcuts
             }
             setStatus("", isError: false)
-        case .shortcut:
+        case .shortcuts:
+            withAnimation(.easeInOut(duration: 0.18)) {
+                currentStep = .permissions
+            }
+            refreshPermissionState()
+            setStatus("", isError: false)
+        case .permissions:
+            withAnimation(.easeInOut(duration: 0.18)) {
+                currentStep = .complete
+            }
+            setStatus("", isError: false)
+        case .complete:
             do {
                 try appController.completeOnboarding(
                     instanceBaseURL: instanceBaseURL,
-                    shortcut: appController.shortcutDraft
+                    launcherShortcut: appController.shortcutDraft,
+                    voiceShortcut: appController.voiceShortcutDraft,
+                    showAppWindowShortcut: appController.showAppWindowShortcutDraft
                 )
                 setStatus("", isError: false)
             } catch {
@@ -251,9 +415,508 @@ struct OnboardingFlowView: View {
         }
     }
 
+    private func showPreviousStep() {
+        withAnimation(.easeInOut(duration: 0.18)) {
+            switch currentStep {
+            case .instance:
+                currentStep = .instance
+            case .shortcuts:
+                currentStep = .instance
+            case .permissions:
+                currentStep = .shortcuts
+            case .complete:
+                currentStep = .permissions
+            }
+        }
+    }
+
     private func setStatus(_ message: String, isError: Bool) {
         statusMessage = message
         statusIsError = isError
+    }
+
+    private func refreshShortcutPermissionsIfNeeded() {
+        guard currentStep == .permissions else {
+            return
+        }
+
+        refreshPermissionState()
+    }
+
+    private func refreshPermissionState() {
+        appController.refreshMicrophonePermissionState()
+        appController.refreshSpeechRecognitionPermissionState()
+    }
+
+    private func toggleLauncherShortcutRecording() {
+        if appController.isRecordingShortcut {
+            appController.stopShortcutRecording()
+            setStatus("Shortcut capture canceled.", isError: false)
+        } else {
+            appController.beginShortcutRecording()
+            setStatus("Press the shortcut you want to use. Press Esc to cancel.", isError: false)
+        }
+    }
+
+    private func toggleVoiceShortcutRecording() {
+        if appController.isRecordingVoiceShortcut {
+            appController.stopShortcutRecording()
+            setStatus("Voice shortcut capture canceled.", isError: false)
+        } else {
+            appController.beginVoiceShortcutRecording()
+            setStatus("Press the shortcut you want to use. Press Esc to cancel.", isError: false)
+        }
+    }
+
+    private func toggleAppWindowShortcutRecording() {
+        if appController.isRecordingShowAppWindowShortcut {
+            appController.stopShortcutRecording()
+            setStatus("Show window shortcut capture canceled.", isError: false)
+        } else {
+            appController.beginShowAppWindowShortcutRecording()
+            setStatus("Press the shortcut you want to use. Press Esc to cancel.", isError: false)
+        }
+    }
+
+    private func resetLauncherShortcut() {
+        appController.resetShortcutDraft()
+        setStatus("Shortcut reset to \(AppSettings.defaultShortcut).", isError: false)
+    }
+
+    private func resetVoiceShortcut() {
+        appController.resetVoiceShortcutDraft()
+        setStatus("Shortcut reset to \(AppSettings.defaultVoiceShortcut).", isError: false)
+    }
+
+    private func resetAppWindowShortcut() {
+        appController.resetShowAppWindowShortcutDraft()
+        setStatus("Shortcut reset to \(AppSettings.defaultShowAppWindowShortcut).", isError: false)
+    }
+}
+
+// OnboardingSidebar gives the wizard a compact left rail with progress and product context.
+private struct OnboardingSidebar: View {
+    let currentStep: OnboardingStep
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(spacing: 12) {
+                if let image = AppLogoView.iconImage {
+                    Image(nsImage: image)
+                        .resizable()
+                        .padding(4)
+                        .frame(width: 42, height: 42)
+                        .glassEffect(.regular, in: .rect(cornerRadius: 14))
+                }
+
+                Text(appDisplayName)
+                    .font(.title2.weight(.bold))
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.9)
+            }
+
+            VStack(alignment: .leading, spacing: 10) {
+                ForEach(OnboardingStep.allCases, id: \.rawValue) { step in
+                    OnboardingStepBadge(step: step, currentStep: currentStep)
+                }
+            }
+
+            Spacer()
+
+            Text("You can change settings later too.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .accessibilityElement(children: .contain)
+    }
+}
+
+// OnboardingStepBadge turns each onboarding step into a readable, compact status row.
+private struct OnboardingStepBadge: View {
+    let step: OnboardingStep
+    let currentStep: OnboardingStep
+
+    private var statusSymbolName: String {
+        if currentStep.rawValue > step.rawValue {
+            return "checkmark.circle.fill"
+        }
+        if currentStep == step {
+            return "circle.fill"
+        }
+        return "circle"
+    }
+
+    private var tint: Color {
+        currentStep.rawValue >= step.rawValue ? .accentColor : .secondary
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: statusSymbolName)
+                .font(.body.weight(.semibold))
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(step.title)
+                Text(step == currentStep ? step.headline : " ")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .font(.footnote.weight(.semibold))
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .foregroundStyle(tint)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(currentStep == step ? Color.accentColor.opacity(0.12) : Color.primary.opacity(0.03))
+        )
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(step.title), \(accessibilityStatus)")
+    }
+
+    private var accessibilityStatus: String {
+        if currentStep.rawValue > step.rawValue {
+            return "completed"
+        }
+        if currentStep == step {
+            return "current step"
+        }
+        return "up next"
+    }
+}
+
+// OnboardingFooterBar anchors feedback and navigation inside the wizard without extra stacked panels.
+private struct OnboardingFooterBar: View {
+    let currentStep: OnboardingStep
+    let primaryActionTitle: String
+    let message: String
+    let isError: Bool
+    let isPrimaryDisabled: Bool
+    let onBack: () -> Void
+    let onPrimaryAction: () -> Void
+
+    var body: some View {
+        HStack(spacing: 16) {
+            OnboardingInlineMessage(message: message, isError: isError)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            if currentStep != .instance {
+                Button("Back", action: onBack)
+                    .buttonStyle(.glass)
+            }
+
+            if currentStep != .shortcuts {
+                Button(primaryActionTitle, action: onPrimaryAction)
+                    .buttonStyle(.glassProminent)
+                    .disabled(isPrimaryDisabled)
+            }
+        }
+    }
+}
+
+// OnboardingInlineMessage keeps validation and helper copy compact inside the wizard footer.
+private struct OnboardingInlineMessage: View {
+    let message: String
+    let isError: Bool
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: isError ? "exclamationmark.triangle.fill" : "info.circle.fill")
+                .foregroundStyle(isError ? Color.red : Color.accentColor)
+
+            Text(message)
+                .font(.footnote)
+                .foregroundStyle(isError ? Color.red : .secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .accessibilityElement(children: .combine)
+    }
+}
+
+// OnboardingShortcutCard groups each shortcut configuration into a compact reusable block.
+private struct OnboardingShortcutCard: View {
+    enum LayoutStyle {
+        case compact
+        case regular
+    }
+
+    let title: String
+    let description: String
+    let shortcut: String
+    let isRecording: Bool
+    let issue: String?
+    let recordLabel: String
+    let defaultLabel: String
+    let layoutStyle: LayoutStyle
+    let onRecord: () -> Void
+    let onReset: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(title)
+                .font(.subheadline.weight(.semibold))
+
+            Text(description)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            ShortcutPreviewView(shortcut: shortcut)
+
+            buttonLayout
+
+            Text(statusMessage)
+                .font(.footnote)
+                .foregroundStyle(statusColor)
+                .opacity(statusMessage.isEmpty ? 0 : 1)
+        }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(Color.primary.opacity(0.03))
+        )
+    }
+
+    @ViewBuilder
+    private var buttonLayout: some View {
+        switch layoutStyle {
+        case .compact:
+            VStack(alignment: .leading, spacing: 8) {
+                Button(recordLabel, action: onRecord)
+                    .buttonStyle(.glassProminent)
+
+                Button(defaultLabel, action: onReset)
+                    .buttonStyle(.glass)
+            }
+        case .regular:
+            HStack {
+                Button(recordLabel, action: onRecord)
+                    .buttonStyle(.glassProminent)
+
+                Button(defaultLabel, action: onReset)
+                    .buttonStyle(.glass)
+            }
+        }
+    }
+
+    private var statusMessage: String {
+        if isRecording {
+            return "Listening for a shortcut..."
+        }
+
+        return issue ?? ""
+    }
+
+    private var statusColor: Color {
+        issue == nil ? .secondary : .red
+    }
+}
+
+// OnboardingConfettiView adds a lightweight celebratory animation to the completion step.
+private struct OnboardingConfettiView: View {
+    private struct Particle: Identifiable {
+        let id: Int
+        let xSeed: CGFloat
+        let delay: Double
+        let size: CGFloat
+        let color: Color
+    }
+
+    private let particles: [Particle] = [
+        .init(id: 0, xSeed: 0.05, delay: 0.00, size: 10, color: .blue),
+        .init(id: 1, xSeed: 0.14, delay: 0.20, size: 8, color: .orange),
+        .init(id: 2, xSeed: 0.23, delay: 0.42, size: 9, color: .pink),
+        .init(id: 3, xSeed: 0.31, delay: 0.08, size: 7, color: .green),
+        .init(id: 4, xSeed: 0.39, delay: 0.50, size: 10, color: .yellow),
+        .init(id: 5, xSeed: 0.48, delay: 0.15, size: 8, color: .mint),
+        .init(id: 6, xSeed: 0.56, delay: 0.34, size: 9, color: .cyan),
+        .init(id: 7, xSeed: 0.65, delay: 0.04, size: 7, color: .red),
+        .init(id: 8, xSeed: 0.74, delay: 0.26, size: 10, color: .purple),
+        .init(id: 9, xSeed: 0.83, delay: 0.12, size: 8, color: .indigo),
+        .init(id: 10, xSeed: 0.91, delay: 0.46, size: 9, color: .teal)
+    ]
+
+    var body: some View {
+        TimelineView(.animation) { timeline in
+            Canvas { context, size in
+                let loopDuration = 2.8
+                let time = timeline.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: loopDuration)
+
+                for particle in particles {
+                    let phase = ((time + particle.delay).truncatingRemainder(dividingBy: loopDuration)) / loopDuration
+                    let x = size.width * particle.xSeed
+                    let y = size.height * CGFloat(phase)
+                    let sway = sin((phase * .pi * 2) + Double(particle.id)) * 14
+                    let rect = CGRect(
+                        x: x + CGFloat(sway),
+                        y: y,
+                        width: particle.size,
+                        height: particle.size * 1.6
+                    )
+                    let rotation = Angle(degrees: phase * 360 + Double(particle.id * 9))
+                    var transform = CGAffineTransform.identity
+                    transform = transform.translatedBy(x: rect.midX, y: rect.midY)
+                    transform = transform.rotated(by: CGFloat(rotation.radians))
+                    transform = transform.translatedBy(x: -rect.midX, y: -rect.midY)
+
+                    let path = Path(roundedRect: rect, cornerRadius: 3).applying(transform)
+                    context.fill(path, with: .color(particle.color.opacity(0.9)))
+                }
+            }
+        }
+        .clipped()
+        .accessibilityHidden(true)
+    }
+}
+
+// OnboardingMicrophonePermissionRow keeps the onboarding permission summary compact and actionable.
+private struct OnboardingMicrophonePermissionRow: View {
+    @ObservedObject var appController: AppController
+
+    var body: some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Label("LibreChat Voice Input", systemImage: statusSymbolName)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.primary)
+
+                Text(appController.microphonePermissionState.statusMessage)
+                    .font(.footnote)
+                    .foregroundStyle(statusColor)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 16)
+
+            HStack(spacing: 8) {
+                switch appController.microphonePermissionState {
+                case .notDetermined:
+                    Button(appController.isRequestingMicrophonePermission ? "Requesting..." : "Allow") {
+                        appController.requestMicrophonePermission()
+                    }
+                    .buttonStyle(.glass)
+                    .disabled(appController.isRequestingMicrophonePermission)
+                case .granted:
+                    Button("Refresh") {
+                        appController.refreshMicrophonePermissionState()
+                    }
+                    .buttonStyle(.glass)
+                case .denied, .restricted:
+                    Button("Settings") {
+                        appController.openMicrophonePrivacySettings()
+                    }
+                    .buttonStyle(.glass)
+
+                    Button("Refresh") {
+                        appController.refreshMicrophonePermissionState()
+                    }
+                    .buttonStyle(.glass)
+                }
+            }
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Color.primary.opacity(0.03))
+        )
+    }
+
+    private var statusSymbolName: String {
+        switch appController.microphonePermissionState {
+        case .notDetermined:
+            return "mic.badge.plus"
+        case .granted:
+            return "checkmark.circle.fill"
+        case .denied:
+            return "mic.slash.fill"
+        case .restricted:
+            return "lock.circle.fill"
+        }
+    }
+
+    private var statusColor: Color {
+        switch appController.microphonePermissionState {
+        case .granted:
+            return .secondary
+        case .notDetermined, .denied, .restricted:
+            return .orange
+        }
+    }
+}
+
+// OnboardingSpeechPermissionRow mirrors the microphone row for voice transcription setup.
+private struct OnboardingSpeechPermissionRow: View {
+    @ObservedObject var appController: AppController
+
+    var body: some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Label("Voice Launcher Transcription", systemImage: statusSymbolName)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.primary)
+
+                Text(appController.speechRecognitionPermissionState.statusMessage)
+                    .font(.footnote)
+                    .foregroundStyle(statusColor)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 16)
+
+            HStack(spacing: 8) {
+                switch appController.speechRecognitionPermissionState {
+                case .notDetermined:
+                    Button(appController.isRequestingSpeechRecognitionPermission ? "Requesting..." : "Allow") {
+                        appController.requestSpeechRecognitionPermission()
+                    }
+                    .buttonStyle(.glass)
+                    .disabled(appController.isRequestingSpeechRecognitionPermission)
+                case .granted:
+                    Button("Refresh") {
+                        appController.refreshSpeechRecognitionPermissionState()
+                    }
+                    .buttonStyle(.glass)
+                case .denied, .restricted:
+                    Button("Settings") {
+                        appController.openSpeechRecognitionPrivacySettings()
+                    }
+                    .buttonStyle(.glass)
+
+                    Button("Refresh") {
+                        appController.refreshSpeechRecognitionPermissionState()
+                    }
+                    .buttonStyle(.glass)
+                }
+            }
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Color.primary.opacity(0.03))
+        )
+    }
+
+    private var statusSymbolName: String {
+        switch appController.speechRecognitionPermissionState {
+        case .notDetermined:
+            return "waveform.badge.mic"
+        case .granted:
+            return "checkmark.circle.fill"
+        case .denied:
+            return "waveform.slash"
+        case .restricted:
+            return "lock.circle.fill"
+        }
+    }
+
+    private var statusColor: Color {
+        switch appController.speechRecognitionPermissionState {
+        case .granted:
+            return .secondary
+        case .notDetermined, .denied, .restricted:
+            return .orange
+        }
     }
 }
 
@@ -475,36 +1138,7 @@ private func shortcutDisplayParts(_ shortcut: String) -> [String] {
 // AppGlassBackground adds a soft ambient backdrop so the glass surfaces have depth to refract.
 struct AppGlassBackground: View {
     var body: some View {
-        ZStack {
-            LinearGradient(
-                colors: [
-                    Color(nsColor: .windowBackgroundColor),
-                    Color(nsColor: .underPageBackgroundColor),
-                    Color.accentColor.opacity(0.16)
-                ],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-
-            Circle()
-                .fill(Color.accentColor.opacity(0.24))
-                .frame(width: 320, height: 320)
-                .blur(radius: 100)
-                .offset(x: -220, y: -170)
-
-            Circle()
-                .fill(Color.white.opacity(0.18))
-                .frame(width: 260, height: 260)
-                .blur(radius: 90)
-                .offset(x: 250, y: -120)
-
-            Ellipse()
-                .fill(Color.accentColor.opacity(0.12))
-                .frame(width: 440, height: 240)
-                .blur(radius: 120)
-                .offset(x: 120, y: 220)
-        }
-        .ignoresSafeArea()
+        Color.clear
     }
 }
 
@@ -2346,7 +2980,7 @@ private final class Coordinator: NSObject, NSTextFieldDelegate {
 
 // The app logo is reused in onboarding and settings headers.
 struct AppLogoView: View {
-    private static let iconImage = AppResources.iconPNGURL.flatMap(NSImage.init(contentsOf:))
+    static let iconImage = AppResources.iconPNGURL.flatMap(NSImage.init(contentsOf:))
 
     var body: some View {
         HStack(spacing: 14) {

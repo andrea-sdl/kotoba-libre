@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 // This file is the pure shared logic layer.
@@ -58,7 +59,7 @@ public struct Preset: Codable, Equatable, Identifiable, Sendable {
 // AppSettings is persisted user configuration.
 // Defaults are chosen so a missing or older settings file can still decode safely.
 public struct AppSettings: Codable, Equatable, Sendable {
-    public static let defaultShortcut = "CmdOrCtrl+Shift+Space"
+    public static let defaultShortcut = "Ctrl+Alt+Space"
     public static let defaultVoiceShortcut = "CmdOrCtrl+Alt+V"
     public static let defaultShowAppWindowShortcut = "Ctrl+Alt+KeyK"
 
@@ -209,6 +210,12 @@ public struct PresetExportPayload: Codable, Equatable, Sendable {
 
 // KotobaLibreCore is a namespace for stateless helpers used by both the app and self-test targets.
 public enum KotobaLibreCore {
+    private static let acceptedGenericTopLevelDomains: Set<String> = [
+        "app", "art", "biz", "blog", "chat", "cloud", "com", "dev", "docs", "edu", "fm",
+        "gov", "help", "info", "io", "me", "mobi", "name", "net", "online", "org", "page",
+        "pro", "site", "software", "store", "tech", "tv", "wiki", "xyz"
+    ]
+
     public static func nowMarker(date: Date = Date()) -> String {
         "unix-ms-\(Int(date.timeIntervalSince1970 * 1_000))"
     }
@@ -472,6 +479,10 @@ public enum KotobaLibreCore {
             throw KotobaLibreError.invalidInstanceURL("Kotoba Libre instance URL must include a host")
         }
 
+        guard let host = components.host, isAcceptedInstanceHost(host) else {
+            throw KotobaLibreError.invalidInstanceURL("Kotoba Libre instance URL must use a valid public host, localhost, or local network address")
+        }
+
         components.query = nil
         components.fragment = nil
         guard let normalized = components.url else {
@@ -479,6 +490,72 @@ public enum KotobaLibreCore {
         }
 
         return normalized
+    }
+
+    private static func isAcceptedInstanceHost(_ host: String) -> Bool {
+        let lowercasedHost = host.trimmingCharacters(in: CharacterSet(charactersIn: "[]")).lowercased()
+        guard !lowercasedHost.isEmpty else {
+            return false
+        }
+
+        if lowercasedHost == "localhost" || lowercasedHost.hasSuffix(".local") || lowercasedHost.hasSuffix(".home.arpa") {
+            return true
+        }
+
+        if isIPv4Address(lowercasedHost) || isIPv6Address(lowercasedHost) {
+            return true
+        }
+
+        let labels = lowercasedHost.split(separator: ".").map(String.init)
+        guard labels.count >= 2 else {
+            return false
+        }
+
+        guard labels.allSatisfy(isValidHostnameLabel) else {
+            return false
+        }
+
+        guard let topLevelDomain = labels.last else {
+            return false
+        }
+
+        if topLevelDomain.hasPrefix("xn--"), topLevelDomain.count > 4 {
+            return true
+        }
+
+        if topLevelDomain.count == 2, topLevelDomain.allSatisfy(\.isLetter) {
+            return true
+        }
+
+        return acceptedGenericTopLevelDomains.contains(topLevelDomain)
+    }
+
+    private static func isValidHostnameLabel(_ label: String) -> Bool {
+        guard !label.isEmpty, label.count <= 63 else {
+            return false
+        }
+
+        guard label.first != "-", label.last != "-" else {
+            return false
+        }
+
+        return label.allSatisfy { character in
+            character.isLetter || character.isNumber || character == "-"
+        }
+    }
+
+    private static func isIPv4Address(_ host: String) -> Bool {
+        var address = in_addr()
+        return host.withCString { pointer in
+            inet_pton(AF_INET, pointer, &address) == 1
+        }
+    }
+
+    private static func isIPv6Address(_ host: String) -> Bool {
+        var address = in6_addr()
+        return host.withCString { pointer in
+            inet_pton(AF_INET6, pointer, &address) == 1
+        }
     }
 
     public static func normalizeInstanceBaseURL(_ settings: AppSettings) throws -> AppSettings {
