@@ -480,6 +480,7 @@ private extension WindowFrameState {
 final class WebContentViewController: NSViewController, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
     private static let logHandlerName = "kotobaLibreLog"
     private static let addAgentCandidateHandlerName = "kotobaLibreAddAgentCandidate"
+    private static let launcherProgressHandlerName = "kotobaLibreLauncherProgress"
     private static let supportedAuthenticationCallbackScheme = "kotobalibre"
 
     private enum ExternalNavigationPolicy {
@@ -553,6 +554,103 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
         }
     }
 
+    // This badge keeps launcher-triggered route changes feeling intentional instead of stalled.
+    @MainActor
+    private final class LauncherProgressBadgeView: NSVisualEffectView {
+        private let spinner = NSProgressIndicator()
+        private let label = NSTextField(labelWithString: "")
+
+        override init(frame frameRect: NSRect) {
+            super.init(frame: frameRect)
+
+            material = .hudWindow
+            blendingMode = .withinWindow
+            state = .active
+            wantsLayer = true
+            layer?.cornerRadius = 14
+            layer?.masksToBounds = true
+            translatesAutoresizingMaskIntoConstraints = false
+            alphaValue = 0
+            isHidden = true
+
+            spinner.style = .spinning
+            spinner.controlSize = .small
+            spinner.isIndeterminate = true
+            spinner.translatesAutoresizingMaskIntoConstraints = false
+
+            label.font = .systemFont(ofSize: 12, weight: .medium)
+            label.textColor = .secondaryLabelColor
+            label.translatesAutoresizingMaskIntoConstraints = false
+            label.lineBreakMode = .byTruncatingTail
+            label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+            addSubview(spinner)
+            addSubview(label)
+
+            NSLayoutConstraint.activate([
+                spinner.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+                spinner.centerYAnchor.constraint(equalTo: centerYAnchor),
+                label.leadingAnchor.constraint(equalTo: spinner.trailingAnchor, constant: 8),
+                label.topAnchor.constraint(equalTo: topAnchor, constant: 8),
+                label.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
+                label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12)
+            ])
+        }
+
+        @available(*, unavailable)
+        required init?(coder: NSCoder) {
+            fatalError("init(coder:) has not been implemented")
+        }
+
+        func setMessage(_ message: String) {
+            label.stringValue = message
+        }
+
+        func show(animated: Bool) {
+            spinner.startAnimation(nil)
+            guard isHidden || alphaValue < 1 else {
+                return
+            }
+
+            isHidden = false
+            if animated {
+                alphaValue = 0
+                NSAnimationContext.runAnimationGroup { context in
+                    context.duration = 0.16
+                    animator().alphaValue = 1
+                }
+            } else {
+                alphaValue = 1
+            }
+        }
+
+        func hide(animated: Bool) {
+            spinner.stopAnimation(nil)
+            guard !isHidden else {
+                return
+            }
+
+            let completeHide = { [weak self] in
+                self?.alphaValue = 0
+                self?.isHidden = true
+            }
+
+            if animated {
+                NSAnimationContext.runAnimationGroup({ context in
+                    context.duration = 0.16
+                    animator().alphaValue = 0
+                }, completionHandler: { [weak self] in
+                    Task { @MainActor [weak self] in
+                        self?.alphaValue = 0
+                        self?.isHidden = true
+                    }
+                })
+            } else {
+                completeHide()
+            }
+        }
+    }
+
     let webView: WKWebView
     var externalNavigationHandler: ((URL) -> Void)?
     var authenticationSessionStarter: ((URL, String) -> Bool)?
@@ -564,6 +662,10 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
     private var popupNavigationPolicies: [ObjectIdentifier: ExternalNavigationPolicy] = [:]
     private let logMessageHandler = ScriptMessageHandler()
     private let addAgentMessageHandler = DictionaryMessageHandler()
+    private let launcherProgressMessageHandler = DictionaryMessageHandler()
+    private let launcherProgressBadgeView = LauncherProgressBadgeView()
+    private var pendingLauncherProgressShow: DispatchWorkItem?
+    private var pendingLauncherProgressHide: DispatchWorkItem?
 
     init() {
         let configuration = WKWebViewConfiguration()
@@ -572,6 +674,7 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
         // These scripts are injected before the page app boots so launcher navigation can seed state early.
         configuration.userContentController.add(logMessageHandler, name: Self.logHandlerName)
         configuration.userContentController.add(addAgentMessageHandler, name: Self.addAgentCandidateHandlerName)
+        configuration.userContentController.add(launcherProgressMessageHandler, name: Self.launcherProgressHandlerName)
         configuration.userContentController.addUserScript(
             WKUserScript(
                 source: Self.loggerBootstrapScript,
@@ -604,6 +707,9 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
         addAgentMessageHandler.onMessage = { [weak self] body in
             self?.addAgentCandidateHandler?(Self.parseAddAgentCandidate(from: body))
         }
+        launcherProgressMessageHandler.onMessage = { [weak self] body in
+            self?.handleLauncherProgressMessage(body)
+        }
     }
 
     @available(*, unavailable)
@@ -612,16 +718,37 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
     }
 
     override func loadView() {
-        view = webView
+        let containerView = NSView()
+        containerView.addSubview(webView)
+        containerView.addSubview(launcherProgressBadgeView)
+        webView.translatesAutoresizingMaskIntoConstraints = false
+
+        NSLayoutConstraint.activate([
+            webView.leadingAnchor.constraint(equalTo: containerView.leadingAnchor),
+            webView.trailingAnchor.constraint(equalTo: containerView.trailingAnchor),
+            webView.topAnchor.constraint(equalTo: containerView.topAnchor),
+            webView.bottomAnchor.constraint(equalTo: containerView.bottomAnchor),
+            launcherProgressBadgeView.centerXAnchor.constraint(equalTo: containerView.centerXAnchor),
+            launcherProgressBadgeView.topAnchor.constraint(equalTo: containerView.topAnchor, constant: 18),
+            launcherProgressBadgeView.widthAnchor.constraint(lessThanOrEqualToConstant: 260)
+        ])
+
+        view = containerView
     }
 
     func load(url: URL) {
+        if isLauncherChatTransition(url) {
+            showLauncherProgress("Loading agent…")
+        } else {
+            hideLauncherProgress(animated: false)
+        }
         hasLoadedRemoteContent = true
         debugLog("KotobaLibre SPA: load(url:) -> \(url.absoluteString)")
         webView.load(URLRequest(url: url))
     }
 
     func open(url: URL, settings: AppSettings, instanceHost: String?, forceEmbedAllHosts: Bool = false) {
+        let shouldShowLauncherProgress = isLauncherChatTransition(url)
         if forceEmbedAllHosts {
             externalNavigationPolicy = .embedAllHosts
         } else {
@@ -630,6 +757,9 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
 
         // Same-host launches can stay inside the existing SPA once remote content has loaded at least once.
         if KotobaLibreCore.canUseSPANavigation(instanceHost: instanceHost, url: url), hasLoadedRemoteContent {
+            if shouldShowLauncherProgress {
+                showLauncherProgress("Opening agent…")
+            }
             let script = spaNavigationScript(
                 destination: url.absoluteString,
                 useRouteReload: settings.useRouteReloadForLauncherChats
@@ -642,6 +772,7 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
                         self?.debugLog("KotobaLibre SPA: ignoring unsupported evaluateJavaScript return type")
                         return
                     }
+                    self?.showLauncherProgress("Reloading agent…", delay: 0)
                     self?.load(url: url)
                 }
             }
@@ -729,6 +860,9 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         if webView == self.webView {
             hasLoadedRemoteContent = true
+            if !isLauncherAutoSubmitTransition(webView.url) {
+                hideLauncherProgress()
+            }
         }
         popupWindowControllers[ObjectIdentifier(webView)]?.window?.title = webView.title ?? appDisplayName
         debugLog("KotobaLibre SPA: didFinish -> \(webView.url?.absoluteString ?? "<unknown>")")
@@ -886,6 +1020,124 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
         }
 
         print(message)
+    }
+
+    private func handleLauncherProgressMessage(_ rawValue: Any) {
+        guard let payload = rawValue as? [String: Any] else {
+            return
+        }
+
+        guard let phase = payload["phase"] as? String else {
+            return
+        }
+
+        switch phase {
+        case "loading-page", "opening-agent":
+            showLauncherProgress("Opening agent…")
+        case "page-ready", "waiting-for-editor":
+            showLauncherProgress("Waiting for editor…", delay: 0)
+        case "preparing-prompt":
+            showLauncherProgress("Preparing prompt…", delay: 0)
+        case "submitting-prompt":
+            showLauncherProgress("Submitting prompt…", delay: 0)
+        case "route-remount":
+            showLauncherProgress("Refreshing chat…", delay: 0)
+        case "reloading-page":
+            showLauncherProgress("Reloading agent…", delay: 0)
+        case "submitted":
+            hideLauncherProgress(delay: 0.35)
+        case "ready":
+            hideLauncherProgress()
+        default:
+            break
+        }
+    }
+
+    private func showLauncherProgress(_ message: String, delay: TimeInterval = 0.15) {
+        pendingLauncherProgressHide?.cancel()
+        pendingLauncherProgressHide = nil
+        launcherProgressBadgeView.setMessage(message)
+
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self else {
+                return
+            }
+
+            self.pendingLauncherProgressShow = nil
+            self.launcherProgressBadgeView.show(animated: true)
+        }
+
+        pendingLauncherProgressShow?.cancel()
+        pendingLauncherProgressShow = workItem
+
+        if delay <= 0 {
+            workItem.perform()
+        } else {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
+        }
+    }
+
+    private func hideLauncherProgress(animated: Bool = true, delay: TimeInterval = 0.2) {
+        pendingLauncherProgressShow?.cancel()
+        pendingLauncherProgressShow = nil
+
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self else {
+                return
+            }
+
+            self.pendingLauncherProgressHide = nil
+            self.launcherProgressBadgeView.hide(animated: animated)
+        }
+
+        pendingLauncherProgressHide?.cancel()
+        pendingLauncherProgressHide = workItem
+
+        if delay <= 0 {
+            workItem.perform()
+        } else {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
+        }
+    }
+
+    private func isLauncherChatTransition(_ url: URL?) -> Bool {
+        guard let url, let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            return false
+        }
+
+        let path = components.path.lowercased()
+        let isNewChatPath =
+            path == "/c/new" ||
+            path.hasPrefix("/c/new/") ||
+            path.hasSuffix("/c/new") ||
+            path.contains("/c/new/")
+        guard isNewChatPath else {
+            return false
+        }
+
+        let queryItems = components.queryItems ?? []
+        return queryItems.contains(where: { item in
+            let key = item.name.lowercased()
+            return key == "agent_id" || key == "prompt" || key == "q"
+        })
+    }
+
+    private func isLauncherAutoSubmitTransition(_ url: URL?) -> Bool {
+        guard let url, let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            return false
+        }
+
+        let queryItems = components.queryItems ?? []
+        let hasPrompt = queryItems.contains(where: { item in
+            let key = item.name.lowercased()
+            return (key == "prompt" || key == "q") && !(item.value ?? "").isEmpty
+        })
+        let requestsSubmit = queryItems.contains(where: { item in
+            item.name.caseInsensitiveCompare("submit") == .orderedSame &&
+                (item.value ?? "").caseInsensitiveCompare("true") == .orderedSame
+        })
+
+        return hasPrompt && requestsSubmit
     }
 
     private func embeddedHost(for url: URL, instanceHost: String?, settings: AppSettings) -> String? {
@@ -1099,10 +1351,24 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
 
     private static let launcherBootstrapScript = """
     (() => {
+      const postLauncherProgress = (phase) => {
+        try {
+          window.webkit?.messageHandlers?.\(launcherProgressHandlerName).postMessage({ phase });
+        } catch (_) {
+        }
+      };
       try {
         const url = new URL(window.location.href);
         if (!(url.pathname === "/c/new" || url.pathname.startsWith("/c/new/"))) return;
         const agentId = url.searchParams.get("agent_id");
+        const prompt = url.searchParams.get("prompt") ?? url.searchParams.get("q") ?? "";
+        const shouldAutoSubmit =
+          (url.searchParams.get("submit") ?? "").toLowerCase() === "true" &&
+          prompt.length > 0;
+        if (shouldAutoSubmit) {
+          postLauncherProgress("loading-page");
+          window.addEventListener("load", () => postLauncherProgress("page-ready"), { once: true });
+        }
         if (agentId) {
           localStorage.setItem("agent_id__0", agentId);
           globalThis.__kotobaLibreLog?.("launcher bootstrap seeded agent_id__0", agentId);
@@ -1251,6 +1517,12 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
             const shouldAutoSubmitFromQuery =
               (next.searchParams.get("submit") ?? "").toLowerCase() === "true" &&
               (next.searchParams.has("prompt") || next.searchParams.has("q"));
+            const postLauncherProgress = (phase) => {
+              try {
+                window.webkit?.messageHandlers?.\(Self.launcherProgressHandlerName).postMessage({ phase });
+              } catch (_) {
+              }
+            };
             log("spa start", {
               href: next.href,
               targetAppPath,
@@ -1259,6 +1531,9 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
               shouldAutoSubmitFromQuery,
               useRouteReloadForLauncherChats,
             });
+            if (next.pathname === "/c/new" || next.pathname.startsWith("/c/new/")) {
+              postLauncherProgress("opening-agent");
+            }
             const seedLauncherSelection = () => {
               if (!(next.pathname === "/c/new" || next.pathname.startsWith("/c/new/"))) return;
               const agentId = next.searchParams.get("agent_id");
@@ -1269,6 +1544,7 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
             };
             seedLauncherSelection();
             if (useRouteReloadForLauncherChats && shouldAutoSubmitFromQuery) {
+              postLauncherProgress("reloading-page");
               log("branch route reload flag -> window.location.assign");
               window.location.assign(next.href);
               return;
@@ -1371,6 +1647,24 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
             };
             const waitForElement = async (resolver, timeoutMs = 5000) =>
               await waitForResult(resolver, timeoutMs, 30);
+            const findPromptTextarea = async (previousTextarea = null) => {
+              const replacementWaitMs = previousTextarea ? 260 : 5000;
+              const nextTextarea = await waitForElement(
+                () => {
+                  const candidate = document.getElementById("prompt-textarea");
+                  if (!(candidate instanceof HTMLTextAreaElement)) return null;
+                  if (previousTextarea && candidate === previousTextarea) return null;
+                  return candidate;
+                },
+                replacementWaitMs,
+              );
+              if (nextTextarea instanceof HTMLTextAreaElement) {
+                return nextTextarea;
+              }
+              // Some LibreChat transitions keep the same textarea mounted, so fall back instead of idling.
+              const fallbackTextarea = document.getElementById("prompt-textarea");
+              return fallbackTextarea instanceof HTMLTextAreaElement ? fallbackTextarea : null;
+            };
             const setTextareaValue = (textarea, value) => {
               const prototype = window.HTMLTextAreaElement?.prototype;
               const descriptor = prototype && Object.getOwnPropertyDescriptor(prototype, "value");
@@ -1387,20 +1681,17 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
               return await waitForCondition(() => textarea.value === value, timeoutMs, 16);
             };
             const submitPromptViaChatForm = async (prompt, previousTextarea = null) => {
-              if (!prompt) return true;
-              const textarea = await waitForElement(
-                () => {
-                  const candidate = document.getElementById("prompt-textarea");
-                  if (!(candidate instanceof HTMLTextAreaElement)) return null;
-                  if (previousTextarea && candidate === previousTextarea) return null;
-                  return candidate;
-                },
-                5000,
-              );
+              if (!prompt) {
+                postLauncherProgress("ready");
+                return true;
+              }
+              postLauncherProgress("waiting-for-editor");
+              const textarea = await findPromptTextarea(previousTextarea);
               if (!(textarea instanceof HTMLTextAreaElement)) {
                 log("submitPromptViaChatForm missing textarea");
                 return false;
               }
+              postLauncherProgress("preparing-prompt");
               setTextareaValue(textarea, prompt);
               await waitForTextareaValue(textarea, prompt, 180);
               if (textarea.value !== prompt) {
@@ -1421,8 +1712,10 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
                 log("submitPromptViaChatForm missing send button");
                 return false;
               }
+              postLauncherProgress("submitting-prompt");
               log("submitPromptViaChatForm clicking send");
               sendButton.click();
+              postLauncherProgress("submitted");
               return true;
             };
             const setStoredLauncherConversation = (agentId) => {
@@ -1566,6 +1859,8 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
                 });
                 const previousTextarea = document.getElementById("prompt-textarea");
                 chatContext.newConversation({ template, preset });
+                // Start waiting for the fresh composer immediately so the prompt can land as soon as it remounts.
+                const submitTask = submitPromptViaChatForm(prompt, previousTextarea);
                 await waitForChatContextConversation(agentId, 5000);
                 await waitForElement(
                   () =>
@@ -1579,7 +1874,7 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
                   window.history.replaceState({}, "", targetAppPath);
                   log("startAgentChatViaReactContext replaced history", targetAppPath);
                 }
-                return await submitPromptViaChatForm(prompt, previousTextarea);
+                return await submitTask;
               } catch (error) {
                 log("startAgentChatViaReactContext exception", String(error));
                 return false;
@@ -1646,6 +1941,8 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
                 }
                 log("startAgentChatViaMarketplace clicking Start Chat");
                 startButton.click();
+                // Waiting for the composer in parallel trims the empty-state pause after the dialog closes.
+                const submitTask = submitPromptViaChatForm(prompt);
                 await waitForElement(
                   () =>
                     toRouterPath(window.location.href).startsWith("/c/new") &&
@@ -1655,7 +1952,7 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
                   5000,
                 );
                 log("startAgentChatViaMarketplace after Start Chat", window.location.href);
-                return await submitPromptViaChatForm(prompt);
+                return await submitTask;
               } catch (error) {
                 log("startAgentChatViaMarketplace exception", String(error));
                 return false;
@@ -1665,6 +1962,7 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
               if (!shouldAutoSubmitFromQuery || useRouteReloadForLauncherChats) return false;
               // LibreChat only processes launcher-style query params once per ChatRoute mount.
               const remountPath = `/search?tl_remount=${Date.now()}`;
+              postLauncherProgress("route-remount");
               log("performSubmitRouteRemount start", remountPath);
               if (!(await navigateInternally(remountPath, 180))) {
                 log("performSubmitRouteRemount failed to navigate to remount path");
@@ -1678,12 +1976,23 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
             if (await startAgentChatViaReactContext()) return;
             if (await startAgentChatViaMarketplace()) return;
             if (await performSubmitRouteRemount()) return;
-            if (await navigateInternally(targetRouterPath, shouldAutoSubmitFromQuery ? 1400 : 200)) return;
+            if (await navigateInternally(targetRouterPath, shouldAutoSubmitFromQuery ? 1400 : 200)) {
+              if (!shouldAutoSubmitFromQuery) {
+                postLauncherProgress("ready");
+              }
+              return;
+            }
             if (pushWithHistory(targetAppPath)) {
               const reached = await waitForTargetLocation(600);
-              if (reached) return;
+              if (reached) {
+                if (!shouldAutoSubmitFromQuery) {
+                  postLauncherProgress("ready");
+                }
+                return;
+              }
             }
             // Preserve the exact preset destination when SPA routing cannot carry it through.
+            postLauncherProgress("reloading-page");
             log("falling back to window.location.assign", next.href);
             window.location.assign(next.href);
             } catch (error) {
