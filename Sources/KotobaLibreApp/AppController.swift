@@ -69,6 +69,7 @@ final class AppController: NSObject, ObservableObject, ASWebAuthenticationPresen
         let settingsWindowVisible: Bool
         let launcherWindowVisible: Bool
         let launcherWindowKey: Bool
+        let launcherSelectedPresetID: String?
         let mainContentKind: MainWindowController.ContentKind
     }
 
@@ -182,8 +183,12 @@ final class AppController: NSObject, ObservableObject, ASWebAuthenticationPresen
     }
 
     func togglePrimaryWindow() {
-        if mainWindowController.isVisible {
-            mainWindowController.hide()
+        if let window = mainWindowController.window, window.isVisible {
+            if window.isKeyWindow {
+                mainWindowController.hide()
+            } else {
+                mainWindowController.showAndFocus()
+            }
             return
         }
 
@@ -291,6 +296,10 @@ final class AppController: NSObject, ObservableObject, ASWebAuthenticationPresen
 
     func hideLauncherWindow() {
         launcherWindowController.hide()
+    }
+
+    func selectLauncherPreset(id: String?) {
+        launcherWindowController.selectPreset(id: id)
     }
 
     func toggleLauncherWindow() {
@@ -828,6 +837,7 @@ final class AppController: NSObject, ObservableObject, ASWebAuthenticationPresen
             settingsWindowVisible: settingsWindowController.isVisible,
             launcherWindowVisible: launcherWindowController.isVisible,
             launcherWindowKey: launcherWindowController.window?.isKeyWindow ?? false,
+            launcherSelectedPresetID: launcherWindowController.selectedPresetID,
             mainContentKind: mainWindowController.contentKind
         )
     }

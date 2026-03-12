@@ -30,6 +30,8 @@ final class AppSmokeTestRunner {
         try await assertInitialOnboardingState()
         let preset = try await completeOnboardingAndCreatePreset()
         try await assertSettingsAndLauncherWindows()
+        try await assertLauncherSelectionResetsToDefault(presetID: preset.id)
+        try await assertTogglePrimaryWindowRefocusesVisibleWindow()
         try await assertPresetLaunch(presetID: preset.id)
         try await assertResetConfiguration()
     }
@@ -94,6 +96,62 @@ final class AppSmokeTestRunner {
         try expect(snapshot.mainWindowVisible, "main window should remain visible after launching a preset")
         try expect(snapshot.launcherWindowVisible == false, "launcher should hide after launching a preset")
         try expect(snapshot.mainContentKind == .web, "preset launch should keep the web container active")
+    }
+
+    private func assertLauncherSelectionResetsToDefault(presetID: String) async throws {
+        var alternatePreset = appController.makeEmptyPreset()
+        alternatePreset.name = "Smoke Test Alternate Agent"
+        alternatePreset.urlTemplate = "https://chat.example.com/c/new?agent_id=smoke-test-alternate-agent"
+
+        let savedAlternatePreset = try appController.upsertPreset(alternatePreset)
+        await settle()
+        try expect(savedAlternatePreset.id != presetID, "alternate preset should differ from the default preset")
+
+        appController.showLauncherWindow()
+        await settle()
+
+        var snapshot = appController.smokeTestSnapshot()
+        try expect(snapshot.launcherSelectedPresetID == presetID, "launcher should start with the default preset selected")
+
+        appController.selectLauncherPreset(id: savedAlternatePreset.id)
+        await settle()
+
+        snapshot = appController.smokeTestSnapshot()
+        try expect(snapshot.launcherSelectedPresetID == savedAlternatePreset.id, "launcher selection should change when a different preset is chosen")
+
+        appController.hideLauncherWindow()
+        await settle()
+
+        appController.showLauncherWindow()
+        await settle()
+
+        snapshot = appController.smokeTestSnapshot()
+        try expect(snapshot.launcherSelectedPresetID == presetID, "reopening the launcher should restore the default preset selection")
+
+        appController.selectLauncherPreset(id: savedAlternatePreset.id)
+        await settle()
+
+        appController.showVoiceLauncherWindow()
+        await settle()
+
+        snapshot = appController.smokeTestSnapshot()
+        try expect(snapshot.launcherSelectedPresetID == presetID, "switching launcher modes should reset selection to the default preset")
+    }
+
+    private func assertTogglePrimaryWindowRefocusesVisibleWindow() async throws {
+        appController.showSettingsWindow()
+        await settle()
+
+        var snapshot = appController.smokeTestSnapshot()
+        try expect(snapshot.mainWindowVisible, "main window should still be visible before toggling focus")
+        try expect(snapshot.mainWindowKey == false, "main window should not be key while settings are focused")
+
+        appController.togglePrimaryWindow()
+        await settle()
+
+        snapshot = appController.smokeTestSnapshot()
+        try expect(snapshot.mainWindowVisible, "toggle should keep the visible main window open when it is unfocused")
+        try expect(snapshot.mainWindowKey, "toggle should bring the visible main window to the foreground when it is unfocused")
     }
 
     private func assertResetConfiguration() async throws {
