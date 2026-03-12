@@ -40,7 +40,7 @@ Build the distributable app and unsigned archives:
 ./scripts/build-app.sh
 ```
 
-Build with passkey and security-key support for specific relying-party domains:
+Build with popup-based passkey and security-key support for specific relying-party domains:
 
 ```bash
 KOTOBA_ASSOCIATED_DOMAINS="chat.example.com,login.example.com" ./scripts/build-app.sh
@@ -54,7 +54,7 @@ KOTOBA_ASSOCIATED_DOMAINS="chat.example.com,login.example.com" ./scripts/build-a
 4. Run `swift run KotobaLibreApp` when you need a manual UI or system-integration check.
 5. Run `./scripts/build-app.sh` before finishing work.
 
-If you need passkeys in `WKWebView`, package the app with `KOTOBA_ASSOCIATED_DOMAINS` set to the relying-party hosts. Apple requires those hosts to be declared as `webcredentials` associated domains in the app entitlements, so a single build cannot support arbitrary runtime-selected domains.
+If your LibreChat login flow opens passkey or security-key authentication in a popup, package the app with `KOTOBA_ASSOCIATED_DOMAINS` set to the relying-party hosts. Apple requires those hosts to be declared as `webcredentials` associated domains in the app entitlements, so a single build cannot support arbitrary runtime-selected domains. Passkey or FIDO/security-key prompts that stay inside the main embedded Swift window are still not supported.
 
 ## Where To Make Changes
 
