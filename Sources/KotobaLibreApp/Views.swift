@@ -1981,7 +1981,8 @@ private struct LauncherPanelSurface: View {
     }
 }
 
-// These helpers apply an article-style animated glow stroke behind and above launcher surfaces.
+// These helpers adapt the MIT-licensed IntelligenceGlow reference implementation
+// for the launcher surfaces. See THIRD_PARTY_NOTICES.md for attribution details.
 private extension InsettableShape {
     @MainActor
     func launcherGlowOverlay(isVoice: Bool) -> some View {
@@ -2013,7 +2014,9 @@ private extension InsettableShape {
     }
 }
 
-// LauncherGlowStrokeView follows the layered animated angular-stroke approach from the reference article.
+// LauncherGlowStrokeView adapts the layered animated stroke from the MIT-licensed
+// IntelligenceGlow reference implementation. See THIRD_PARTY_NOTICES.md for the
+// full attribution and license notice.
 private struct LauncherGlowStrokeView<S: InsettableShape>: View {
     let shape: S
     let lineWidths: [CGFloat]
