@@ -1099,6 +1099,8 @@ struct SettingsPanelView: View {
     @State private var pendingCleanupPreview: AppController.SettingsChangePreview?
     @State private var liveCompatibilityPreview: AppController.SettingsChangePreview?
     @State private var liveValidationIssue: String?
+    @State private var suppressAutosave = true
+    @State private var pendingAutosaveTask: Task<Void, Never>?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -1129,15 +1131,10 @@ struct SettingsPanelView: View {
                     Text(compatibilityMessage)
                         .font(.footnote)
                         .foregroundStyle(Color.red)
-                    Button("Export Agents Before Saving") {
+                    Button("Export Agents") {
                         exportAgents()
                     }
                 }
-            }
-
-            HStack {
-                Button("Save Settings") { saveSettings() }
-                    .buttonStyle(.borderedProminent)
             }
 
             if !statusMessage.isEmpty {
@@ -1153,49 +1150,51 @@ struct SettingsPanelView: View {
         .onChange(of: draftState) {
             refreshPreviewState()
         }
+        .onChange(of: instanceBaseURL) {
+            scheduleAutosave(after: .milliseconds(450))
+        }
+        .onChange(of: restrictHost) {
+            scheduleAutosave()
+        }
+        .onChange(of: useRouteReloadForLauncherChats) {
+            scheduleAutosave()
+        }
         .onChange(of: appController.settings) {
+            reload()
             refreshPreviewState()
         }
         .confirmationDialog("Remove incompatible agents?", isPresented: $isShowingCompatibilityConfirmation, titleVisibility: .visible) {
-            Button("Export and Save") {
+            Button("Export and Apply") {
                 exportAndSave()
             }
             if let pendingCleanupPreview {
-                Button("Save and Remove \(pendingCleanupPreview.incompatiblePresets.count) Agents", role: .destructive) {
-                    commitSettings()
+                Button("Apply and Remove \(pendingCleanupPreview.incompatiblePresets.count) Agents", role: .destructive) {
+                    commitSettings(showSuccessStatus: true)
                 }
             }
             Button("Cancel", role: .cancel) {
-                pendingCleanupPreview = nil
+                reload()
+                refreshPreviewState()
             }
         } message: {
             if let pendingCleanupPreview {
                 Text(cleanupMessage(for: pendingCleanupPreview.incompatiblePresets))
             }
         }
+        .onDisappear {
+            pendingAutosaveTask?.cancel()
+        }
     }
 
     private func reload() {
-        // The UI edits local @State first so changes can be canceled before saving.
+        suppressAutosave = true
+        pendingAutosaveTask?.cancel()
+        // The UI edits local @State first so invalid URLs can be corrected before autosave retries.
         instanceBaseURL = appController.settings.instanceBaseUrl ?? ""
         restrictHost = appController.settings.restrictHostToInstanceHost
         useRouteReloadForLauncherChats = appController.settings.useRouteReloadForLauncherChats
-    }
-
-    private func saveSettings() {
-        do {
-            let preview = try resolveCurrentPreview()
-            if !preview.incompatiblePresets.isEmpty {
-                // Host changes can invalidate saved presets, so the user gets a cleanup confirmation first.
-                pendingCleanupPreview = preview
-                isShowingCompatibilityConfirmation = true
-                return
-            }
-
-            commitSettings()
-        } catch {
-            setStatus(error.localizedDescription, isError: true)
-        }
+        pendingCleanupPreview = nil
+        suppressAutosave = false
     }
 
     private func setStatus(_ message: String, isError: Bool) {
@@ -1252,7 +1251,7 @@ struct SettingsPanelView: View {
         let names = incompatiblePresets.prefix(3).map(\.name)
         let suffix = incompatiblePresets.count > 3 ? " and \(incompatiblePresets.count - 3) more" : ""
         let namesText = names.isEmpty ? "" : " Affected agents: \(names.joined(separator: ", "))\(suffix)."
-        return "\(incompatiblePresets.count) configured agent\(incompatiblePresets.count == 1 ? "" : "s") no longer match this LibreChat host while host restriction is enabled. Export them before saving if you want a backup.\(namesText)"
+        return "\(incompatiblePresets.count) configured agent\(incompatiblePresets.count == 1 ? "" : "s") no longer match this LibreChat host while host restriction is enabled. Export them before continuing if you want a backup.\(namesText)"
     }
 
     private func exportAgents() {
@@ -1271,16 +1270,62 @@ struct SettingsPanelView: View {
             let count = try appController.exportPresetsFromPanel()
             guard count > 0 else {
                 setStatus("Export canceled. Settings were not changed.", isError: false)
-                pendingCleanupPreview = nil
+                reload()
+                refreshPreviewState()
                 return
             }
-            commitSettings(exportedCount: count)
+            commitSettings(exportedCount: count, showSuccessStatus: true)
         } catch {
             setStatus("Export failed: \(error.localizedDescription)", isError: true)
         }
     }
 
-    private func commitSettings(exportedCount: Int? = nil) {
+    private func scheduleAutosave(after delay: Duration = .zero) {
+        guard !suppressAutosave else {
+            return
+        }
+
+        pendingAutosaveTask?.cancel()
+        pendingAutosaveTask = Task { @MainActor in
+            if delay > .zero {
+                try? await Task.sleep(for: delay)
+            }
+
+            guard !Task.isCancelled else {
+                return
+            }
+
+            autosaveSettings()
+        }
+    }
+
+    private func autosaveSettings() {
+        guard !suppressAutosave else {
+            return
+        }
+
+        do {
+            let preview = try resolveCurrentPreview()
+            guard draftState != savedState else {
+                setStatus("", isError: false)
+                pendingCleanupPreview = nil
+                return
+            }
+
+            if !preview.incompatiblePresets.isEmpty {
+                // Autosave pauses here so the user can confirm the preset cleanup side effect.
+                pendingCleanupPreview = preview
+                isShowingCompatibilityConfirmation = true
+                return
+            }
+
+            commitSettings(showSuccessStatus: false)
+        } catch {
+            setStatus(error.localizedDescription, isError: true)
+        }
+    }
+
+    private func commitSettings(exportedCount: Int? = nil, showSuccessStatus: Bool) {
         do {
             let result = try appController.saveSettings(draftSettings)
             reload()
@@ -1292,8 +1337,10 @@ struct SettingsPanelView: View {
                 setStatus("Exported \(exportedCount) agents. Settings saved and removed \(removedCount) incompatible agents.", isError: false)
             } else if removedCount > 0 {
                 setStatus("Settings saved. Removed \(removedCount) incompatible agents.", isError: false)
-            } else {
+            } else if showSuccessStatus {
                 setStatus("Settings saved.", isError: false)
+            } else {
+                setStatus("", isError: false)
             }
         } catch {
             setStatus(error.localizedDescription, isError: true)
