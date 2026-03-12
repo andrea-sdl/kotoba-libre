@@ -11,8 +11,8 @@ The app gives LibreChat a focused desktop shell with:
 - A persistent voice launcher with its own shortcut, animated listening state, and Apple speech transcription
 - A dedicated shortcut for bringing the main app window to the front
 - Native WebKit popup windows when LibreChat opens secondary flows, including cross-domain HTTPS popup navigation
-- Best-effort browser-backed OAuth handling for popup auth flows, with `ASWebAuthenticationSession` for `kotobalibre://...` callbacks and browser fallback otherwise
-- Passkey and security-key login support for build-configured `webcredentials` domains
+- Best-effort browser-backed OAuth and popup-auth handling, with `ASWebAuthenticationSession` for `kotobalibre://...` callbacks and browser fallback otherwise
+- Popup-based passkey and security-key login support for build-configured `webcredentials` domains
 - Deep links for opening settings, presets, and direct destinations
 - JSON import/export for agent presets
 - Unsigned `.app`, `.dmg`, and `.zip` packaging for internal distribution
@@ -90,13 +90,17 @@ Build the distributable app bundle and unsigned artifacts:
 ./scripts/build-app.sh
 ```
 
-Enable passkey and security-key support for specific relying-party domains:
+Enable popup-based passkey and security-key support for specific relying-party domains:
 
 ```bash
 KOTOBA_ASSOCIATED_DOMAINS="chat.example.com,login.example.com" ./scripts/build-app.sh
 ```
 
-Those entries are normalized to `webcredentials:` entitlements at packaging time. WKWebView passkeys only work for domains you ship in the app entitlements, so arbitrary runtime instance URLs cannot all be supported by one unsigned build.
+Those entries are normalized to `webcredentials:` entitlements at packaging time. They only help when the LibreChat login flow opens in a popup that Kotoba Libre can route through its popup/browser-backed auth handling, and arbitrary runtime instance URLs still cannot all be supported by one unsigned build.
+
+## Known Limitation
+
+If your LibreChat login flow requires a passkey or FIDO/security key and stays inside the main embedded Swift window, Kotoba Libre does not support that flow yet. The supported path today is for the login flow to open in a popup, where Kotoba Libre can route the authentication request through its popup/browser-backed auth handling.
 
 Generated artifacts:
 

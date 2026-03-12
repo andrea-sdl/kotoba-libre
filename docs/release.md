@@ -39,13 +39,13 @@ You can also pass an explicit version:
 ./scripts/build-app.sh 0.1.0
 ```
 
-For passkey and security-key login support in `WKWebView`, package with the relying-party hosts declared up front:
+For popup-based passkey and security-key login support, package with the relying-party hosts declared up front:
 
 ```bash
 KOTOBA_ASSOCIATED_DOMAINS="chat.example.com,login.example.com" ./scripts/build-app.sh
 ```
 
-The build script turns those entries into `webcredentials:` associated domains before signing the app bundle.
+The build script turns those entries into `webcredentials:` associated domains before signing the app bundle. That packaging only helps when the login flow opens in a popup. Passkey or FIDO/security-key prompts that stay inside the main embedded Swift window are still not supported.
 
 The build script:
 
