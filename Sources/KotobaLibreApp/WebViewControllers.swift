@@ -1970,6 +1970,9 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
               }
               await waitForRouteToApply();
               const result = await navigateInternally(targetRouterPath, 1400);
+              if (result) {
+                postLauncherProgress("ready");
+              }
               log("performSubmitRouteRemount result", result);
               return result;
             };
