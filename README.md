@@ -205,6 +205,12 @@ Validate the version before release:
 Unsigned release automation is defined in `.github/workflows/release.yml`.
 The release workflow is launched manually from the default branch, creates the release tag for the selected `patch` / `minor` / `major` bump, publishes only the unsigned DMG to GitHub Releases, and then advances `VERSION` to the next `-dev` version on the default branch.
 
+## Third-Party Notices
+
+The launcher glow effect in `Sources/KotobaLibreApp/Views.swift` is adapted from the MIT-licensed `IntelligenceGlow` reference implementation. Kotoba Libre does not include that package as a dependency.
+
+See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the full attribution and license notice.
+
 ## License
 
 Kotoba Libre is licensed under the GNU General Public License v2.0. See [LICENSE](LICENSE).
