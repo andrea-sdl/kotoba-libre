@@ -111,10 +111,10 @@ Generated artifacts:
 If no settings exist, the main window opens a three-step onboarding flow:
 
 1. Enter the LibreChat base URL
-2. Review optional permissions for voice features
-3. Finish setup and open LibreChat
+2. Review optional voice permissions
+3. Confirm the setup and open LibreChat
 
-The onboarding window opens as a compact wizard so first-run setup stays focused without needing an internal scroll area.
+The onboarding window opens as a compact wizard with focused steps, inline URL validation, and default keyboard actions so first-run setup stays quick without needing an internal scroll area.
 
 After setup completes, Kotoba Libre saves configuration and opens the main web view in an `800x600` default window.
 
