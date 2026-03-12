@@ -100,6 +100,13 @@ struct KotobaLibreSelfTest {
         expectThrows("hostRestrictionBlocksNonChatHost") {
             _ = try KotobaLibreCore.enforceDestination("https://example.com", settings: settings)
         }
+        expectThrows("instanceURLRejectsSingleLabelHost") {
+            _ = try KotobaLibreCore.parseInstanceBaseURL(AppSettings(instanceBaseUrl: "https://chat"))
+        }
+        expectThrows("instanceURLRejectsUnknownTopLevelDomain") {
+            _ = try KotobaLibreCore.parseInstanceBaseURL(AppSettings(instanceBaseUrl: "https://chat.librechat"))
+        }
+        expect(try KotobaLibreCore.parseInstanceBaseURL(AppSettings(instanceBaseUrl: "https://chat.example.com"))?.absoluteString == "https://chat.example.com", "instanceURLAllowsPublicHost")
 
         var unrestrictedSettings = settingsRestrictingHost()
         unrestrictedSettings.restrictHostToInstanceHost = false
