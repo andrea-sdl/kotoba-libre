@@ -112,13 +112,14 @@ Generated artifacts:
 
 ### First launch
 
-If no settings exist, the main window opens a three-step onboarding flow:
+If no settings exist, the main window opens a four-step onboarding flow:
 
-1. Enter the LibreChat base URL
-2. Review optional voice permissions
-3. Confirm the setup and open LibreChat
+1. Start with a welcome screen that explains Kotoba Libre as a macOS wrapper for LibreChat web apps
+2. Enter the LibreChat base URL
+3. Review optional voice permissions
+4. Confirm the setup and open LibreChat
 
-The onboarding window opens as a compact wizard with focused steps, inline URL validation, and default keyboard actions so first-run setup stays quick without needing an internal scroll area.
+The onboarding window opens as a compact wizard with focused steps, product context up front, inline URL validation, and default keyboard actions so first-run setup stays quick without needing an internal scroll area.
 
 After setup completes, Kotoba Libre saves configuration and opens the main web view in an `800x600` default window.
 
