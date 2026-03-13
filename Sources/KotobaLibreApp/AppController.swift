@@ -63,6 +63,7 @@ final class AppController: NSObject, ObservableObject, ASWebAuthenticationPresen
     // Smoke tests read this snapshot instead of reaching into window objects directly.
     struct SmokeTestSnapshot {
         let hasInstanceBaseURL: Bool
+        let globalShortcutsEnabled: Bool
         let presetCount: Int
         let defaultPresetID: String?
         let mainWindowVisible: Bool
@@ -123,6 +124,14 @@ final class AppController: NSObject, ObservableObject, ASWebAuthenticationPresen
         recordingShortcutTarget == .appWindow
     }
 
+    private var hasCompletedOnboarding: Bool {
+        guard let instanceBaseURL = settings.instanceBaseUrl?.trimmingCharacters(in: .whitespacesAndNewlines) else {
+            return false
+        }
+
+        return !instanceBaseURL.isEmpty
+    }
+
     init(store: AppDataStore? = nil, runtimeMode: RuntimeMode = .standard) {
         self.store = try! (store ?? AppDataStore())
         self.runtimeMode = runtimeMode
@@ -159,7 +168,7 @@ final class AppController: NSObject, ObservableObject, ASWebAuthenticationPresen
         applyAppVisibilityMode(settings.appVisibilityMode)
         if runtimeMode.shouldRegisterSystemIntegrations {
             try? syncAutostart(enabled: settings.autostartEnabled)
-            registerGlobalShortcutsIfPossible(promptForPermission: false)
+            syncGlobalShortcutRegistration(promptForPermission: false)
         } else {
             refreshShortcutDiagnostics()
         }
@@ -445,7 +454,7 @@ final class AppController: NSObject, ObservableObject, ASWebAuthenticationPresen
         } catch {
             restoreTransientState(settings: previousSettings, presets: previousPresets)
             if runtimeMode.shouldRegisterSystemIntegrations {
-                registerGlobalShortcutsIfPossible(promptForPermission: false)
+                syncGlobalShortcutRegistration(promptForPermission: false)
             } else {
                 refreshShortcutDiagnostics()
             }
@@ -454,7 +463,7 @@ final class AppController: NSObject, ObservableObject, ASWebAuthenticationPresen
 
         // Re-register after a successful save so the latest shortcut and visibility settings take effect.
         if runtimeMode.shouldRegisterSystemIntegrations {
-            registerGlobalShortcutsIfPossible(promptForPermission: true)
+            syncGlobalShortcutRegistration(promptForPermission: true)
         } else {
             refreshShortcutDiagnostics()
         }
@@ -500,7 +509,7 @@ final class AppController: NSObject, ObservableObject, ASWebAuthenticationPresen
             }
         } catch {
             if runtimeMode.shouldRegisterSystemIntegrations {
-                registerGlobalShortcutsIfPossible(promptForPermission: false)
+                syncGlobalShortcutRegistration(promptForPermission: false)
             } else {
                 refreshShortcutDiagnostics()
             }
@@ -512,7 +521,7 @@ final class AppController: NSObject, ObservableObject, ASWebAuthenticationPresen
 
         applyAppVisibilityMode(settings.appVisibilityMode)
         if runtimeMode.shouldRegisterSystemIntegrations {
-            registerGlobalShortcutsIfPossible(promptForPermission: false)
+            syncGlobalShortcutRegistration(promptForPermission: false)
         } else {
             refreshShortcutDiagnostics()
         }
@@ -843,6 +852,7 @@ final class AppController: NSObject, ObservableObject, ASWebAuthenticationPresen
         let mainWindowSize = mainWindowController.window?.frame.size ?? .zero
         return SmokeTestSnapshot(
             hasInstanceBaseURL: settings.instanceBaseUrl != nil,
+            globalShortcutsEnabled: hasCompletedOnboarding,
             presetCount: presets.count,
             defaultPresetID: settings.defaultPresetId,
             mainWindowVisible: mainWindowController.window?.isVisible ?? false,
@@ -894,13 +904,27 @@ final class AppController: NSObject, ObservableObject, ASWebAuthenticationPresen
             return
         }
 
+        syncGlobalShortcutRegistration(promptForPermission: promptForPermission)
+    }
+
+    private func syncGlobalShortcutRegistration(promptForPermission: Bool) {
+        // Shortcuts stay inactive until onboarding saves a usable LibreChat instance URL.
+        guard hasCompletedOnboarding else {
+            suspendGlobalShortcuts()
+            return
+        }
+
         registerGlobalShortcutsIfPossible(promptForPermission: promptForPermission)
     }
 
     private func registerGlobalShortcut(promptForPermission: Bool) throws {
         try shortcutRegistrar.register(shortcut: settings.globalShortcut, promptForPermission: promptForPermission) { [weak self] in
             Task { @MainActor in
-                self?.toggleLauncherWindow()
+                guard let self, self.hasCompletedOnboarding else {
+                    return
+                }
+
+                self.toggleLauncherWindow()
             }
         }
         shortcutRegistrationIssue = nil
@@ -910,7 +934,11 @@ final class AppController: NSObject, ObservableObject, ASWebAuthenticationPresen
     private func registerVoiceShortcut(promptForPermission: Bool) throws {
         try voiceShortcutRegistrar.register(shortcut: settings.voiceGlobalShortcut, promptForPermission: promptForPermission) { [weak self] in
             Task { @MainActor in
-                self?.toggleVoiceLauncherWindow()
+                guard let self, self.hasCompletedOnboarding else {
+                    return
+                }
+
+                self.toggleVoiceLauncherWindow()
             }
         }
         voiceShortcutRegistrationIssue = nil
@@ -919,7 +947,11 @@ final class AppController: NSObject, ObservableObject, ASWebAuthenticationPresen
     private func registerShowAppWindowShortcut(promptForPermission: Bool) throws {
         try showAppWindowShortcutRegistrar.register(shortcut: settings.showAppWindowShortcut, promptForPermission: promptForPermission) { [weak self] in
             Task { @MainActor in
-                self?.togglePrimaryWindow()
+                guard let self, self.hasCompletedOnboarding else {
+                    return
+                }
+
+                self.togglePrimaryWindow()
             }
         }
         showAppWindowShortcutRegistrationIssue = nil

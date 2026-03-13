@@ -133,7 +133,7 @@ Global shortcut registration is handled by `GlobalShortcutRegistrar`.
 
 Current behavior:
 
-- Registers separate global shortcuts for the text launcher, voice launcher, and main app window
+- Registers separate global shortcuts for the text launcher, voice launcher, and main app window only after onboarding saves an instance URL
 - Tries Carbon hotkeys first
 - Uses an event-tap-only path for shortcuts that include `Fn`
 - Installs an event tap when permissions allow
