@@ -60,6 +60,7 @@ final class AppSmokeTestRunner {
         try expect(snapshot.launcherWindowVisible == false, "launcher window should start hidden")
         try expect(snapshot.mainContentKind == .onboarding, "clean launch should show onboarding")
         try expect(snapshot.hasInstanceBaseURL == false, "clean launch should not have an instance URL")
+        try expect(snapshot.globalShortcutsEnabled == false, "clean launch should keep global shortcuts disabled until onboarding finishes")
     }
 
     private func completeOnboardingAndCreatePreset() async throws -> Preset {
@@ -74,6 +75,7 @@ final class AppSmokeTestRunner {
         let postOnboardingSnapshot = appController.smokeTestSnapshot()
         try expect(postOnboardingSnapshot.mainContentKind == .web, "completing onboarding should show the web container")
         try expect(postOnboardingSnapshot.hasInstanceBaseURL, "instance URL should be saved after onboarding")
+        try expect(postOnboardingSnapshot.globalShortcutsEnabled, "completing onboarding should enable global shortcuts")
         try expect(postOnboardingSnapshot.mainWindowWidth >= 900, "post-onboarding window should reset to the larger default width")
         try expect(postOnboardingSnapshot.mainWindowHeight >= 660, "post-onboarding window should reset to the larger default height")
 
@@ -182,6 +184,7 @@ final class AppSmokeTestRunner {
         try expect(snapshot.presetCount == 0, "reset should remove saved presets")
         try expect(snapshot.hasInstanceBaseURL == false, "reset should clear the saved instance URL")
         try expect(snapshot.mainContentKind == .onboarding, "reset should return the app to onboarding")
+        try expect(snapshot.globalShortcutsEnabled == false, "reset should disable global shortcuts again")
     }
 
     private func settle() async {

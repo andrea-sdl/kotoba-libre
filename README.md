@@ -121,7 +121,7 @@ If no settings exist, the main window opens a four-step onboarding flow:
 
 The onboarding window opens as a compact wizard with focused steps, product context up front, inline URL validation, and default keyboard actions so first-run setup stays quick without needing an internal scroll area.
 
-After setup completes, Kotoba Libre saves configuration and opens the main web view in a `900x660` default window.
+After setup completes, Kotoba Libre saves configuration, enables the app-wide shortcuts, and opens the main web view in a `900x660` default window.
 
 ### Settings management
 
@@ -161,7 +161,7 @@ When host restriction is enabled and you change the configured LibreChat instanc
 
 The launcher is a floating panel that:
 
-- Opens with the configured global shortcut
+- Opens with the configured global shortcut after onboarding is complete
 - Stays in front by itself instead of surfacing the main LibreChat window until a launch is submitted
 - Lets the user pick an agent from a styled glass selector
 - Passes prompt text into LibreChat URLs
@@ -169,7 +169,7 @@ The launcher is a floating panel that:
 
 Voice mode adds a second floating launcher that:
 
-- Opens with its own dedicated shortcut
+- Opens with its own dedicated shortcut after onboarding is complete
 - Starts recording immediately with an animated listening indicator instead of a text field
 - Keeps the panel visible until you click Cancel or press the voice shortcut again
 - Finishes transcription and sends the spoken prompt to the selected agent when you trigger the shortcut again
@@ -177,7 +177,7 @@ Voice mode adds a second floating launcher that:
 The main app window can also be surfaced directly with its own shortcut:
 
 - Defaults to `Ctrl+Option+K`
-- Shows the main Kotoba Libre window without opening the launcher
+- Shows the main Kotoba Libre window after onboarding without opening the launcher
 - Hides the main window again when you trigger it a second time
 
 ## Deep Links
