@@ -5,12 +5,15 @@ import KotobaLibreCore
 // This file holds the SwiftUI surface of the app:
 // onboarding, settings tabs, and the floating launcher UI.
 private enum OnboardingStep: Int, CaseIterable {
+    case welcome
     case instance
     case permissions
     case complete
 
     var title: String {
         switch self {
+        case .welcome:
+            return "Welcome"
         case .instance:
             return "Instance"
         case .permissions:
@@ -22,6 +25,8 @@ private enum OnboardingStep: Int, CaseIterable {
 
     var headline: String {
         switch self {
+        case .welcome:
+            return "Welcome to Kotoba Libre"
         case .instance:
             return "Choose your LibreChat home"
         case .permissions:
@@ -33,6 +38,8 @@ private enum OnboardingStep: Int, CaseIterable {
 
     var detail: String {
         switch self {
+        case .welcome:
+            return "Kotoba Libre is a macOS wrapper for LibreChat web apps, built to make chats and agents easier to reach from native shortcuts and launchers."
         case .instance:
             return "Add the one LibreChat base URL Kotoba Libre should use everywhere."
         case .permissions:
@@ -44,6 +51,8 @@ private enum OnboardingStep: Int, CaseIterable {
 
     var symbolName: String {
         switch self {
+        case .welcome:
+            return "sparkles.rectangle.stack"
         case .instance:
             return "network"
         case .permissions:
@@ -55,6 +64,8 @@ private enum OnboardingStep: Int, CaseIterable {
 
     var sidebarDetail: String {
         switch self {
+        case .welcome:
+            return "What the app helps you do"
         case .instance:
             return "Set the LibreChat URL"
         case .permissions:
@@ -69,60 +80,47 @@ private enum OnboardingField: Hashable {
     case instanceBaseURL
 }
 
+// OnboardingLayout keeps the wizard spacing in one place so every step uses the same frame.
+private enum OnboardingLayout {
+    static let wizardWidth: CGFloat = 860
+    static let wizardHeight: CGFloat = 650
+    static let sidebarWidth: CGFloat = 220
+    static let contentPadding: CGFloat = 24
+    static let footerHeight: CGFloat = 72
+}
+
 // OnboardingFlowView is the first-run experience shown when no instance URL exists yet.
 struct OnboardingFlowView: View {
-    private static let wizardWidth: CGFloat = 804
-    private static let wizardHeight: CGFloat = 540
-
     @ObservedObject var appController: AppController
-    @State private var currentStep: OnboardingStep = .instance
+    @State private var currentStep: OnboardingStep = .welcome
     @State private var instanceBaseURL = ""
     @State private var statusMessage = ""
     @State private var statusIsError = false
     @FocusState private var focusedField: OnboardingField?
 
     var body: some View {
-        HStack(spacing: 0) {
-            OnboardingSidebar(currentStep: currentStep)
-                .frame(width: 212)
-                .frame(maxHeight: .infinity, alignment: .topLeading)
-                .padding(.vertical, 4)
-
-            Divider()
-
-            VStack(alignment: .leading, spacing: 24) {
-                OnboardingStepHeader(step: currentStep)
-                currentStepView
-                    .frame(maxWidth: .infinity, alignment: .topLeading)
-
-                Spacer(minLength: 8)
-
-                Divider()
-
-                OnboardingFooterBar(
-                    currentStep: currentStep,
-                    primaryActionTitle: primaryActionTitle,
-                    message: footerMessage,
-                    isError: footerMessageIsError,
-                    isPrimaryDisabled: primaryActionDisabled,
-                    onBack: showPreviousStep,
-                    onPrimaryAction: submitCurrentStep
-                )
-            }
-            .padding(.leading, 30)
-            .padding(.trailing, 20)
-            .padding(.vertical, 24)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        OnboardingShellView(currentStep: currentStep) {
+            currentStepView
+        } footer: {
+            OnboardingFooterBar(
+                primaryActionTitle: primaryActionTitle,
+                message: footerMessage,
+                isError: footerMessageIsError,
+                isPrimaryDisabled: primaryActionDisabled,
+                showsBackAction: currentStep != .welcome,
+                showsPrimaryAction: true,
+                onBack: showPreviousStep,
+                onPrimaryAction: submitCurrentStep
+            )
         }
-        .padding(22)
         .background {
             AppGlassBackground()
         }
         .fontDesign(.serif)
-        .frame(width: Self.wizardWidth, height: Self.wizardHeight)
+        .frame(width: OnboardingLayout.wizardWidth, height: OnboardingLayout.wizardHeight)
         .onAppear {
             instanceBaseURL = appController.settings.instanceBaseUrl ?? ""
-            focusedField = .instanceBaseURL
+            focusedField = currentStep == .instance ? .instanceBaseURL : nil
         }
         .onChange(of: currentStep) {
             focusedField = currentStep == .instance ? .instanceBaseURL : nil
@@ -136,6 +134,8 @@ struct OnboardingFlowView: View {
     @ViewBuilder
     private var currentStepView: some View {
         switch currentStep {
+        case .welcome:
+            onboardingWelcomeStep
         case .instance:
             onboardingInstanceStep
         case .permissions:
@@ -143,6 +143,10 @@ struct OnboardingFlowView: View {
         case .complete:
             onboardingCompleteStep
         }
+    }
+
+    private var onboardingWelcomeStep: some View {
+        OnboardingWelcomeStepView()
     }
 
     private var onboardingInstanceStep: some View {
@@ -162,12 +166,17 @@ struct OnboardingFlowView: View {
         OnboardingCompleteStepView(
             instanceBaseURL: instanceBaseURL,
             microphonePermissionState: appController.microphonePermissionState,
-            speechPermissionState: appController.speechRecognitionPermissionState
+            speechPermissionState: appController.speechRecognitionPermissionState,
+            launcherShortcut: appController.shortcutDraft,
+            voiceShortcut: appController.voiceShortcutDraft,
+            showAppWindowShortcut: appController.showAppWindowShortcutDraft
         )
     }
 
     private var primaryActionTitle: String {
         switch currentStep {
+        case .welcome:
+            return "Start Configuration"
         case .instance:
             return "Continue"
         case .permissions:
@@ -179,15 +188,15 @@ struct OnboardingFlowView: View {
 
     private var primaryActionDisabled: Bool {
         switch currentStep {
+        case .welcome, .permissions, .complete:
+            return false
         case .instance:
             return !instanceValidation.valid
-        case .permissions, .complete:
-            return false
         }
     }
 
     private var footerMessage: String {
-        if currentStep == .instance {
+        if currentStep == .welcome || currentStep == .instance {
             return ""
         }
 
@@ -199,7 +208,7 @@ struct OnboardingFlowView: View {
     }
 
     private var footerMessageIsError: Bool {
-        if currentStep == .instance {
+        if currentStep == .welcome || currentStep == .instance {
             return false
         }
 
@@ -208,6 +217,8 @@ struct OnboardingFlowView: View {
         }
 
         switch currentStep {
+        case .welcome:
+            return false
         case .instance:
             return !instanceValidation.valid
         case .permissions, .complete:
@@ -233,6 +244,11 @@ struct OnboardingFlowView: View {
     private func submitCurrentStep() {
         // Each step only advances when its local requirements are satisfied. Saving happens at the end.
         switch currentStep {
+        case .welcome:
+            withAnimation(.easeInOut(duration: 0.18)) {
+                currentStep = .instance
+            }
+            setStatus("", isError: false)
         case .instance:
             guard instanceValidation.valid else {
                 setStatus("", isError: false)
@@ -268,8 +284,10 @@ struct OnboardingFlowView: View {
     private func showPreviousStep() {
         withAnimation(.easeInOut(duration: 0.18)) {
             switch currentStep {
+            case .welcome:
+                currentStep = .welcome
             case .instance:
-                currentStep = .instance
+                currentStep = .welcome
             case .permissions:
                 currentStep = .instance
             case .complete:
@@ -298,6 +316,76 @@ struct OnboardingFlowView: View {
 
 }
 
+// OnboardingShellView keeps the left rail, header, content, and footer aligned in one shared frame.
+private struct OnboardingShellView<Content: View, Footer: View>: View {
+    let currentStep: OnboardingStep
+    let content: Content
+    let footer: Footer
+
+    init(
+        currentStep: OnboardingStep,
+        @ViewBuilder content: () -> Content,
+        @ViewBuilder footer: () -> Footer
+    ) {
+        self.currentStep = currentStep
+        self.content = content()
+        self.footer = footer()
+    }
+
+    var body: some View {
+        HStack(spacing: 0) {
+            OnboardingSidebar(currentStep: currentStep)
+                .padding(OnboardingLayout.contentPadding)
+                .padding(.top, 16)
+                .frame(width: OnboardingLayout.sidebarWidth, alignment: .topLeading)
+                .frame(maxHeight: .infinity, alignment: .topLeading)
+
+            Divider()
+                .padding(.vertical, 16)
+
+            VStack(spacing: 0) {
+                OnboardingMainColumn(step: currentStep) {
+                    content
+                }
+                .frame(maxHeight: .infinity, alignment: .topLeading)
+
+                Divider()
+                    .padding(.horizontal, OnboardingLayout.contentPadding)
+
+                footer
+                    .padding(.horizontal, OnboardingLayout.contentPadding)
+                    .padding(.bottom, 16)
+                    .frame(height: OnboardingLayout.footerHeight)
+                    .frame(maxWidth: .infinity, alignment: .bottomTrailing)
+            }
+            .frame(maxHeight: .infinity)
+        }
+    }
+}
+
+// OnboardingMainColumn keeps every step aligned under the same shared title and supporting copy.
+private struct OnboardingMainColumn<Content: View>: View {
+    let step: OnboardingStep
+    let content: Content
+
+    init(step: OnboardingStep, @ViewBuilder content: () -> Content) {
+        self.step = step
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            OnboardingStepHeader(step: step)
+            content
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+
+            Spacer(minLength: 0)
+        }
+        .padding(OnboardingLayout.contentPadding)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+}
+
 // OnboardingStepHeader keeps the active step title and supporting copy consistent across pages.
 private struct OnboardingStepHeader: View {
     let step: OnboardingStep
@@ -317,6 +405,59 @@ private struct OnboardingStepHeader: View {
                 .font(.body)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+
+// OnboardingWelcomeStepView introduces the product before asking for setup details.
+private struct OnboardingWelcomeStepView: View {
+    private static let artworkImage = AppResources.aboutArtworkURL.flatMap(NSImage.init(contentsOf:))
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            if let artwork = Self.artworkImage {
+                Image(nsImage: artwork)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 148)
+                    .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 22, style: .continuous)
+                            .strokeBorder(.white.opacity(0.12), lineWidth: 1)
+                    }
+                    .accessibilityHidden(true)
+            }
+
+            GlassPanel(cornerRadius: 22, padding: 18) {
+                VStack(alignment: .leading, spacing: 16) {
+                    Text("Kotoba Libre wraps your LibreChat web app in a focused Mac experience.")
+                        .font(.title3.weight(.semibold))
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    Text("Use it to jump into chats and agents faster, without digging through browser tabs.")
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    VStack(alignment: .leading, spacing: 10) {
+                        OnboardingWelcomeFeatureRow(
+                            systemImage: "message.badge.waveform",
+                            title: "Quick access to chats",
+                            detail: "Open your LibreChat home in a dedicated desktop window whenever you need it."
+                        )
+                        OnboardingWelcomeFeatureRow(
+                            systemImage: "command.square",
+                            title: "Shortcut-driven launchers",
+                            detail: "Bring up text or voice launchers from anywhere on macOS with global shortcuts."
+                        )
+                        OnboardingWelcomeFeatureRow(
+                            systemImage: "person.2.badge.gearshape",
+                            title: "Faster agent access",
+                            detail: "Save agent links once, then launch the right workspace or assistant with less friction."
+                        )
+                    }
+                }
+            }
         }
     }
 }
@@ -369,6 +510,32 @@ private struct OnboardingInstanceStepView: View {
     }
 }
 
+// OnboardingWelcomeFeatureRow keeps the welcome benefits easy to scan without a dense paragraph.
+private struct OnboardingWelcomeFeatureRow: View {
+    let systemImage: String
+    let title: String
+    let detail: String
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: systemImage)
+                .font(.title3.weight(.semibold))
+                .foregroundStyle(Color.accentColor)
+                .frame(width: 24)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
+                Text(detail)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .accessibilityElement(children: .combine)
+    }
+}
+
 // OnboardingPermissionsStepView defers optional voice permissions to a dedicated, skippable review step.
 private struct OnboardingPermissionsStepView: View {
     @ObservedObject var appController: AppController
@@ -391,18 +558,12 @@ private struct OnboardingCompleteStepView: View {
     let instanceBaseURL: String
     let microphonePermissionState: MicrophonePermissionState
     let speechPermissionState: SpeechRecognitionPermissionState
+    let launcherShortcut: String
+    let voiceShortcut: String
+    let showAppWindowShortcut: String
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            OnboardingConfettiView()
-                .frame(height: 116)
-                .overlay(alignment: .center) {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 44, weight: .semibold))
-                        .foregroundStyle(Color.accentColor)
-                        .glassEffect(.regular.tint(Color.white.opacity(0.14)), in: .circle)
-                }
-
             GlassPanel(cornerRadius: 22, padding: 18) {
                 VStack(alignment: .leading, spacing: 14) {
                     Text("Review your setup")
@@ -423,6 +584,36 @@ private struct OnboardingCompleteStepView: View {
                         value: permissionSummary(for: speechPermissionState),
                         systemImage: "waveform"
                     )
+                }
+            }
+
+            GlassPanel(cornerRadius: 22, padding: 18) {
+                VStack(alignment: .leading, spacing: 14) {
+                    Text("Your shortcuts")
+                        .font(.title3.weight(.semibold))
+
+                    OnboardingShortcutRow(
+                        title: "Text Launcher",
+                        detail: "Open the Spotlight-style text launcher",
+                        shortcut: launcherShortcut,
+                        systemImage: "command.square"
+                    )
+                    OnboardingShortcutRow(
+                        title: "Voice Launcher",
+                        detail: "Open the voice input launcher",
+                        shortcut: voiceShortcut,
+                        systemImage: "mic"
+                    )
+                    OnboardingShortcutRow(
+                        title: "Show App Window",
+                        detail: "Bring the main window to front",
+                        shortcut: showAppWindowShortcut,
+                        systemImage: "macwindow"
+                    )
+
+                    Text("You can change these anytime in Settings.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
                 }
             }
         }
@@ -455,6 +646,36 @@ private struct OnboardingCompleteStepView: View {
     }
 }
 
+// OnboardingShortcutRow teaches the user a global shortcut in a compact, scannable row.
+private struct OnboardingShortcutRow: View {
+    let title: String
+    let detail: String
+    let shortcut: String
+    let systemImage: String
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: systemImage)
+                .font(.title3.weight(.semibold))
+                .foregroundStyle(Color.accentColor)
+                .frame(width: 24)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
+                Text(detail)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer(minLength: 8)
+
+            ShortcutPreviewView(shortcut: shortcut)
+        }
+        .accessibilityElement(children: .combine)
+    }
+}
+
 // OnboardingValidationRow keeps success and error feedback close to the field it refers to.
 private struct OnboardingValidationRow: View {
     let message: String
@@ -480,21 +701,6 @@ private struct OnboardingSidebar: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
-            HStack(spacing: 12) {
-                if let image = AppLogoView.iconImage {
-                    Image(nsImage: image)
-                        .resizable()
-                        .padding(4)
-                        .frame(width: 42, height: 42)
-                        .glassEffect(.regular, in: .rect(cornerRadius: 14))
-                }
-
-                Text(appDisplayName)
-                    .font(.system(size: 22, weight: .bold, design: .serif))
-                    .lineLimit(2)
-                    .minimumScaleFactor(0.9)
-            }
-
             VStack(alignment: .leading, spacing: 10) {
                 ForEach(OnboardingStep.allCases, id: \.rawValue) { step in
                     OnboardingStepBadge(step: step, currentStep: currentStep)
@@ -582,11 +788,12 @@ private struct OnboardingStepBadge: View {
 
 // OnboardingFooterBar anchors feedback and navigation inside the wizard without extra stacked panels.
 private struct OnboardingFooterBar: View {
-    let currentStep: OnboardingStep
     let primaryActionTitle: String
     let message: String
     let isError: Bool
     let isPrimaryDisabled: Bool
+    let showsBackAction: Bool
+    let showsPrimaryAction: Bool
     let onBack: () -> Void
     let onPrimaryAction: () -> Void
 
@@ -599,16 +806,18 @@ private struct OnboardingFooterBar: View {
                 Spacer(minLength: 0)
             }
 
-            if currentStep != .instance {
+            if showsBackAction {
                 Button("Back", action: onBack)
                     .buttonStyle(.glass)
                     .keyboardShortcut(.cancelAction)
             }
 
-            Button(primaryActionTitle, action: onPrimaryAction)
-                .buttonStyle(.glassProminent)
-                .disabled(isPrimaryDisabled)
-                .keyboardShortcut(.defaultAction)
+            if showsPrimaryAction {
+                Button(primaryActionTitle, action: onPrimaryAction)
+                    .buttonStyle(.glassProminent)
+                    .disabled(isPrimaryDisabled)
+                    .keyboardShortcut(.defaultAction)
+            }
         }
     }
 }
@@ -1102,7 +1311,7 @@ struct GlassPanel<Content: View>: View {
         content
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(padding)
-            .glassEffect(.regular, in: .rect(cornerRadius: cornerRadius))
+            .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
     }
 }
 
@@ -1239,7 +1448,7 @@ struct SettingsRootView: View {
                 .tabItem { Text("Shortcuts") }
                 .tag(SettingsTab.shortcuts)
 
-            AboutPanelView(openSettings: appController.showSettingsWindow)
+            AboutPanelView()
                 .tabItem { Text("About") }
                 .tag(SettingsTab.about)
         }
@@ -2373,52 +2582,50 @@ struct ShortcutPanelView: View {
 
 // AboutPanelView keeps the app summary visible even when the settings window is compact.
 struct AboutPanelView: View {
-    private static let heroHeight: CGFloat = 260
-
-    let openSettings: () -> Void
+    private static let contentPadding: CGFloat = 20
+    private static let minimumHeroHeight: CGFloat = 420
+    private static let overlayWidth: CGFloat = 420
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
+        GeometryReader { geometry in
+            let heroHeight = max(
+                Self.minimumHeroHeight,
+                geometry.size.height - (Self.contentPadding * 2)
+            )
+
+            Group {
                 if let heroImage {
                     Image(nsImage: heroImage)
                         .resizable()
                         .aspectRatio(contentMode: .fill)
-                        .frame(maxWidth: .infinity)
-                        .frame(height: Self.heroHeight)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .frame(height: heroHeight)
                         .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
                         .overlay {
                             RoundedRectangle(cornerRadius: 22, style: .continuous)
                                 .strokeBorder(.white.opacity(0.12), lineWidth: 1)
                         }
+                        .overlay(alignment: .leading) {
+                            AboutPanelHeroOverlay(
+                                usesImageBackground: true
+                            )
+                            .frame(maxWidth: Self.overlayWidth, alignment: .leading)
+                            .padding(28)
+                        }
                         .shadow(color: .black.opacity(0.12), radius: 18, y: 10)
                         .accessibilityHidden(true)
+                } else {
+                    AboutPanelHeroOverlay(
+                        usesImageBackground: false
+                    )
+                    .padding(28)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
                 }
-
-                VStack(alignment: .leading, spacing: 16) {
-                    Text("About")
-                        .font(.largeTitle.bold())
-
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Version \(AppResources.appVersionDisplayString)")
-                            .font(.headline)
-                        Text("Quick launcher wrapper for self-hosted LibreChat instances.")
-                            .foregroundStyle(.secondary)
-                    }
-
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("1. Configure your instance URL in Settings.")
-                        Text("2. Add one or more agents with URL templates.")
-                        Text("3. Use the global shortcut to ask directly from the Spotlight-style launcher.")
-                    }
-
-                    Button("Open Settings Window", action: openSettings)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .frame(maxWidth: .infinity, alignment: .topLeading)
+            .padding(Self.contentPadding)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     private var heroImage: NSImage? {
@@ -2427,6 +2634,55 @@ struct AboutPanelView: View {
         }
 
         return NSImage(contentsOf: heroImageURL)
+    }
+}
+
+// AboutPanelHeroOverlay keeps the descriptive copy readable while letting the artwork stay visible.
+private struct AboutPanelHeroOverlay: View {
+    let usesImageBackground: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("About")
+                .font(.largeTitle.bold())
+                .foregroundStyle(primaryTextColor)
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Version \(AppResources.appVersionDisplayString)")
+                    .font(.headline)
+                    .foregroundStyle(primaryTextColor)
+                Text("Quick launcher wrapper for self-hosted LibreChat instances.")
+                    .foregroundStyle(secondaryTextColor)
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("1. Configure your instance URL in Settings.")
+                Text("2. Add one or more agents with URL templates.")
+                Text("3. Use the global shortcut to ask directly from the Spotlight-style launcher.")
+            }
+            .font(.body.weight(.medium))
+            .foregroundStyle(primaryTextColor)
+        }
+        .padding(24)
+        .background(backgroundPanel)
+        .accessibilityElement(children: .contain)
+    }
+
+    private var primaryTextColor: Color {
+        .primary
+    }
+
+    private var secondaryTextColor: Color {
+        .secondary
+    }
+
+    private var backgroundPanel: some View {
+        RoundedRectangle(cornerRadius: 20, style: .continuous)
+            .fill(.white.opacity(0.95))
+            .overlay {
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .strokeBorder(.white.opacity(0.35), lineWidth: 1)
+            }
     }
 }
 

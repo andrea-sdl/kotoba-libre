@@ -108,9 +108,10 @@ If `settings.json` does not exist or does not contain an instance URL:
 
 1. The app boots the main window
 2. The main window renders the onboarding flow
-3. The user enters the LibreChat base URL
-4. The user confirms or records the text launcher shortcut
-5. Settings are saved and the main web view opens
+3. The user sees a welcome step that explains Kotoba Libre as a macOS wrapper for LibreChat web apps
+4. The user enters the LibreChat base URL
+5. The user reviews optional voice permissions
+6. The user confirms setup and the app saves settings before opening the main web view
 
 ### Reset
 
