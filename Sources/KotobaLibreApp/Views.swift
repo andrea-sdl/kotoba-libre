@@ -2371,27 +2371,62 @@ struct ShortcutPanelView: View {
     }
 }
 
-// AboutPanelView is intentionally simple. It acts as a quick usage guide inside the app.
+// AboutPanelView keeps the app summary visible even when the settings window is compact.
 struct AboutPanelView: View {
+    private static let heroHeight: CGFloat = 260
+
     let openSettings: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("About")
-                .font(.largeTitle.bold())
-            Text("Quick launcher wrapper for self-hosted LibreChat instances.")
-                .foregroundStyle(.secondary)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                if let heroImage {
+                    Image(nsImage: heroImage)
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: Self.heroHeight)
+                        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                                .strokeBorder(.white.opacity(0.12), lineWidth: 1)
+                        }
+                        .shadow(color: .black.opacity(0.12), radius: 18, y: 10)
+                        .accessibilityHidden(true)
+                }
 
-            VStack(alignment: .leading, spacing: 8) {
-                Text("1. Configure your instance URL in Settings.")
-                Text("2. Add one or more agents with URL templates.")
-                Text("3. Use the global shortcut to ask directly from the Spotlight-style launcher.")
+                VStack(alignment: .leading, spacing: 16) {
+                    Text("About")
+                        .font(.largeTitle.bold())
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Version \(AppResources.appVersionDisplayString)")
+                            .font(.headline)
+                        Text("Quick launcher wrapper for self-hosted LibreChat instances.")
+                            .foregroundStyle(.secondary)
+                    }
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("1. Configure your instance URL in Settings.")
+                        Text("2. Add one or more agents with URL templates.")
+                        Text("3. Use the global shortcut to ask directly from the Spotlight-style launcher.")
+                    }
+
+                    Button("Open Settings Window", action: openSettings)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-
-            Button("Open Settings Window", action: openSettings)
-
-            Spacer()
+            .frame(maxWidth: .infinity, alignment: .topLeading)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private var heroImage: NSImage? {
+        guard let heroImageURL = AppResources.aboutArtworkURL else {
+            return nil
+        }
+
+        return NSImage(contentsOf: heroImageURL)
     }
 }
 
