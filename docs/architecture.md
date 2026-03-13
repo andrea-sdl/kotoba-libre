@@ -65,7 +65,7 @@ Kotoba Libre uses three main native window types:
 
 - Hosts onboarding when no instance is configured
 - Hosts the main `WKWebView` once setup is complete
-- Uses an `800x600` default size
+- Uses a `900x660` default size after onboarding completes
 - Can open LibreChat home or route directly to a destination
 
 ### Settings window

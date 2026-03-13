@@ -5,11 +5,12 @@ import ServiceManagement
 import SwiftUI
 import KotobaLibreCore
 
-// WebAddAgentCandidate captures the agent page state needed to create a local saved agent.
-struct WebAddAgentCandidate: Equatable {
+// WebAddPresetCandidate captures the detected web state needed to create a saved preset.
+struct WebAddPresetCandidate: Equatable {
     let sourceURL: URL
-    let agentID: String
-    let agentName: String
+    let kind: PresetKind
+    let presetValue: String
+    let presetName: String
 }
 
 // AppController is the main coordinator for the desktop app.
@@ -66,6 +67,8 @@ final class AppController: NSObject, ObservableObject, ASWebAuthenticationPresen
         let defaultPresetID: String?
         let mainWindowVisible: Bool
         let mainWindowKey: Bool
+        let mainWindowWidth: Double
+        let mainWindowHeight: Double
         let settingsWindowVisible: Bool
         let launcherWindowVisible: Bool
         let launcherWindowKey: Bool
@@ -373,11 +376,12 @@ final class AppController: NSObject, ObservableObject, ASWebAuthenticationPresen
         )
     }
 
-    func makePreset(from candidate: WebAddAgentCandidate) -> Preset {
-        var preset = makeEmptyPreset(kind: .agent)
-        let trimmedName = candidate.agentName.trimmingCharacters(in: .whitespacesAndNewlines)
-        preset.name = trimmedName.isEmpty ? candidate.agentID : trimmedName
-        preset.urlTemplate = candidate.agentID.trimmingCharacters(in: .whitespacesAndNewlines)
+    func makePreset(from candidate: WebAddPresetCandidate) -> Preset {
+        var preset = makeEmptyPreset(kind: candidate.kind)
+        let trimmedName = candidate.presetName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let fallbackName = candidate.kind == .agent ? candidate.presetValue : "Saved Link"
+        preset.name = trimmedName.isEmpty ? fallbackName : trimmedName
+        preset.urlTemplate = candidate.presetValue.trimmingCharacters(in: .whitespacesAndNewlines)
         return preset
     }
 
@@ -473,6 +477,7 @@ final class AppController: NSObject, ObservableObject, ASWebAuthenticationPresen
 
         _ = try saveSettings(updated)
         settingsWindowController.hide()
+        mainWindowController.resetToDefaultSize()
         mainWindowController.showAndFocus()
     }
 
@@ -835,12 +840,15 @@ final class AppController: NSObject, ObservableObject, ASWebAuthenticationPresen
     }
 
     func smokeTestSnapshot() -> SmokeTestSnapshot {
-        SmokeTestSnapshot(
+        let mainWindowSize = mainWindowController.window?.frame.size ?? .zero
+        return SmokeTestSnapshot(
             hasInstanceBaseURL: settings.instanceBaseUrl != nil,
             presetCount: presets.count,
             defaultPresetID: settings.defaultPresetId,
             mainWindowVisible: mainWindowController.window?.isVisible ?? false,
             mainWindowKey: mainWindowController.window?.isKeyWindow ?? false,
+            mainWindowWidth: Double(mainWindowSize.width),
+            mainWindowHeight: Double(mainWindowSize.height),
             settingsWindowVisible: settingsWindowController.isVisible,
             launcherWindowVisible: launcherWindowController.isVisible,
             launcherWindowKey: launcherWindowController.window?.isKeyWindow ?? false,

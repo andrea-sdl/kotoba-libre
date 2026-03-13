@@ -121,7 +121,7 @@ If no settings exist, the main window opens a four-step onboarding flow:
 
 The onboarding window opens as a compact wizard with focused steps, product context up front, inline URL validation, and default keyboard actions so first-run setup stays quick without needing an internal scroll area.
 
-After setup completes, Kotoba Libre saves configuration and opens the main web view in an `800x600` default window.
+After setup completes, Kotoba Libre saves configuration and opens the main web view in a `900x660` default window.
 
 ### Settings management
 
@@ -137,6 +137,8 @@ The native settings, onboarding, add-agent sheet, and launcher surfaces use the 
 
 The settings UI warns before you leave a tab with unsaved changes.
 
+When the embedded web view is on an agent detail page, the titlebar button can save that agent directly into the launcher list. The same button also detects `/c/new` model URLs such as `...?endpoint=anthropic&model=claude-opus-4-6` and offers to save them as Link presets.
+
 From the System tab, users can also choose whether Kotoba Libre appears:
 
 - In both the Dock and the menu bar
@@ -147,8 +149,8 @@ When the menu bar item is enabled, it includes actions for opening Settings, sho
 
 The Shortcuts tab now manages three separate shortcuts:
 
-- Text launcher
-- Voice launcher
+- Text launcher, which defaults to `Ctrl+Option+Space`
+- Voice launcher, which defaults to `Ctrl+Option+V`
 - Show app window, which defaults to `Ctrl+Option+K`
 
 The System tab also includes microphone and speech-recognition permission status, debug logging, and a destructive reset action that clears config and returns the app to onboarding.

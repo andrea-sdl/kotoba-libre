@@ -60,8 +60,8 @@ public struct Preset: Codable, Equatable, Identifiable, Sendable {
 // Defaults are chosen so a missing or older settings file can still decode safely.
 public struct AppSettings: Codable, Equatable, Sendable {
     public static let defaultShortcut = "Ctrl+Alt+Space"
-    public static let defaultVoiceShortcut = "CmdOrCtrl+Alt+V"
-    public static let defaultShowAppWindowShortcut = "Ctrl+Alt+KeyK"
+    public static let defaultVoiceShortcut = "Ctrl+Alt+V"
+    public static let defaultShowAppWindowShortcut = "Ctrl+Alt+K"
 
     public var instanceBaseUrl: String?
     public var globalShortcut: String

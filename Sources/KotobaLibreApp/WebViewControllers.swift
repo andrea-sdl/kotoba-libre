@@ -5,7 +5,7 @@ import KotobaLibreCore
 import WebKit
 
 // The main window and embedded web view live together in this file because they share one navigation flow.
-private let defaultMainWindowSize = NSSize(width: 800, height: 600)
+private let defaultMainWindowSize = NSSize(width: 900, height: 660)
 private let minimumMainWindowSize = NSSize(width: 700, height: 480)
 private let onboardingWindowSize = NSSize(width: 860, height: 650)
 private let onboardingMinimumWindowSize = NSSize(width: 860, height: 650)
@@ -32,7 +32,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     private let savedWindowFrame: NSRect?
     private var hasCompletedInitialFrameSetup = false
     private lazy var addAgentButton = makeAddAgentToolbarButton()
-    private var currentAddAgentCandidate: WebAddAgentCandidate?
+    private var currentAddAgentCandidate: WebAddPresetCandidate?
     private var addAgentSheetWindowController: AddAgentSheetWindowController?
 
     init(appController: AppController, store: AppDataStore) {
@@ -407,9 +407,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         print(message)
     }
 
-    private func updateAddAgentCandidate(_ candidate: WebAddAgentCandidate?) {
+    private func updateAddAgentCandidate(_ candidate: WebAddPresetCandidate?) {
         currentAddAgentCandidate = candidate
         addAgentButton.isEnabled = candidate != nil
+        addAgentButton.title = candidate?.kind == .link ? "Add Link" : "Add Agent"
+        addAgentButton.toolTip = candidate?.kind == .link
+            ? "Save the current LibreChat link into Kotoba Libre."
+            : "Save the current LibreChat agent into Kotoba Libre."
     }
 
     private func presentAddAgentSheetFromTitlebar() {
@@ -682,7 +686,7 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
     let webView: WKWebView
     var externalNavigationHandler: ((URL) -> Void)?
     var authenticationSessionStarter: ((URL, String) -> Bool)?
-    var addAgentCandidateHandler: ((WebAddAgentCandidate?) -> Void)?
+    var addAgentCandidateHandler: ((WebAddPresetCandidate?) -> Void)?
     var debugLoggingEnabled = false
     private var hasLoadedRemoteContent = false
     private var externalNavigationPolicy: ExternalNavigationPolicy = .singleHost(nil)
@@ -810,7 +814,7 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
         load(url: url)
     }
 
-    func fetchCurrentAddAgentCandidate(completion: @escaping (WebAddAgentCandidate?) -> Void) {
+    func fetchCurrentAddAgentCandidate(completion: @escaping (WebAddPresetCandidate?) -> Void) {
         let script = """
         (() => {
           try {
@@ -1432,19 +1436,45 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
         }
         return pathname;
       };
+      const prettifyWords = (value) => {
+        const normalized = trimText(value)
+          .replace(/(\\d)-(?=\\d)/g, "$1.")
+          .replace(/[-_]+/g, " ")
+          .replace(/\\s+/g, " ");
+        if (!normalized) {
+          return "";
+        }
+        return normalized
+          .split(" ")
+          .map((word) => word ? word.charAt(0).toUpperCase() + word.slice(1) : "")
+          .join(" ");
+      };
       const readCandidate = () => {
         try {
           const url = new URL(window.location.href);
           const currentRoutePath = routePath(url);
           const agentID = trimText(url.searchParams.get("agent_id") ?? "");
-          if (!currentRoutePath.startsWith("/agents") || !agentID) {
-            return null;
+          if (currentRoutePath.startsWith("/agents") && agentID) {
+            return {
+              sourceURL: url.href,
+              presetKind: "agent",
+              presetValue: agentID,
+              presetName: trimText(document.querySelector('div[role="dialog"] h2')?.textContent ?? ""),
+            };
           }
-          return {
-            sourceURL: url.href,
-            agentID,
-            agentName: trimText(document.querySelector('div[role="dialog"] h2')?.textContent ?? ""),
-          };
+
+          const endpoint = trimText(url.searchParams.get("endpoint") ?? "");
+          const model = trimText(url.searchParams.get("model") ?? "");
+          if (currentRoutePath === "/c/new" && endpoint && model) {
+            return {
+              sourceURL: url.href,
+              presetKind: "link",
+              presetValue: url.href,
+              presetName: [prettifyWords(endpoint), prettifyWords(model)].filter(Boolean).join(" "),
+            };
+          }
+
+          return null;
         } catch (_) {
           return null;
         }
@@ -2037,26 +2067,29 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
         """
     }
 
-    private static func parseAddAgentCandidate(from rawValue: Any) -> WebAddAgentCandidate? {
+    private static func parseAddAgentCandidate(from rawValue: Any) -> WebAddPresetCandidate? {
         guard let dictionary = rawValue as? [String: Any] else {
             return nil
         }
 
         let sourceURLString = (dictionary["sourceURL"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        let agentID = (dictionary["agentID"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        let agentName = (dictionary["agentName"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let presetKind = (dictionary["presetKind"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let presetValue = (dictionary["presetValue"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let presetName = (dictionary["presetName"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
 
         guard
             let sourceURL = URL(string: sourceURLString),
-            !agentID.isEmpty
+            let kind = PresetKind(rawValue: presetKind),
+            !presetValue.isEmpty
         else {
             return nil
         }
 
-        return WebAddAgentCandidate(
+        return WebAddPresetCandidate(
             sourceURL: sourceURL,
-            agentID: agentID,
-            agentName: agentName
+            kind: kind,
+            presetValue: presetValue,
+            presetName: presetName
         )
     }
 }
