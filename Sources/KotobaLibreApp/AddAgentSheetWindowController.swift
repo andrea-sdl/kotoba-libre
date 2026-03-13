@@ -22,6 +22,20 @@ final class AddAgentSheetViewModel: ObservableObject {
         appController?.settings.instanceBaseUrl
     }
 
+    var titleText: String {
+        draft.kind == .link ? "Add Link" : "Add Agent"
+    }
+
+    var descriptionText: String {
+        draft.kind == .link
+            ? "Review the detected LibreChat link, then save it to the launcher list."
+            : "Review the detected LibreChat agent, then save it to the launcher list."
+    }
+
+    var saveButtonTitle: String {
+        draft.kind == .link ? "Save Link" : "Save Agent"
+    }
+
     func save() {
         guard let appController else {
             return
@@ -56,10 +70,10 @@ private struct AddAgentSheetView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Add Agent")
+            Text(viewModel.titleText)
                 .font(.title2.bold())
 
-            Text("Review the detected LibreChat agent, then save it to the launcher list.")
+            Text(viewModel.descriptionText)
                 .foregroundStyle(.secondary)
 
             Form {
@@ -79,7 +93,7 @@ private struct AddAgentSheetView: View {
                 Button("Cancel", action: viewModel.cancel)
                     .keyboardShortcut(.cancelAction)
 
-                Button("Save", action: viewModel.save)
+                Button(viewModel.saveButtonTitle, action: viewModel.save)
                     .buttonStyle(.borderedProminent)
                     .keyboardShortcut(.defaultAction)
             }
@@ -104,7 +118,7 @@ final class AddAgentSheetWindowController: NSWindowController, NSWindowDelegate 
             backing: .buffered,
             defer: false
         )
-        window.title = "Add Agent"
+        window.title = initialPreset.kind == .link ? "Add Link" : "Add Agent"
         window.isReleasedWhenClosed = false
         window.standardWindowButton(.miniaturizeButton)?.isHidden = true
         window.standardWindowButton(.zoomButton)?.isHidden = true

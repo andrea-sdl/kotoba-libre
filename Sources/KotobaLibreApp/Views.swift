@@ -1601,7 +1601,7 @@ struct AgentManagerView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Agents")
                         .font(.largeTitle.bold())
-                    Text("Manage and configure your Kotoba Libre agents. Star sets default.")
+                    Text("Manage and configure your Kotoba Libre agents and links. Star sets default.")
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
@@ -1641,7 +1641,7 @@ struct AgentManagerView: View {
                     AgentEditorFields(draft: $draft, instanceBaseURL: appController.settings.instanceBaseUrl)
 
                     HStack {
-                        Button("Save Agent") { savePreset() }
+                        Button(draft.kind == .link ? "Save Link" : "Save Agent") { savePreset() }
                             .buttonStyle(.borderedProminent)
                         Button("Open URL") { openDraftURL() }
                         Button("Clear") { resetDraft() }

@@ -44,6 +44,9 @@ struct KotobaLibreSelfTest {
         expect(KotobaLibreCore.normalizeShortcutValue("⌘ + ⇧ + space") == "CmdOrCtrl+Shift+Space", "shortcutSymbolsAreNormalized cmd")
         expect(KotobaLibreCore.normalizeShortcutValue("ctrl + k") == "Ctrl+KeyK", "shortcutSymbolsAreNormalized ctrl")
         expect(KotobaLibreCore.normalizeShortcutValue("ctrl + option + k") == "Ctrl+Alt+KeyK", "shortcutSymbolsAreNormalized showAppWindowDefault")
+        expect(AppSettings.defaultShortcut == "Ctrl+Alt+Space", "settingsDefaultLauncherShortcutMatchesRequestedValue")
+        expect(AppSettings.defaultVoiceShortcut == "Ctrl+Alt+V", "settingsDefaultVoiceShortcutMatchesRequestedValue")
+        expect(AppSettings.defaultShowAppWindowShortcut == "Ctrl+Alt+K", "settingsDefaultShowWindowShortcutMatchesRequestedValue")
 
         let normalizedSettings = KotobaLibreCore.normalizeSettings(
             AppSettings(

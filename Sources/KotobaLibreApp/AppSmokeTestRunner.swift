@@ -28,12 +28,27 @@ final class AppSmokeTestRunner {
     private func run() async throws {
         // Keep the scenario linear so failures map to a clear user-facing flow.
         try await assertInitialOnboardingState()
+        try await assertDetectedLinkCandidateMapsToLinkPreset()
         let preset = try await completeOnboardingAndCreatePreset()
         try await assertSettingsAndLauncherWindows()
         try await assertLauncherSelectionResetsToDefault(presetID: preset.id)
         try await assertTogglePrimaryWindowRefocusesVisibleWindow()
         try await assertPresetLaunch(presetID: preset.id)
         try await assertResetConfiguration()
+    }
+
+    private func assertDetectedLinkCandidateMapsToLinkPreset() async throws {
+        let candidate = WebAddPresetCandidate(
+            sourceURL: URL(string: "https://chat.example.com/c/new?endpoint=anthropic&model=claude-opus-4-6")!,
+            kind: .link,
+            presetValue: "https://chat.example.com/c/new?endpoint=anthropic&model=claude-opus-4-6",
+            presetName: "Anthropic Claude Opus 4.6"
+        )
+
+        let preset = appController.makePreset(from: candidate)
+        try expect(preset.kind == .link, "detected chat links should save as link presets")
+        try expect(preset.urlTemplate == candidate.presetValue, "link presets should keep the detected URL")
+        try expect(preset.name == candidate.presetName, "link presets should reuse the detected display name")
     }
 
     private func assertInitialOnboardingState() async throws {
@@ -59,6 +74,8 @@ final class AppSmokeTestRunner {
         let postOnboardingSnapshot = appController.smokeTestSnapshot()
         try expect(postOnboardingSnapshot.mainContentKind == .web, "completing onboarding should show the web container")
         try expect(postOnboardingSnapshot.hasInstanceBaseURL, "instance URL should be saved after onboarding")
+        try expect(postOnboardingSnapshot.mainWindowWidth >= 900, "post-onboarding window should reset to the larger default width")
+        try expect(postOnboardingSnapshot.mainWindowHeight >= 660, "post-onboarding window should reset to the larger default height")
 
         var preset = appController.makeEmptyPreset()
         preset.name = "Smoke Test Agent"
