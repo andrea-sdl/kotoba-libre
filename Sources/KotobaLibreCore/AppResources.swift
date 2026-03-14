@@ -30,9 +30,14 @@ public enum AppResources {
             ?? Bundle.allFrameworks.first { $0.bundleURL.lastPathComponent == resourceBundleName }
     }
 
-    // The About tab uses a dedicated hero image instead of the app icon.
-    public static var aboutArtworkURL: URL? {
-        resourceBundle?.url(forResource: "AboutArtwork", withExtension: "png")
+    // The About tab prefers a looping hero animation when the bundled video is available.
+    public static var aboutAnimationURL: URL? {
+        resourceBundle?.url(forResource: "AboutArtworkLoop", withExtension: "mp4")
+    }
+
+    // The onboarding welcome step uses its own hero image so the about artwork can stay out of the bundle.
+    public static var onboardingArtworkURL: URL? {
+        resourceBundle?.url(forResource: "OnboardingArtwork", withExtension: "png")
     }
 
     // The displayed version prefers packaged metadata and falls back to the repo VERSION file in development.
