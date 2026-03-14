@@ -1,4 +1,6 @@
 import AppKit
+import AVFoundation
+import AVKit
 import SwiftUI
 import KotobaLibreCore
 
@@ -411,7 +413,7 @@ private struct OnboardingStepHeader: View {
 
 // OnboardingWelcomeStepView introduces the product before asking for setup details.
 private struct OnboardingWelcomeStepView: View {
-    private static let artworkImage = AppResources.aboutArtworkURL.flatMap(NSImage.init(contentsOf:))
+    private static let artworkImage = AppResources.onboardingArtworkURL.flatMap(NSImage.init(contentsOf:))
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -2594,10 +2596,8 @@ struct AboutPanelView: View {
             )
 
             Group {
-                if let heroImage {
-                    Image(nsImage: heroImage)
-                        .resizable()
-                        .aspectRatio(contentMode: .fill)
+                if let heroVideoURL = AppResources.aboutAnimationURL {
+                    AboutPanelLoopingVideo(url: heroVideoURL)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .frame(height: heroHeight)
                         .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
@@ -2606,18 +2606,14 @@ struct AboutPanelView: View {
                                 .strokeBorder(.white.opacity(0.12), lineWidth: 1)
                         }
                         .overlay(alignment: .leading) {
-                            AboutPanelHeroOverlay(
-                                usesImageBackground: true
-                            )
-                            .frame(maxWidth: Self.overlayWidth, alignment: .leading)
-                            .padding(28)
+                            AboutPanelHeroOverlay()
+                                .frame(maxWidth: Self.overlayWidth, alignment: .leading)
+                                .padding(28)
                         }
                         .shadow(color: .black.opacity(0.12), radius: 18, y: 10)
                         .accessibilityHidden(true)
                 } else {
-                    AboutPanelHeroOverlay(
-                        usesImageBackground: false
-                    )
+                    AboutPanelHeroOverlay()
                     .padding(28)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
                     .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
@@ -2627,20 +2623,10 @@ struct AboutPanelView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
     }
-
-    private var heroImage: NSImage? {
-        guard let heroImageURL = AppResources.aboutArtworkURL else {
-            return nil
-        }
-
-        return NSImage(contentsOf: heroImageURL)
-    }
 }
 
 // AboutPanelHeroOverlay keeps the descriptive copy readable while letting the artwork stay visible.
 private struct AboutPanelHeroOverlay: View {
-    let usesImageBackground: Bool
-
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("About")
@@ -2683,6 +2669,67 @@ private struct AboutPanelHeroOverlay: View {
                 RoundedRectangle(cornerRadius: 20, style: .continuous)
                     .strokeBorder(.white.opacity(0.35), lineWidth: 1)
             }
+    }
+}
+
+// AboutPanelLoopingVideo hosts a muted looping video so the About tab can show motion artwork.
+private struct AboutPanelLoopingVideo: NSViewRepresentable {
+    let url: URL
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
+    func makeNSView(context: Context) -> AVPlayerView {
+        let playerView = AVPlayerView()
+        playerView.controlsStyle = .none
+        playerView.videoGravity = .resizeAspectFill
+        playerView.allowsPictureInPicturePlayback = false
+        context.coordinator.configure(playerView: playerView, url: url)
+        return playerView
+    }
+
+    func updateNSView(_ playerView: AVPlayerView, context: Context) {
+        context.coordinator.configure(playerView: playerView, url: url)
+    }
+
+    static func dismantleNSView(_ playerView: AVPlayerView, coordinator: Coordinator) {
+        coordinator.stop(playerView: playerView)
+    }
+
+    // Coordinator owns the AVFoundation objects so SwiftUI can recreate the wrapper safely.
+    @MainActor
+    final class Coordinator {
+        private var configuredURL: URL?
+        private var looper: AVPlayerLooper?
+        private var player: AVQueuePlayer?
+
+        func configure(playerView: AVPlayerView, url: URL) {
+            guard configuredURL != url else {
+                return
+            }
+
+            let playerItem = AVPlayerItem(url: url)
+            let queuePlayer = AVQueuePlayer()
+            queuePlayer.isMuted = true
+            queuePlayer.actionAtItemEnd = .none
+            queuePlayer.preventsDisplaySleepDuringVideoPlayback = false
+
+            looper = AVPlayerLooper(player: queuePlayer, templateItem: playerItem)
+            player = queuePlayer
+            configuredURL = url
+
+            playerView.player = queuePlayer
+            queuePlayer.play()
+        }
+
+        func stop(playerView: AVPlayerView) {
+            player?.pause()
+            playerView.player = nil
+            player = nil
+            looper = nil
+            configuredURL = nil
+        }
     }
 }
 

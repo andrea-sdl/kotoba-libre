@@ -26,9 +26,12 @@ let package = Package(
     targets: [
         .target(
             name: "KotobaLibreCore",
-            // Shared resources live with the core target so both the app and tests can find them.
+            // Shared resources are listed explicitly so unused artwork can stay in the repo without bloating the app bundle.
             resources: [
-                .process("Resources")
+                .process("Resources/AboutArtworkLoop.mp4"),
+                .process("Resources/AppIcon.icns"),
+                .process("Resources/AppIcon.png"),
+                .process("Resources/OnboardingArtwork.png")
             ]
         ),
         .executableTarget(
