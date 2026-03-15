@@ -2627,6 +2627,8 @@ struct AboutPanelView: View {
 
 // AboutPanelHeroOverlay keeps the descriptive copy readable while letting the artwork stay visible.
 private struct AboutPanelHeroOverlay: View {
+    @Environment(\.colorScheme) private var colorScheme
+
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("About")
@@ -2664,11 +2666,29 @@ private struct AboutPanelHeroOverlay: View {
 
     private var backgroundPanel: some View {
         RoundedRectangle(cornerRadius: 20, style: .continuous)
-            .fill(.white.opacity(0.95))
+            .fill(backgroundFill)
             .overlay {
                 RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .strokeBorder(.white.opacity(0.35), lineWidth: 1)
+                    .strokeBorder(borderColor, lineWidth: 1)
             }
+    }
+
+    private var backgroundFill: Color {
+        switch colorScheme {
+        case .dark:
+            return .black.opacity(0.62)
+        default:
+            return .white.opacity(0.95)
+        }
+    }
+
+    private var borderColor: Color {
+        switch colorScheme {
+        case .dark:
+            return .white.opacity(0.14)
+        default:
+            return .white.opacity(0.35)
+        }
     }
 }
 
