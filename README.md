@@ -1,21 +1,65 @@
 # Kotoba Libre
 
-Kotoba Libre is a macOS-native launcher and web wrapper for LibreChat, built with Swift Package Manager, AppKit, SwiftUI, and WebKit.
+Kotoba Libre turns LibreChat into a focused Mac app.
 
-The app gives LibreChat a focused desktop shell with:
+The goal is simple: make LibreChat feel like a first-class desktop tool instead of a tab you keep losing. Kotoba Libre gives you a Spotlight-style command bar, voice entry, fast preset recall, and native window controls in a small macOS wrapper built with Swift, AppKit, SwiftUI, and WebKit.
 
-- Guided onboarding for first launch
-- A native settings window for instance configuration, agents, and shortcuts
-- Configurable app presence modes: dock only, dock + menu bar, or menu bar only
-- A Spotlight-style launcher opened through a global keyboard shortcut
-- A persistent voice launcher with its own shortcut, animated listening state, and Apple speech transcription
-- A dedicated shortcut for bringing the main app window to the front
-- Native WebKit popup windows when LibreChat opens secondary flows, including cross-domain HTTPS popup navigation
-- Best-effort browser-backed OAuth and popup-auth handling, with `ASWebAuthenticationSession` for `kotobalibre://...` callbacks and browser fallback otherwise
-- Popup-based passkey and security-key login support for build-configured `webcredentials` domains
-- Deep links for opening settings, presets, and direct destinations
-- JSON import/export for agent presets
-- Unsigned `.app`, `.dmg`, and `.zip` packaging for internal distribution
+## Why Kotoba Libre
+
+LibreChat is powerful, but the browser workflow is easy to interrupt. Kotoba Libre keeps your instance close at hand, makes your favorite agents instantly recallable, and gives you dedicated shortcuts for typing, speaking, or showing the full app window without breaking flow.
+
+## Highlights
+
+- Spotlight-style launcher that is always one shortcut away
+- Dedicated voice mode with animated listening state and Apple speech transcription
+- Separate show/hide window shortcut for bringing the main app forward without opening the launcher
+- Fast saving of agents and model links as presets so you can recall them in seconds
+- Native-feeling experience around a live WebKit session, without the usual browser-tab reload dance, and with a small app footprint
+- Menu bar only, Dock only, or hybrid presence modes depending on how visible you want the app to be
+- Native onboarding, settings, popup handling, and deep links tailored for LibreChat
+
+## Install
+
+Download the latest build from the [GitHub Releases page](https://github.com/andrea-sdl/toro-libre/releases/latest).
+
+Kotoba Libre currently ships as an unsigned, non-notarized macOS app. That means macOS will likely warn you the first time you open it. This is expected for the current release flow.
+
+1. Download `Kotoba Libre-unsigned.dmg` from the latest release.
+2. Drag `Kotoba Libre.app` into `/Applications`.
+3. Open the app once.
+4. If macOS blocks it, Control-click the app in Finder, choose `Open`, and confirm the prompt.
+5. If macOS still refuses to launch it, open `System Settings > Privacy & Security`, find the blocked-app message for Kotoba Libre, and click `Open Anyway`.
+6. If the quarantine flag still sticks, run:
+
+```bash
+xattr -dr com.apple.quarantine "/Applications/Kotoba Libre.app"
+```
+
+### Requirements
+
+- macOS 26+
+
+## What You Get
+
+### Always-ready launcher
+
+Kotoba Libre opens a floating Spotlight-like bar from a global shortcut, stays on top while you choose an agent or type a prompt, and launches into LibreChat only when you submit.
+
+### Voice mode
+
+Voice mode uses its own shortcut and its own launcher surface. It starts listening immediately, shows live animated feedback, and sends the finished transcript to the selected agent when you trigger the shortcut again.
+
+### Show or hide the main app window
+
+You also get a dedicated shortcut for the main window itself. Use it when you want the full LibreChat interface right away, then hide it again with the same shortcut when you are done.
+
+### Presets and saved agents
+
+When you are on an agent detail page inside LibreChat, Kotoba Libre can save that agent directly into the launcher list. It can also detect compatible model URLs and save them as Link presets, so the things you use most stay easy to recall.
+
+### Fast native wrapper
+
+Kotoba Libre keeps the desktop shell native and lightweight. Launcher interactions, settings, and window management happen in native macOS UI, while the embedded LibreChat session stays in place so your workflow avoids the usual browser-tab reload dance and the weight of a big cross-platform runtime.
 
 ## Current Stack
 
@@ -58,7 +102,7 @@ The app gives LibreChat a focused desktop shell with:
 - `Sources/KotobaLibreSelfTest`
   Runnable regression suite for core behavior in environments where `swift test` is not available.
 
-## Developer Workflow
+## Build From Source
 
 Build the project:
 
@@ -96,11 +140,11 @@ Enable popup-based passkey and security-key support for specific relying-party d
 KOTOBA_ASSOCIATED_DOMAINS="chat.example.com,login.example.com" ./scripts/build-app.sh
 ```
 
-Those entries are normalized to `webcredentials:` entitlements at packaging time. They only help when the LibreChat login flow opens in a popup that Kotoba Libre can route through its popup/browser-backed auth handling, and arbitrary runtime instance URLs still cannot all be supported by one unsigned build.
+Those entries are normalized to `webcredentials:` entitlements at packaging time. They only help when the LibreChat login flow opens in a popup that Kotoba Libre can route through its popup and browser-backed auth handling, and arbitrary runtime instance URLs still cannot all be supported by one unsigned build.
 
 ## Known Limitation
 
-If your LibreChat login flow requires a passkey or FIDO/security key and stays inside the main embedded Swift window, Kotoba Libre does not support that flow yet. The supported path today is for the login flow to open in a popup, where Kotoba Libre can route the authentication request through its popup/browser-backed auth handling.
+If your LibreChat login flow requires a passkey or FIDO or security key and stays inside the main embedded Swift window, Kotoba Libre does not support that flow yet. The supported path today is for the login flow to open in a popup, where Kotoba Libre can route the authentication request through its popup and browser-backed auth handling.
 
 Generated artifacts:
 
@@ -147,7 +191,7 @@ From the System tab, users can also choose whether Kotoba Libre appears:
 
 When the menu bar item is enabled, it includes actions for opening Settings, showing the LibreChat window, and quitting the app.
 
-The Shortcuts tab now manages three separate shortcuts:
+The Shortcuts tab manages three separate shortcuts:
 
 - Text launcher, which defaults to `Ctrl+Option+Space`
 - Voice launcher, which defaults to `Ctrl+Option+V`
@@ -213,7 +257,8 @@ Validate the version before release:
 ```
 
 Unsigned release automation is defined in `.github/workflows/release.yml`.
-The release workflow is launched manually from the default branch, creates the release tag for the selected `patch` / `minor` / `major` bump, publishes only the unsigned DMG to GitHub Releases, and then advances `VERSION` to the next `-dev` version on the default branch.
+
+The release workflow is launched manually from the default branch, creates the release tag for the selected `patch`, `minor`, or `major` bump, publishes the unsigned DMG to GitHub Releases, and then advances `VERSION` to the next `-dev` version on the default branch.
 
 ## Third-Party Notices
 
