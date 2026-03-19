@@ -2361,6 +2361,9 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
             };
             const targetAppPath = toAppPath(next.href);
             const targetRouterPath = toRouterPath(next.href);
+            const isNewChatTarget = next.pathname === "/c/new" || next.pathname.startsWith("/c/new/");
+            const targetAgentId = next.searchParams.get("agent_id");
+            const targetPrompt = next.searchParams.get("prompt") ?? next.searchParams.get("q") ?? "";
             const shouldAutoSubmitFromQuery =
               (next.searchParams.get("submit") ?? "").toLowerCase() === "true" &&
               (next.searchParams.has("prompt") || next.searchParams.has("q"));
@@ -2378,15 +2381,14 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
               shouldAutoSubmitFromQuery,
               useRouteReloadForLauncherChats,
             });
-            if (next.pathname === "/c/new" || next.pathname.startsWith("/c/new/")) {
+            if (isNewChatTarget) {
               postLauncherProgress("opening-agent");
             }
             const seedLauncherSelection = () => {
-              if (!(next.pathname === "/c/new" || next.pathname.startsWith("/c/new/"))) return;
-              const agentId = next.searchParams.get("agent_id");
-              if (agentId) {
-                localStorage.setItem("agent_id__0", agentId);
-                log("seedLauncherSelection", agentId);
+              if (!isNewChatTarget) return;
+              if (targetAgentId) {
+                localStorage.setItem("agent_id__0", targetAgentId);
+                log("seedLauncherSelection", targetAgentId);
               }
             };
             seedLauncherSelection();
@@ -2649,6 +2651,26 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
               );
             const waitForChatContext = async (timeoutMs = 240) =>
               await waitForResult(() => getChatContext(), timeoutMs, 20);
+            const waitForPlainNewConversation = async (timeoutMs = 5000) => {
+              const started = Date.now();
+              while (Date.now() - started < timeoutMs) {
+                const chatContext = getChatContext();
+                const conversation = chatContext?.conversation;
+                if (
+                  conversation &&
+                  conversation.conversationId === "new" &&
+                  !conversation.agent_id
+                ) {
+                  log("waitForPlainNewConversation ready", {
+                    conversationId: conversation.conversationId,
+                  });
+                  return chatContext;
+                }
+                await delay(30);
+              }
+              log("waitForPlainNewConversation timed out");
+              return getChatContext();
+            };
             const waitForChatContextConversation = async (agentId, timeoutMs = 5000) => {
               const started = Date.now();
               while (Date.now() - started < timeoutMs) {
@@ -2673,10 +2695,10 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
             };
             const startAgentChatViaReactContext = async () => {
               if (useRouteReloadForLauncherChats) return false;
-              if (!(next.pathname === "/c/new" || next.pathname.startsWith("/c/new/"))) return false;
-              const agentId = next.searchParams.get("agent_id");
+              if (!isNewChatTarget) return false;
+              const agentId = targetAgentId;
               if (!agentId) return false;
-              const prompt = next.searchParams.get("prompt") ?? next.searchParams.get("q") ?? "";
+              const prompt = targetPrompt;
               try {
                 const chatContext = await waitForChatContext(240);
                 if (!chatContext) {
@@ -2727,11 +2749,48 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
                 return false;
               }
             };
+            const findNativeNewChatTrigger = () => {
+              const selectors = [
+                "[data-testid='wide-header-new-chat-button']",
+                "[data-testid='nav-new-chat-button']",
+                "a[href='/c/new'][data-testid]",
+                "button[aria-label='New Chat']",
+              ];
+              for (const selector of selectors) {
+                const match = document.querySelector(selector);
+                if (match instanceof HTMLElement && !match.hasAttribute("disabled")) {
+                  return match;
+                }
+              }
+              return null;
+            };
+            const startPlainNewConversation = async () => {
+              if (!isNewChatTarget || targetAgentId) return false;
+              const nativeTrigger = findNativeNewChatTrigger();
+              if (!(nativeTrigger instanceof HTMLElement)) {
+                log("startPlainNewConversation missing native trigger");
+                return false;
+              }
+              log("startPlainNewConversation clicking native new chat");
+              const previousTextarea = document.getElementById("prompt-textarea");
+              nativeTrigger.click();
+              const submitTask = submitPromptViaChatForm(targetPrompt, previousTextarea);
+              await waitForPlainNewConversation(5000);
+              await waitForElement(
+                () =>
+                  window.location.pathname === `${basePath}/c/new` ||
+                  window.location.pathname === "/c/new"
+                    ? document.body
+                    : null,
+                5000,
+              );
+              return await submitTask;
+            };
             const startAgentChatViaMarketplace = async () => {
               if (!shouldAutoSubmitFromQuery || useRouteReloadForLauncherChats) return false;
-              if (!(next.pathname === "/c/new" || next.pathname.startsWith("/c/new/"))) return false;
-              const agentId = next.searchParams.get("agent_id");
-              const prompt = next.searchParams.get("prompt") ?? next.searchParams.get("q") ?? "";
+              if (!isNewChatTarget) return false;
+              const agentId = targetAgentId;
+              const prompt = targetPrompt;
               if (!agentId) {
                 log("startAgentChatViaMarketplace missing agent id");
                 return false;
@@ -2824,6 +2883,7 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
               return result;
             };
             if (await startAgentChatViaReactContext()) return;
+            if (await startPlainNewConversation()) return;
             if (await startAgentChatViaMarketplace()) return;
             if (await performSubmitRouteRemount()) return;
             if (await navigateInternally(targetRouterPath, shouldAutoSubmitFromQuery ? 1400 : 200)) {
