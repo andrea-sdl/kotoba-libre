@@ -14,6 +14,60 @@ function normalizePath(path) {
     return `/${segments.join('/')}`;
 }
 
+function normalizeAllowedHost(host) {
+    const trimmedHost = String(host || '').trim().toLowerCase();
+    if (!trimmedHost) {
+        return '';
+    }
+
+    if (trimmedHost === '*') {
+        return '*';
+    }
+
+    const candidate = trimmedHost.includes('://')
+        ? trimmedHost
+        : `https://${trimmedHost}`;
+
+    try {
+        const url = new URL(candidate);
+        if (url.protocol === 'https:' && url.host) {
+            return url.host.toLowerCase();
+        }
+    } catch {
+    }
+
+    return trimmedHost
+        .replace(/^https:\/\//, '')
+        .split(/[/?#]/, 1)[0];
+}
+
+function normalizeCallbackPathValue(path) {
+    const trimmedPath = String(path || '').trim();
+    if (!trimmedPath) {
+        return '';
+    }
+
+    if (trimmedPath.includes('://')) {
+        try {
+            const url = new URL(trimmedPath);
+            if (url.protocol === 'https:') {
+                return normalizePath(url.pathname);
+            }
+        } catch {
+        }
+    }
+
+    const firstSlashIndex = trimmedPath.indexOf('/');
+    if (firstSlashIndex > 0) {
+        const authorityCandidate = trimmedPath.slice(0, firstSlashIndex).toLowerCase();
+        if (authorityCandidate.includes('.') || authorityCandidate.includes(':') || authorityCandidate === 'localhost') {
+            return normalizePath(trimmedPath.slice(firstSlashIndex));
+        }
+    }
+
+    return normalizePath(trimmedPath);
+}
+
 function escapeForRegex(value) {
     return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
@@ -21,19 +75,20 @@ function escapeForRegex(value) {
 function readAllowedHosts(rawHosts) {
     return String(rawHosts || DEFAULT_SETTINGS.allowedHosts)
         .split(',')
-        .map((host) => host.trim().toLowerCase())
+        .map(normalizeAllowedHost)
         .filter(Boolean);
 }
 
 function hasUsableSettings(settings) {
     return readAllowedHosts(settings.allowedHosts).length > 0
-        && String(settings.callbackPath || '').trim().length > 0;
+        && normalizeCallbackPathValue(settings.callbackPath || DEFAULT_SETTINGS.callbackPath).length > 0;
 }
 
 function buildRegexFilter(host, callbackPath) {
     const escapedPath = escapeForRegex(callbackPath);
     const hostPattern = host === '*'
-        ? '([^/:?#]+)'
+        // Capture the full HTTPS authority so optional ports survive the redirect.
+        ? '([^/?#]+)'
         : escapeForRegex(host);
     return `^https://${hostPattern}${escapedPath}([?#].*)?$`;
 }
@@ -51,7 +106,7 @@ function buildDynamicRules(settings) {
         return [];
     }
 
-    const callbackPath = normalizePath(settings.callbackPath || DEFAULT_SETTINGS.callbackPath);
+    const callbackPath = normalizeCallbackPathValue(settings.callbackPath || DEFAULT_SETTINGS.callbackPath);
     const appScheme = String(settings.appScheme || DEFAULT_SETTINGS.appScheme).trim().toLowerCase();
     const allowedHosts = readAllowedHosts(settings.allowedHosts);
 

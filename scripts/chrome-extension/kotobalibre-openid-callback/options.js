@@ -18,9 +18,78 @@
         status.textContent = message;
     }
 
+    function normalizeAllowedHost(host) {
+        const trimmedHost = String(host || '').trim().toLowerCase();
+        if (!trimmedHost) {
+            return '';
+        }
+
+        if (trimmedHost === '*') {
+            return '*';
+        }
+
+        const candidate = trimmedHost.includes('://')
+            ? trimmedHost
+            : `https://${trimmedHost}`;
+
+        try {
+            const url = new URL(candidate);
+            if (url.protocol === 'https:' && url.host) {
+                return url.host.toLowerCase();
+            }
+        } catch {
+        }
+
+        return trimmedHost
+            .replace(/^https:\/\//, '')
+            .split(/[/?#]/, 1)[0];
+    }
+
+    function normalizeAllowedHosts(rawHosts) {
+        return String(rawHosts || DEFAULT_SETTINGS.allowedHosts)
+            .split(',')
+            .map(normalizeAllowedHost)
+            .filter(Boolean)
+            .join(', ');
+    }
+
+    function normalizePath(path) {
+        const segments = String(path || '')
+            .split('/')
+            .filter(Boolean);
+        return `/${segments.join('/')}`;
+    }
+
+    function normalizeCallbackPathValue(path) {
+        const trimmedPath = String(path || '').trim();
+        if (!trimmedPath) {
+            return '';
+        }
+
+        if (trimmedPath.includes('://')) {
+            try {
+                const url = new URL(trimmedPath);
+                if (url.protocol === 'https:') {
+                    return normalizePath(url.pathname);
+                }
+            } catch {
+            }
+        }
+
+        const firstSlashIndex = trimmedPath.indexOf('/');
+        if (firstSlashIndex > 0) {
+            const authorityCandidate = trimmedPath.slice(0, firstSlashIndex).toLowerCase();
+            if (authorityCandidate.includes('.') || authorityCandidate.includes(':') || authorityCandidate === 'localhost') {
+                return normalizePath(trimmedPath.slice(firstSlashIndex));
+            }
+        }
+
+        return normalizePath(trimmedPath);
+    }
+
     function applySettings(settings) {
-        allowedHostsInput.value = settings.allowedHosts;
-        callbackPathInput.value = settings.callbackPath;
+        allowedHostsInput.value = normalizeAllowedHosts(settings.allowedHosts);
+        callbackPathInput.value = normalizeCallbackPathValue(settings.callbackPath);
     }
 
     function loadSettings() {
@@ -31,8 +100,8 @@
         event.preventDefault();
 
         chrome.storage.sync.set({
-            allowedHosts: allowedHostsInput.value.trim() || DEFAULT_SETTINGS.allowedHosts,
-            callbackPath: callbackPathInput.value.trim() || DEFAULT_SETTINGS.callbackPath,
+            allowedHosts: normalizeAllowedHosts(allowedHostsInput.value) || DEFAULT_SETTINGS.allowedHosts,
+            callbackPath: normalizeCallbackPathValue(callbackPathInput.value) || DEFAULT_SETTINGS.callbackPath,
             appScheme: DEFAULT_SETTINGS.appScheme
         }, () => {
             setStatus('Settings saved.');
