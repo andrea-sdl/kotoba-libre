@@ -15,25 +15,79 @@
         return `/${segments.join('/')}`;
     }
 
+    function normalizeAllowedHost(host) {
+        const trimmedHost = String(host || '').trim().toLowerCase();
+        if (!trimmedHost) {
+            return '';
+        }
+
+        if (trimmedHost === '*') {
+            return '*';
+        }
+
+        const candidate = trimmedHost.includes('://')
+            ? trimmedHost
+            : `https://${trimmedHost}`;
+
+        try {
+            const url = new URL(candidate);
+            if (url.protocol === 'https:' && url.host) {
+                return url.host.toLowerCase();
+            }
+        } catch {
+        }
+
+        return trimmedHost
+            .replace(/^https:\/\//, '')
+            .split(/[/?#]/, 1)[0];
+    }
+
+    function normalizeCallbackPathValue(path) {
+        const trimmedPath = String(path || '').trim();
+        if (!trimmedPath) {
+            return '';
+        }
+
+        if (trimmedPath.includes('://')) {
+            try {
+                const url = new URL(trimmedPath);
+                if (url.protocol === 'https:') {
+                    return normalizePath(url.pathname);
+                }
+            } catch {
+            }
+        }
+
+        const firstSlashIndex = trimmedPath.indexOf('/');
+        if (firstSlashIndex > 0) {
+            const authorityCandidate = trimmedPath.slice(0, firstSlashIndex).toLowerCase();
+            if (authorityCandidate.includes('.') || authorityCandidate.includes(':') || authorityCandidate === 'localhost') {
+                return normalizePath(trimmedPath.slice(firstSlashIndex));
+            }
+        }
+
+        return normalizePath(trimmedPath);
+    }
+
     function readAllowedHosts(rawHosts) {
         return String(rawHosts || DEFAULT_SETTINGS.allowedHosts)
             .split(',')
-            .map((host) => host.trim().toLowerCase())
+            .map(normalizeAllowedHost)
             .filter(Boolean);
     }
 
-    function hostMatches(hostname, allowedHosts) {
-        if (!hostname) {
+    function authorityMatches(authority, allowedHosts) {
+        if (!authority) {
             return false;
         }
 
-        const normalizedHost = hostname.toLowerCase();
-        return allowedHosts.includes('*') || allowedHosts.includes(normalizedHost);
+        const normalizedAuthority = authority.toLowerCase();
+        return allowedHosts.includes('*') || allowedHosts.includes(normalizedAuthority);
     }
 
     function hasUsableSettings(settings) {
         return readAllowedHosts(settings.allowedHosts).length > 0
-            && String(settings.callbackPath || '').trim().length > 0;
+            && normalizeCallbackPathValue(settings.callbackPath || DEFAULT_SETTINGS.callbackPath).length > 0;
     }
 
     function maybeRedirect(settings) {
@@ -43,14 +97,16 @@
 
         const currentURL = new URL(window.location.href);
         const allowedHosts = readAllowedHosts(settings.allowedHosts);
-        const callbackPath = normalizePath(settings.callbackPath || DEFAULT_SETTINGS.callbackPath);
+        const callbackPath = normalizeCallbackPathValue(settings.callbackPath || DEFAULT_SETTINGS.callbackPath);
         const appScheme = String(settings.appScheme || DEFAULT_SETTINGS.appScheme).trim().toLowerCase();
+        const currentAuthority = currentURL.host.toLowerCase();
 
         if (currentURL.protocol !== 'https:') {
             return;
         }
 
-        if (!hostMatches(currentURL.hostname, allowedHosts)) {
+        // Compare against the full authority so callbacks on host:port still redirect.
+        if (!authorityMatches(currentAuthority, allowedHosts)) {
             return;
         }
 

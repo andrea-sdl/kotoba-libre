@@ -109,6 +109,12 @@ struct KotobaLibreSelfTest {
         )
         expect(mappedCustomSchemeHostURL?.absoluteString == "https://chat.example.com/auth/callback?code=123", "customSchemeHostMapsToHTTPSURL")
 
+        let mappedCustomSchemeHostWithPortURL = try KotobaLibreCore.mapCustomSchemeURLToInstanceURL(
+            URL(string: "kotobalibre://chat.example.com:3000/oauth/openid/callback?code=123")!,
+            instanceBaseURL: "https://ignored.example.com"
+        )
+        expect(mappedCustomSchemeHostWithPortURL?.absoluteString == "https://chat.example.com:3000/oauth/openid/callback?code=123", "customSchemeHostWithPortMapsToHTTPSURL")
+
         expectThrows("deepLinkInvalidFails missing url") {
             _ = try KotobaLibreCore.parseDeepLink("kotobalibre://open")
         }
