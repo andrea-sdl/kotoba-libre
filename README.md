@@ -232,6 +232,7 @@ Kotoba Libre currently supports:
 - `kotobalibre://preset/<presetId>?query=<encoded_query>`
 - `kotobalibre://settings`
 - Other `kotobalibre://...` routes are treated as instance-relative paths and loaded against the configured LibreChat base URL
+- `kotobalibre://<instance-host>/oauth/openid/callback?<query>`
 - `https://.../app/open?url=<encoded_url>`
 - `https://.../app/preset/<presetId>?query=<encoded_query>`
 - `https://.../app/settings`
@@ -243,6 +244,39 @@ If another app opens a plain `https://...` URL with Kotoba Libre, the app accept
 The Instance Settings option that opens external login flows in the default browser depends on the browser extension redirecting the completed auth flow back to `kotobalibre://...`.
 
 See [docs/architecture.md](docs/architecture.md) for behavior details.
+
+### Chrome Extension Helper
+
+Load the unpacked Chrome extension from `scripts/chrome-extension/kotobalibre-openid-callback`.
+
+The extension:
+
+- Uses Chrome dynamic redirect rules so callback navigations can be caught before the page renders
+- Keeps the content-script redirect as a fallback for already-loaded callback pages
+- Uses the same icon artwork as Kotoba Libre
+- Opens its settings page when you click the extension icon
+- Stores the allowed hosts and callback path with Chrome sync storage
+- Always redirects into the fixed `kotobalibre://` scheme
+- Starts inactive on a fresh install and opens its settings page so each user can enter their own default config
+
+To test it in Chrome:
+
+1. Open `chrome://extensions`
+2. Enable Developer mode
+3. Click `Load unpacked`
+4. Select `scripts/chrome-extension/kotobalibre-openid-callback`
+5. When the extension opens its setup page, enter the host list and callback path you want to use
+6. Retry the login flow
+
+To create a distributable source zip for the extension:
+
+```bash
+./scripts/package-chrome-extension.sh
+```
+
+That writes `dist-artifacts/chrome-extension/kotobalibre-openid-callback.zip` with the extension files at the archive root, which is the shape you want for sharing or Chrome Web Store upload.
+
+The release workflow also builds and publishes that extension zip alongside the unsigned app artifacts.
 
 ## Data Storage
 
