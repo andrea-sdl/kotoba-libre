@@ -7,9 +7,11 @@ import KotobaLibreCore
 struct KotobaLibreSelfTest {
     static func main() throws {
         var failures: [String] = []
+        var assertionCount = 0
 
         // Local helpers collect failures so the suite can report all broken behaviors in one run.
         func expect(_ condition: @autoclosure () throws -> Bool, _ message: String) {
+            assertionCount += 1
             do {
                 if try !condition() {
                     failures.append(message)
@@ -20,6 +22,7 @@ struct KotobaLibreSelfTest {
         }
 
         func expectThrows(_ message: String, _ work: () throws -> Void) {
+            assertionCount += 1
             do {
                 try work()
                 failures.append(message)
@@ -91,6 +94,21 @@ struct KotobaLibreSelfTest {
         let presetParsed = try KotobaLibreCore.parseDeepLink("kotobalibre://preset/preset-1?query=hello%20world")
         expect(presetParsed == .openPreset(presetID: "preset-1", query: "hello world"), "deepLinkPresetIsParsed")
 
+        let webOpenParsed = try KotobaLibreCore.parseDeepLink("https://chat.example.com/app/open?url=https%3A%2F%2Fchat.example.com%2Fc%2F123")
+        expect(webOpenParsed == .openURL("https://chat.example.com/c/123"), "webDeepLinkOpenURLIsParsed")
+
+        let mappedCustomSchemeURL = try KotobaLibreCore.mapCustomSchemeURLToInstanceURL(
+            URL(string: "kotobalibre://auth/callback?code=123&state=abc")!,
+            instanceBaseURL: "https://chat.example.com"
+        )
+        expect(mappedCustomSchemeURL?.absoluteString == "https://chat.example.com/auth/callback?code=123&state=abc", "customSchemeMapsToInstanceRelativeURL")
+
+        let mappedCustomSchemeHostURL = try KotobaLibreCore.mapCustomSchemeURLToInstanceURL(
+            URL(string: "kotobalibre://chat.example.com/auth/callback?code=123")!,
+            instanceBaseURL: "https://ignored.example.com"
+        )
+        expect(mappedCustomSchemeHostURL?.absoluteString == "https://chat.example.com/auth/callback?code=123", "customSchemeHostMapsToHTTPSURL")
+
         expectThrows("deepLinkInvalidFails missing url") {
             _ = try KotobaLibreCore.parseDeepLink("kotobalibre://open")
         }
@@ -100,6 +118,8 @@ struct KotobaLibreSelfTest {
 
         let settings = settingsRestrictingHost()
         expect(try KotobaLibreCore.enforceDestination("https://chat.example.com/c/new", settings: settings).absoluteString == "https://chat.example.com/c/new", "hostRestrictionAllowsChatHost")
+        expect(try KotobaLibreCore.matchesConfiguredInstanceHost(URL(string: "https://chat.example.com/c/new")!, settings: settings), "configuredInstanceHostMatchesChatHost")
+        expect(!(try KotobaLibreCore.matchesConfiguredInstanceHost(URL(string: "https://example.com/c/new")!, settings: settings)), "configuredInstanceHostRejectsOtherHost")
         expectThrows("hostRestrictionBlocksNonChatHost") {
             _ = try KotobaLibreCore.enforceDestination("https://example.com", settings: settings)
         }
@@ -117,6 +137,7 @@ struct KotobaLibreSelfTest {
 
         var missingInstanceSettings = settingsRestrictingHost()
         missingInstanceSettings.instanceBaseUrl = nil
+        expect(!(try KotobaLibreCore.matchesConfiguredInstanceHost(URL(string: "https://chat.example.com/c/new")!, settings: missingInstanceSettings)), "configuredInstanceHostRequiresConfiguredInstance")
         expectThrows("hostRestrictionRequiresInstanceWhenEnabled") {
             _ = try KotobaLibreCore.enforceDestination("https://chat.example.com/c/new", settings: missingInstanceSettings)
         }
@@ -189,6 +210,7 @@ struct KotobaLibreSelfTest {
         let encodedSettings = try JSONEncoder().encode(AppSettings())
         let decodedSettings = try JSONDecoder().decode(AppSettings.self, from: encodedSettings)
         expect(decodedSettings == AppSettings(), "settingsRoundTrip")
+        expect(decodedSettings.openExternalAuthenticationLinksInNewWindow, "settingsDefaultExternalAuthWindowEnabled")
 
         let legacySettingsJSON = """
         {"instanceBaseUrl":"https://chat.example.com","globalShortcut":"CmdOrCtrl+Shift+Space","autostartEnabled":false,"restrictHostToInstanceHost":true,"defaultPresetId":"preset-1","useRouteReloadForLauncherChats":false,"launcherOpacity":0.95}
@@ -198,6 +220,7 @@ struct KotobaLibreSelfTest {
         expect(!decodedLegacySettings.debugLoggingEnabled, "settingsDecodeLegacyDebugLoggingDefault")
         expect(decodedLegacySettings.voiceGlobalShortcut == AppSettings.defaultVoiceShortcut, "settingsDecodeLegacyVoiceShortcutDefault")
         expect(decodedLegacySettings.showAppWindowShortcut == AppSettings.defaultShowAppWindowShortcut, "settingsDecodeLegacyShowAppWindowShortcutDefault")
+        expect(decodedLegacySettings.openExternalAuthenticationLinksInNewWindow, "settingsDecodeLegacyExternalAuthWindowDefault")
         expect(AppResources.iconPNGURL?.lastPathComponent == "AppIcon.png", "appResourcesResolvePNG")
         expect(AppResources.iconICNSURL?.lastPathComponent == "AppIcon.icns", "appResourcesResolveICNS")
 
@@ -226,7 +249,7 @@ struct KotobaLibreSelfTest {
         expect(try store.loadPresets().isEmpty, "storeResetLoadsEmptyPresets")
 
         if failures.isEmpty {
-            print("KotobaLibreSelfTest: all checks passed (\(50) assertions)")
+            print("KotobaLibreSelfTest: all checks passed (\(assertionCount) assertions)")
             return
         }
 
