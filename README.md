@@ -256,6 +256,7 @@ The extension:
 - Uses the same icon artwork as Kotoba Libre
 - Opens its settings page when you click the extension icon
 - Stores the allowed hosts and callback path with Chrome sync storage
+- Defaults the callback path to `/oauth/openid/callback`, so most setups only need a host entry
 - Preserves an optional `:port` in callback hosts, so `localhost:3000`-style setups redirect correctly
 - Accepts plain hosts, HTTPS base URLs, or pasted callback URLs in its settings and normalizes them into a working redirect rule
 - Always redirects into the fixed `kotobalibre://` scheme
