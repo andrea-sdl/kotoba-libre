@@ -165,7 +165,6 @@ final class AppController: NSObject, ObservableObject, ASWebAuthenticationPresen
         voiceShortcutDraft = settings.voiceGlobalShortcut
         showAppWindowShortcutDraft = settings.showAppWindowShortcut
         installApplicationObserversIfNeeded()
-        NSApp.servicesProvider = self
         refreshMicrophonePermissionState()
         refreshSpeechRecognitionPermissionState()
         setupApplicationMenu()
@@ -388,7 +387,7 @@ final class AppController: NSObject, ObservableObject, ASWebAuthenticationPresen
 
     func handleOpenFiles(_ urls: [URL]) {
         do {
-            try openServiceLauncherRequest(query: nil, attachmentFileURLs: urls)
+            try openNewChat(attachmentFileURLs: urls)
         } catch {
             restoreOrOpenPrimaryWindow()
             NSSound.beep()
@@ -803,7 +802,7 @@ final class AppController: NSObject, ObservableObject, ASWebAuthenticationPresen
         try openURLString(destination)
     }
 
-    func openPreset(id: String, query: String?, preferMainWindow: Bool = false, attachmentFileURLs: [URL] = []) throws {
+    func openPreset(id: String, query: String?, preferMainWindow: Bool = false) throws {
         guard let preset = presets.first(where: { $0.id == id }) else {
             throw KotobaLibreError.invalidDestination("Preset '\(id)' not found")
         }
@@ -813,14 +812,7 @@ final class AppController: NSObject, ObservableObject, ASWebAuthenticationPresen
             instanceBaseURL: settings.instanceBaseUrl,
             query: query
         )
-        if !attachmentFileURLs.isEmpty {
-            mainWindowController.queueAttachment(urls: attachmentFileURLs)
-        }
-        try openURLString(
-            destination,
-            preferMainWindow: preferMainWindow,
-            forceReload: !attachmentFileURLs.isEmpty
-        )
+        try openURLString(destination, preferMainWindow: preferMainWindow)
     }
 
     func openURLString(_ destination: String, preferMainWindow: Bool = false, forceReload: Bool = false) throws {
@@ -855,29 +847,6 @@ final class AppController: NSObject, ObservableObject, ASWebAuthenticationPresen
         }
 
         try openResolvedURL(targetURL, preferMainWindow: true, forceReload: !attachmentFileURLs.isEmpty)
-    }
-
-    func openServiceLauncherRequest(query: String?, attachmentFileURLs: [URL]) throws {
-        let availablePresets = sortedPresets()
-        guard !availablePresets.isEmpty else {
-            throw KotobaLibreError.invalidDestination("No agents configured yet. Add one in Settings first.")
-        }
-
-        let trimmedQuery = query?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        if availablePresets.count == 1, let onlyPreset = availablePresets.first {
-            try openPreset(
-                id: onlyPreset.id,
-                query: trimmedQuery.isEmpty ? nil : trimmedQuery,
-                preferMainWindow: true,
-                attachmentFileURLs: attachmentFileURLs
-            )
-            return
-        }
-
-        launcherWindowController.showAndFocusForSeededTextRequest(
-            query: trimmedQuery,
-            attachmentFileURLs: attachmentFileURLs
-        )
     }
 
     func handleShortcutKeyEvent(_ event: NSEvent) -> Bool {
@@ -1282,29 +1251,6 @@ final class AppController: NSObject, ObservableObject, ASWebAuthenticationPresen
         }
     }
 
-    // These service handlers let other macOS apps route selected text or files into a fresh chat.
-    @objc func askKotobaLibreService(_ pasteboard: NSPasteboard, userData: String?, error: AutoreleasingUnsafeMutablePointer<NSString?>) {
-        guard let selectedText = pasteboard.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines), !selectedText.isEmpty else {
-            error.pointee = "Select some text before sending it to Kotoba Libre."
-            return
-        }
-
-        do {
-            try openServiceLauncherRequest(query: selectedText, attachmentFileURLs: [])
-        } catch let serviceError {
-            error.pointee = serviceError.localizedDescription as NSString
-        }
-    }
-
-    @objc func sendToKotobaLibreService(_ pasteboard: NSPasteboard, userData: String?, error: AutoreleasingUnsafeMutablePointer<NSString?>) {
-        do {
-            let fileURLs = try fileURLs(from: pasteboard)
-            try openServiceLauncherRequest(query: nil, attachmentFileURLs: fileURLs)
-        } catch let serviceError {
-            error.pointee = serviceError.localizedDescription as NSString
-        }
-    }
-
     private var isActivelyReadingResponses: Bool {
         NSApp.isActive && (mainWindowController.window?.isKeyWindow ?? false)
     }
@@ -1367,22 +1313,6 @@ final class AppController: NSObject, ObservableObject, ASWebAuthenticationPresen
             trigger: nil
         )
         UNUserNotificationCenter.current().add(request)
-    }
-
-    private func fileURLs(from pasteboard: NSPasteboard) throws -> [URL] {
-        let objectURLs = pasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL]
-        let filenameURLs = (pasteboard.propertyList(forType: NSPasteboard.PasteboardType("NSFilenamesPboardType")) as? [String])?.map {
-            URL(fileURLWithPath: $0)
-        }
-        guard let urls = objectURLs ?? filenameURLs, !urls.isEmpty else {
-            throw KotobaLibreError.invalidDestination("Select a file before sending it to Kotoba Libre.")
-        }
-
-        if urls.count > 1 {
-            return [urls[0]]
-        }
-
-        return urls
     }
 
     private func applyAppVisibilityMode(_ mode: AppVisibilityMode) {
