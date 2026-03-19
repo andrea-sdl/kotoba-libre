@@ -179,8 +179,10 @@ Supported custom-scheme and HTTPS-mapped routes include:
 - `kotobalibre://open?url=...`
 - `kotobalibre://preset/<presetId>?query=...`
 - `kotobalibre://settings`
+- `kotobalibre://<instance-host>/oauth/openid/callback?...`
 - `/app/open?url=...`
 - `/app/preset/<presetId>?query=...`
 - `/app/settings`
 
 The shared parsing logic lives in `KotobaLibreCore`.
+OpenID callback URLs that arrive as `kotobalibre://<instance-host>/oauth/openid/callback?...` are normalized back to their HTTPS equivalent before the app routes them.
