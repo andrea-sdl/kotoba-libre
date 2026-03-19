@@ -16,7 +16,7 @@ LibreChat is powerful, but the browser workflow is easy to interrupt. Kotoba Lib
 - Fast saving of agents and model links as presets so you can recall them in seconds
 - Native-feeling experience around a live WebKit session, without the usual browser-tab reload dance, and with a small app footprint
 - Menu bar only, Dock only, or hybrid presence modes depending on how visible you want the app to be
-- Native onboarding, settings, popup handling, and deep links tailored for LibreChat
+- Native onboarding, settings, popup handling, deep links, notifications, Services, and Dock integrations tailored for LibreChat
 
 ## Install
 
@@ -52,6 +52,17 @@ Voice mode uses its own shortcut and its own launcher surface. It starts listeni
 ### Show or hide the main app window
 
 You also get a dedicated shortcut for the main window itself. Use it when you want the full LibreChat interface right away, then hide it again with the same shortcut when you are done.
+
+### Desktop integrations
+
+Kotoba Libre now adds a broader layer of Mac-native behavior around the embedded LibreChat session:
+
+- Background responses can raise a system notification once they cross the long-response threshold you set in Settings
+- Unread background completions increment the Dock badge and bounce the Dock icon
+- The main app menu includes `Cmd+N` for a new chat, `Cmd+[` and `Cmd+]` for history, `Cmd+K` for message search, and `Escape` for stop generating
+- Dragging one file onto the Dock icon opens a new chat and attaches it
+- macOS Services can send selected text with `Ask Kotoba Libre` or send one file with `Send to Kotoba Libre`
+- The main window title tracks the current chat title instead of staying static
 
 ### Presets and saved agents
 
@@ -198,6 +209,8 @@ The Shortcuts tab manages three separate shortcuts:
 - Show app window, which defaults to `Ctrl+Option+K`
 
 The System tab also includes microphone and speech-recognition permission status, debug logging, and a destructive reset action that clears config and returns the app to onboarding.
+
+The System tab also lets users decide whether long background responses should raise a system notification, and how many seconds a response must run before it counts as long.
 
 When host restriction is enabled and you change the configured LibreChat instance to a different host, Kotoba Libre re-validates saved agents, offers an export step first, and removes any incompatible agents after you confirm the change.
 

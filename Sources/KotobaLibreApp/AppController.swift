@@ -4,6 +4,7 @@ import Foundation
 import ServiceManagement
 import SwiftUI
 import KotobaLibreCore
+import UserNotifications
 
 // WebAddPresetCandidate captures the detected web state needed to create a saved preset.
 struct WebAddPresetCandidate: Equatable {
@@ -16,7 +17,7 @@ struct WebAddPresetCandidate: Equatable {
 // AppController is the main coordinator for the desktop app.
 // It owns persisted state, window controllers, global shortcuts, and app-level side effects.
 @MainActor
-final class AppController: NSObject, ObservableObject, ASWebAuthenticationPresentationContextProviding {
+final class AppController: NSObject, ObservableObject, ASWebAuthenticationPresentationContextProviding, NSMenuItemValidation {
     enum ShortcutDraftTarget {
         case launcher
         case voiceLauncher
@@ -108,6 +109,8 @@ final class AppController: NSObject, ObservableObject, ASWebAuthenticationPresen
     private let showAppWindowShortcutRegistrar = GlobalShortcutRegistrar()
     private var statusItem: NSStatusItem?
     private var activeAuthenticationSession: ASWebAuthenticationSession?
+    private var unreadResponseCount = 0
+    private var hasInstalledApplicationObservers = false
     private lazy var mainWindowController = MainWindowController(appController: self, store: store)
     private lazy var settingsWindowController = SettingsWindowController(appController: self)
     private lazy var launcherWindowController = LauncherWindowController(appController: self)
@@ -161,10 +164,13 @@ final class AppController: NSObject, ObservableObject, ASWebAuthenticationPresen
         shortcutDraft = settings.globalShortcut
         voiceShortcutDraft = settings.voiceGlobalShortcut
         showAppWindowShortcutDraft = settings.showAppWindowShortcut
+        installApplicationObserversIfNeeded()
+        NSApp.servicesProvider = self
         refreshMicrophonePermissionState()
         refreshSpeechRecognitionPermissionState()
         setupApplicationMenu()
         applyAppIcon()
+        updateDockBadge()
         applyAppVisibilityMode(settings.appVisibilityMode)
         if runtimeMode.shouldRegisterSystemIntegrations {
             try? syncAutostart(enabled: settings.autostartEnabled)
@@ -341,6 +347,52 @@ final class AppController: NSObject, ObservableObject, ASWebAuthenticationPresen
         }
 
         NSWorkspace.shared.open(url)
+    }
+
+    func markResponsesRead() {
+        guard unreadResponseCount > 0 else {
+            return
+        }
+
+        unreadResponseCount = 0
+        updateDockBadge()
+    }
+
+    func handleWebResponseCompletion(_ completion: WebResponseCompletion) {
+        guard !isActivelyReadingResponses else {
+            return
+        }
+
+        unreadResponseCount += 1
+        updateDockBadge()
+        NSApp.requestUserAttention(.informationalRequest)
+
+        guard settings.backgroundResponseNotificationsEnabled else {
+            return
+        }
+
+        guard completion.duration >= TimeInterval(settings.longResponseNotificationThresholdSeconds) else {
+            return
+        }
+
+        requestNotificationAuthorizationIfNeeded { [weak self] granted in
+            guard granted else {
+                return
+            }
+
+            Task { @MainActor [weak self] in
+                self?.postLongResponseNotification(for: completion)
+            }
+        }
+    }
+
+    func handleOpenFiles(_ urls: [URL]) {
+        do {
+            try openNewChat(attachmentFileURLs: urls)
+        } catch {
+            restoreOrOpenPrimaryWindow()
+            NSSound.beep()
+        }
     }
 
     func startAuthenticationSession(for url: URL, callbackURLScheme: String) -> Bool {
@@ -769,6 +821,35 @@ final class AppController: NSObject, ObservableObject, ASWebAuthenticationPresen
         try openResolvedURL(target, preferMainWindow: preferMainWindow, forceReload: forceReload)
     }
 
+    func openNewChat(prompt: String? = nil, autoSubmit: Bool = false, attachmentFileURLs: [URL] = []) throws {
+        guard let baseURL = try KotobaLibreCore.parseInstanceBaseURL(settings) else {
+            throw KotobaLibreError.invalidDestination("Set your Kotoba Libre instance URL in Settings before opening a new chat")
+        }
+
+        var components = URLComponents(
+            url: baseURL.appendingPathComponent("c/new", isDirectory: false),
+            resolvingAgainstBaseURL: false
+        )
+        var queryItems: [URLQueryItem] = []
+        if let prompt, !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            queryItems.append(URLQueryItem(name: "prompt", value: prompt))
+        }
+        if autoSubmit, !queryItems.isEmpty {
+            queryItems.append(URLQueryItem(name: "submit", value: "true"))
+        }
+        components?.queryItems = queryItems.isEmpty ? nil : queryItems
+
+        guard let targetURL = components?.url else {
+            throw KotobaLibreError.invalidDestination("Unable to build the new chat URL")
+        }
+
+        if !attachmentFileURLs.isEmpty {
+            mainWindowController.queueAttachment(urls: attachmentFileURLs)
+        }
+
+        try openResolvedURL(targetURL, preferMainWindow: true, forceReload: !attachmentFileURLs.isEmpty)
+    }
+
     func handleShortcutKeyEvent(_ event: NSEvent) -> Bool {
         guard recordingShortcutTarget != nil else {
             return false
@@ -1063,10 +1144,22 @@ final class AppController: NSObject, ObservableObject, ASWebAuthenticationPresen
         let appMenu = NSMenu()
         let settingsItem = appMenu.addItem(withTitle: "Settings...", action: #selector(openSettingsFromMenu), keyEquivalent: ",")
         settingsItem.target = self
+        let servicesMenuItem = NSMenuItem(title: "Services", action: nil, keyEquivalent: "")
+        let servicesMenu = NSMenu(title: "Services")
+        servicesMenuItem.submenu = servicesMenu
+        NSApp.servicesMenu = servicesMenu
+        appMenu.addItem(servicesMenuItem)
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "Quit \(appDisplayName)", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appMenuItem.submenu = appMenu
         mainMenu.addItem(appMenuItem)
+
+        let fileItem = NSMenuItem()
+        let fileMenu = NSMenu(title: "File")
+        let newChatItem = fileMenu.addItem(withTitle: "New Chat", action: #selector(openNewChatFromMenu), keyEquivalent: "n")
+        newChatItem.target = self
+        fileItem.submenu = fileMenu
+        mainMenu.addItem(fileItem)
 
         let editItem = NSMenuItem()
         let editMenu = NSMenu(title: "Edit")
@@ -1076,9 +1169,27 @@ final class AppController: NSObject, ObservableObject, ASWebAuthenticationPresen
         editMenu.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
         editMenu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
         editMenu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        let searchMessagesItem = editMenu.addItem(withTitle: "Search Messages", action: #selector(showConversationSearchFromMenu), keyEquivalent: "k")
+        searchMessagesItem.target = self
         editMenu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
         editItem.submenu = editMenu
         mainMenu.addItem(editItem)
+
+        let navigateItem = NSMenuItem()
+        let navigateMenu = NSMenu(title: "Navigate")
+        let backItem = navigateMenu.addItem(withTitle: "Back", action: #selector(goBackFromMenu), keyEquivalent: "[")
+        backItem.target = self
+        let forwardItem = navigateMenu.addItem(withTitle: "Forward", action: #selector(goForwardFromMenu), keyEquivalent: "]")
+        forwardItem.target = self
+        navigateItem.submenu = navigateMenu
+        mainMenu.addItem(navigateItem)
+
+        let chatItem = NSMenuItem()
+        let chatMenu = NSMenu(title: "Chat")
+        let stopItem = chatMenu.addItem(withTitle: "Stop Generating", action: #selector(stopGeneratingFromMenu), keyEquivalent: "\u{1b}")
+        stopItem.target = self
+        chatItem.submenu = chatMenu
+        mainMenu.addItem(chatItem)
 
         let windowItem = NSMenuItem()
         let windowMenu = NSMenu(title: "Window")
@@ -1094,8 +1205,154 @@ final class AppController: NSObject, ObservableObject, ASWebAuthenticationPresen
         showSettingsWindow()
     }
 
+    @objc private func openNewChatFromMenu() {
+        do {
+            try openNewChat()
+        } catch {
+            NSSound.beep()
+        }
+    }
+
+    @objc private func goBackFromMenu() {
+        mainWindowController.navigateBack()
+    }
+
+    @objc private func goForwardFromMenu() {
+        mainWindowController.navigateForward()
+    }
+
+    @objc private func showConversationSearchFromMenu() {
+        mainWindowController.showConversationSearch()
+    }
+
+    @objc private func stopGeneratingFromMenu() {
+        if !mainWindowController.stopGenerating() {
+            NSSound.beep()
+        }
+    }
+
     @objc private func showMainWindowFromStatusItem() {
         restoreOrOpenPrimaryWindow()
+    }
+
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        switch menuItem.action {
+        case #selector(openNewChatFromMenu):
+            return hasCompletedOnboarding
+        case #selector(goBackFromMenu):
+            return mainWindowController.canNavigateBack
+        case #selector(goForwardFromMenu):
+            return mainWindowController.canNavigateForward
+        case #selector(showConversationSearchFromMenu):
+            return mainWindowController.canSearchMessages
+        case #selector(stopGeneratingFromMenu):
+            return mainWindowController.canStopGenerating
+        default:
+            return true
+        }
+    }
+
+    // These service handlers let other macOS apps route selected text or files into a fresh chat.
+    @objc func askKotobaLibreService(_ pasteboard: NSPasteboard, userData: String?, error: AutoreleasingUnsafeMutablePointer<NSString?>) {
+        guard let selectedText = pasteboard.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines), !selectedText.isEmpty else {
+            error.pointee = "Select some text before sending it to Kotoba Libre."
+            return
+        }
+
+        do {
+            try openNewChat(prompt: selectedText, autoSubmit: true)
+        } catch let serviceError {
+            error.pointee = serviceError.localizedDescription as NSString
+        }
+    }
+
+    @objc func sendToKotobaLibreService(_ pasteboard: NSPasteboard, userData: String?, error: AutoreleasingUnsafeMutablePointer<NSString?>) {
+        do {
+            let fileURLs = try fileURLs(from: pasteboard)
+            try openNewChat(attachmentFileURLs: fileURLs)
+        } catch let serviceError {
+            error.pointee = serviceError.localizedDescription as NSString
+        }
+    }
+
+    private var isActivelyReadingResponses: Bool {
+        NSApp.isActive && (mainWindowController.window?.isKeyWindow ?? false)
+    }
+
+    private func installApplicationObserversIfNeeded() {
+        guard !hasInstalledApplicationObservers else {
+            return
+        }
+
+        hasInstalledApplicationObservers = true
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleApplicationDidBecomeActive(_:)),
+            name: NSApplication.didBecomeActiveNotification,
+            object: nil
+        )
+    }
+
+    @objc private func handleApplicationDidBecomeActive(_ notification: Notification) {
+        markResponsesRead()
+    }
+
+    private func updateDockBadge() {
+        NSApp.dockTile.badgeLabel = unreadResponseCount > 0 ? "\(unreadResponseCount)" : nil
+        NSApp.dockTile.display()
+    }
+
+    private func requestNotificationAuthorizationIfNeeded(completion: @escaping @Sendable (Bool) -> Void) {
+        guard runtimeMode.shouldRegisterSystemIntegrations else {
+            completion(false)
+            return
+        }
+
+        UNUserNotificationCenter.current().getNotificationSettings { settings in
+            switch settings.authorizationStatus {
+            case .authorized, .provisional, .ephemeral:
+                completion(true)
+            case .notDetermined:
+                UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .badge, .sound]) { granted, _ in
+                    completion(granted)
+                }
+            case .denied:
+                completion(false)
+            @unknown default:
+                completion(false)
+            }
+        }
+    }
+
+    private func postLongResponseNotification(for completion: WebResponseCompletion) {
+        let content = UNMutableNotificationContent()
+        content.title = completion.conversationTitle ?? "Long response finished"
+        content.body = "A response finished after \(Int(completion.duration.rounded())) seconds."
+        content.sound = .default
+        content.badge = NSNumber(value: unreadResponseCount)
+
+        let request = UNNotificationRequest(
+            identifier: "kotobalibre.response.\(UUID().uuidString)",
+            content: content,
+            trigger: nil
+        )
+        UNUserNotificationCenter.current().add(request)
+    }
+
+    private func fileURLs(from pasteboard: NSPasteboard) throws -> [URL] {
+        let objectURLs = pasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL]
+        let filenameURLs = (pasteboard.propertyList(forType: NSPasteboard.PasteboardType("NSFilenamesPboardType")) as? [String])?.map {
+            URL(fileURLWithPath: $0)
+        }
+        guard let urls = objectURLs ?? filenameURLs, !urls.isEmpty else {
+            throw KotobaLibreError.invalidDestination("Select a file before sending it to Kotoba Libre.")
+        }
+
+        if urls.count > 1 {
+            return [urls[0]]
+        }
+
+        return urls
     }
 
     private func applyAppVisibilityMode(_ mode: AppVisibilityMode) {

@@ -138,6 +138,39 @@ cat > "${CONTENTS_DIR}/Info.plist" <<EOF
   <string>Kotoba Libre requests camera access only when an embedded LibreChat feature needs camera and microphone capture.</string>
   <key>NSMicrophoneUsageDescription</key>
   <string>Kotoba Libre requests microphone access only so LibreChat's microphone input feature can work.</string>
+  <key>NSServices</key>
+  <array>
+    <dict>
+      <key>NSMenuItem</key>
+      <dict>
+        <key>default</key>
+        <string>Ask Kotoba Libre</string>
+      </dict>
+      <key>NSMessage</key>
+      <string>askKotobaLibreService</string>
+      <key>NSPortName</key>
+      <string>${APP_NAME}</string>
+      <key>NSSendTypes</key>
+      <array>
+        <string>NSStringPboardType</string>
+      </array>
+    </dict>
+    <dict>
+      <key>NSMenuItem</key>
+      <dict>
+        <key>default</key>
+        <string>Send to Kotoba Libre</string>
+      </dict>
+      <key>NSMessage</key>
+      <string>sendToKotobaLibreService</string>
+      <key>NSPortName</key>
+      <string>${APP_NAME}</string>
+      <key>NSSendTypes</key>
+      <array>
+        <string>NSFilenamesPboardType</string>
+      </array>
+    </dict>
+  </array>
   <key>NSSpeechRecognitionUsageDescription</key>
   <string>Kotoba Libre requests speech recognition access only so the voice launcher can transcribe your spoken prompt before sending it to LibreChat.</string>
   <key>NSPrincipalClass</key>

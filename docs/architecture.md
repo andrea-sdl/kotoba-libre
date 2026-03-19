@@ -25,7 +25,9 @@ This target is intentionally UI-free so behavior can be validated in the self-te
 - `NSApplication` bootstrap
 - App menu and lifecycle
 - Dock/menu bar visibility mode switching
+- Dock badge and attention requests for unread background responses
 - Menu bar status item actions
+- Services integration for selected text and files
 - Main web content window
 - Popup web windows created by LibreChat flows, even when those popup windows navigate to another HTTPS host
 - Settings window
@@ -34,6 +36,7 @@ This target is intentionally UI-free so behavior can be validated in the self-te
 - Onboarding flow
 - Global shortcut capture and registration
 - Launch-at-login integration
+- Local notification handoff for long-running background responses
 
 The UI stack is mixed by design:
 
@@ -70,6 +73,7 @@ Kotoba Libre uses three main native window types:
 - Hosts the main `WKWebView` once setup is complete
 - Uses a `900x660` default size after onboarding completes
 - Can open LibreChat home or route directly to a destination
+- Tracks the current chat title so the window title reflects the active conversation
 
 ### Settings window
 
@@ -163,6 +167,14 @@ Kotoba Libre opens URLs in one of two ways:
 - Other hosts open externally in the default browser
 
 When possible, the app prefers SPA-style navigation for same-host LibreChat routes and falls back to full page loads when necessary.
+
+The native shell also layers on conversation-level commands around that web session:
+
+- `Cmd+N` opens a fresh `/c/new` chat in the main window
+- `Cmd+[` and `Cmd+]` drive WebKit history
+- `Cmd+K` opens a native search overlay backed by `WKWebView.find`
+- `Escape` triggers the page stop-generating control when a response is in flight
+- Dock-file and Services file handoff queue a single attachment and then open a new chat route before returning the file to WebKit's upload picker
 
 ## Persistence
 

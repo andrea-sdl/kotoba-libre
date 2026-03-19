@@ -2022,7 +2022,9 @@ struct SettingsPanelView: View {
             useRouteReloadForLauncherChats: useRouteReloadForLauncherChats,
             debugLoggingEnabled: appController.settings.debugLoggingEnabled,
             launcherOpacity: appController.settings.launcherOpacity,
-            appVisibilityMode: appController.settings.appVisibilityMode
+            appVisibilityMode: appController.settings.appVisibilityMode,
+            backgroundResponseNotificationsEnabled: appController.settings.backgroundResponseNotificationsEnabled,
+            longResponseNotificationThresholdSeconds: appController.settings.longResponseNotificationThresholdSeconds
         )
     }
 
@@ -2187,6 +2189,8 @@ struct SystemPanelView: View {
     @EnvironmentObject private var navigationGuard: SettingsNavigationGuard
     @State private var autostartEnabled = false
     @State private var debugLoggingEnabled = false
+    @State private var backgroundResponseNotificationsEnabled = true
+    @State private var longResponseNotificationThresholdSeconds = Double(AppSettings.defaultLongResponseNotificationThresholdSeconds)
     @State private var launcherOpacity = 95.0
     @State private var appVisibilityMode = AppVisibilityMode.dockOnly
     @State private var statusMessage = ""
@@ -2204,6 +2208,17 @@ struct SystemPanelView: View {
             Form {
                 Toggle("Launch Kotoba Libre at login", isOn: $autostartEnabled)
                 Toggle("Enable debug logs", isOn: $debugLoggingEnabled)
+                VStack(alignment: .leading, spacing: 8) {
+                    Toggle("Notify when a long background response finishes", isOn: $backgroundResponseNotificationsEnabled)
+                    Text("Dock badge counts and Dock bounce happen automatically for unread responses. This setting controls the extra system notification only.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                    if backgroundResponseNotificationsEnabled {
+                        Stepper(value: $longResponseNotificationThresholdSeconds, in: 1...120, step: 1) {
+                            Text("Treat responses longer than \(Int(longResponseNotificationThresholdSeconds)) second\(Int(longResponseNotificationThresholdSeconds) == 1 ? "" : "s") as long")
+                        }
+                    }
+                }
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(alignment: .center, spacing: 16) {
                         Text("App Visibility")
@@ -2276,6 +2291,12 @@ struct SystemPanelView: View {
         .onChange(of: debugLoggingEnabled) {
             autosaveSettings()
         }
+        .onChange(of: backgroundResponseNotificationsEnabled) {
+            autosaveSettings()
+        }
+        .onChange(of: longResponseNotificationThresholdSeconds) {
+            autosaveSettings()
+        }
         .onChange(of: launcherOpacity) {
             autosaveSettings()
         }
@@ -2300,6 +2321,8 @@ struct SystemPanelView: View {
         suppressAutosave = true
         autostartEnabled = appController.settings.autostartEnabled
         debugLoggingEnabled = appController.settings.debugLoggingEnabled
+        backgroundResponseNotificationsEnabled = appController.settings.backgroundResponseNotificationsEnabled
+        longResponseNotificationThresholdSeconds = Double(appController.settings.longResponseNotificationThresholdSeconds)
         launcherOpacity = (appController.settings.launcherOpacity * 100).rounded()
         appVisibilityMode = appController.settings.appVisibilityMode
         navigationGuard.setDirty(false, for: .system)
@@ -2350,7 +2373,9 @@ struct SystemPanelView: View {
             useRouteReloadForLauncherChats: appController.settings.useRouteReloadForLauncherChats,
             debugLoggingEnabled: debugLoggingEnabled,
             launcherOpacity: launcherOpacity / 100,
-            appVisibilityMode: appVisibilityMode
+            appVisibilityMode: appVisibilityMode,
+            backgroundResponseNotificationsEnabled: backgroundResponseNotificationsEnabled,
+            longResponseNotificationThresholdSeconds: Int(longResponseNotificationThresholdSeconds.rounded())
         )
     }
 }
