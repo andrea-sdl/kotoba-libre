@@ -388,7 +388,7 @@ final class AppController: NSObject, ObservableObject, ASWebAuthenticationPresen
 
     func handleOpenFiles(_ urls: [URL]) {
         do {
-            try openNewChat(attachmentFileURLs: urls)
+            try openServiceLauncherRequest(query: nil, attachmentFileURLs: urls)
         } catch {
             restoreOrOpenPrimaryWindow()
             NSSound.beep()
@@ -803,7 +803,7 @@ final class AppController: NSObject, ObservableObject, ASWebAuthenticationPresen
         try openURLString(destination)
     }
 
-    func openPreset(id: String, query: String?, preferMainWindow: Bool = false) throws {
+    func openPreset(id: String, query: String?, preferMainWindow: Bool = false, attachmentFileURLs: [URL] = []) throws {
         guard let preset = presets.first(where: { $0.id == id }) else {
             throw KotobaLibreError.invalidDestination("Preset '\(id)' not found")
         }
@@ -813,7 +813,14 @@ final class AppController: NSObject, ObservableObject, ASWebAuthenticationPresen
             instanceBaseURL: settings.instanceBaseUrl,
             query: query
         )
-        try openURLString(destination, preferMainWindow: preferMainWindow)
+        if !attachmentFileURLs.isEmpty {
+            mainWindowController.queueAttachment(urls: attachmentFileURLs)
+        }
+        try openURLString(
+            destination,
+            preferMainWindow: preferMainWindow,
+            forceReload: !attachmentFileURLs.isEmpty
+        )
     }
 
     func openURLString(_ destination: String, preferMainWindow: Bool = false, forceReload: Bool = false) throws {
@@ -848,6 +855,29 @@ final class AppController: NSObject, ObservableObject, ASWebAuthenticationPresen
         }
 
         try openResolvedURL(targetURL, preferMainWindow: true, forceReload: !attachmentFileURLs.isEmpty)
+    }
+
+    func openServiceLauncherRequest(query: String?, attachmentFileURLs: [URL]) throws {
+        let availablePresets = sortedPresets()
+        guard !availablePresets.isEmpty else {
+            throw KotobaLibreError.invalidDestination("No agents configured yet. Add one in Settings first.")
+        }
+
+        let trimmedQuery = query?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if availablePresets.count == 1, let onlyPreset = availablePresets.first {
+            try openPreset(
+                id: onlyPreset.id,
+                query: trimmedQuery.isEmpty ? nil : trimmedQuery,
+                preferMainWindow: true,
+                attachmentFileURLs: attachmentFileURLs
+            )
+            return
+        }
+
+        launcherWindowController.showAndFocusForSeededTextRequest(
+            query: trimmedQuery,
+            attachmentFileURLs: attachmentFileURLs
+        )
     }
 
     func handleShortcutKeyEvent(_ event: NSEvent) -> Bool {
@@ -1260,7 +1290,7 @@ final class AppController: NSObject, ObservableObject, ASWebAuthenticationPresen
         }
 
         do {
-            try openNewChat(prompt: selectedText, autoSubmit: true)
+            try openServiceLauncherRequest(query: selectedText, attachmentFileURLs: [])
         } catch let serviceError {
             error.pointee = serviceError.localizedDescription as NSString
         }
@@ -1269,7 +1299,7 @@ final class AppController: NSObject, ObservableObject, ASWebAuthenticationPresen
     @objc func sendToKotobaLibreService(_ pasteboard: NSPasteboard, userData: String?, error: AutoreleasingUnsafeMutablePointer<NSString?>) {
         do {
             let fileURLs = try fileURLs(from: pasteboard)
-            try openNewChat(attachmentFileURLs: fileURLs)
+            try openServiceLauncherRequest(query: nil, attachmentFileURLs: fileURLs)
         } catch let serviceError {
             error.pointee = serviceError.localizedDescription as NSString
         }

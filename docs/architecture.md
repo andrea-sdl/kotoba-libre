@@ -174,7 +174,7 @@ The native shell also layers on conversation-level commands around that web sess
 - `Cmd+[` and `Cmd+]` drive WebKit history
 - `Cmd+K` opens a native search overlay backed by `WKWebView.find`
 - `Escape` triggers the page stop-generating control when a response is in flight
-- Dock-file and Services file handoff queue a single attachment and then open a new chat route before returning the file to WebKit's upload picker
+- Dock-file and Services handoff use the launcher when multiple agents exist, and queue a single attachment before returning the file to WebKit's upload picker
 
 ## Persistence
 
