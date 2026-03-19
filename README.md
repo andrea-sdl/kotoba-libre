@@ -140,11 +140,11 @@ Enable popup-based passkey and security-key support for specific relying-party d
 KOTOBA_ASSOCIATED_DOMAINS="chat.example.com,login.example.com" ./scripts/build-app.sh
 ```
 
-Those entries are normalized to `webcredentials:` entitlements at packaging time. They only help when the LibreChat login flow opens in a popup that Kotoba Libre can route through its popup and browser-backed auth handling, and arbitrary runtime instance URLs still cannot all be supported by one unsigned build.
+Those entries are normalized to `webcredentials:` entitlements at packaging time. They only help when the LibreChat login flow opens in a popup that Kotoba Libre can route through its popup and browser-backed auth handling, including the default-on setting that lifts external-host login redirects into a separate app window instead of the external browser.
 
 ## Known Limitation
 
-If your LibreChat login flow requires a passkey or FIDO or security key and stays inside the main embedded Swift window, Kotoba Libre does not support that flow yet. The supported path today is for the login flow to open in a popup, where Kotoba Libre can route the authentication request through its popup and browser-backed auth handling.
+If your LibreChat login flow requires a passkey or FIDO or security key and stays inside the main embedded Swift window, Kotoba Libre does not support that flow yet. The supported path today is for the login flow to open in a popup, either directly from the site or via the Instance Settings option that opens external login redirects in a separate Kotoba Libre window.
 
 Generated artifacts:
 
@@ -231,9 +231,14 @@ Kotoba Libre currently supports:
 - `kotobalibre://open?url=<encoded_url>`
 - `kotobalibre://preset/<presetId>?query=<encoded_query>`
 - `kotobalibre://settings`
+- Other `kotobalibre://...` routes are treated as instance-relative paths and loaded against the configured LibreChat base URL
 - `https://.../app/open?url=<encoded_url>`
 - `https://.../app/preset/<presetId>?query=<encoded_query>`
 - `https://.../app/settings`
+
+Top-level `WKWebView` navigations send `X-Kotoba-Libre: Kotoba Libre/<version>` so LibreChat can recognize the desktop wrapper build that is making the request.
+
+If another app opens a plain `https://...` URL with Kotoba Libre, the app accepts it as an in-app navigation when the URL host matches the configured LibreChat instance host. `https://.../app/...` paths still stay reserved for the explicit deep-link actions above.
 
 See [docs/architecture.md](docs/architecture.md) for behavior details.
 

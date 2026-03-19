@@ -211,7 +211,7 @@ final class AppController: NSObject, ObservableObject, ASWebAuthenticationPresen
         // Each URL is handled independently so one bad deep link does not block the rest.
         for url in urls {
             do {
-                try handleDeepLink(url.absoluteString)
+                try handleIncomingURL(url)
             } catch {
                 NSSound.beep()
             }
@@ -764,9 +764,9 @@ final class AppController: NSObject, ObservableObject, ASWebAuthenticationPresen
         try openURLString(destination, preferMainWindow: preferMainWindow)
     }
 
-    func openURLString(_ destination: String, preferMainWindow: Bool = false) throws {
+    func openURLString(_ destination: String, preferMainWindow: Bool = false, forceReload: Bool = false) throws {
         let target = try KotobaLibreCore.enforceDestination(destination, settings: settings)
-        try openResolvedURL(target, preferMainWindow: preferMainWindow)
+        try openResolvedURL(target, preferMainWindow: preferMainWindow, forceReload: forceReload)
     }
 
     func handleShortcutKeyEvent(_ event: NSEvent) -> Bool {
@@ -800,6 +800,55 @@ final class AppController: NSObject, ObservableObject, ASWebAuthenticationPresen
         }
     }
 
+    private func handleIncomingURL(_ url: URL) throws {
+        // Matching instance HTTPS URLs can be handed in directly by other apps without using /app/... wrappers.
+        if try shouldOpenIncomingWebURLDirectly(url) {
+            try openURLString(url.absoluteString)
+            return
+        }
+
+        do {
+            try handleDeepLink(url.absoluteString)
+        } catch {
+            guard try openCustomSchemeURLIfPossible(url) else {
+                throw error
+            }
+        }
+    }
+
+    private func shouldOpenIncomingWebURLDirectly(_ url: URL) throws -> Bool {
+        guard url.scheme?.lowercased() == "https" else {
+            return false
+        }
+
+        // /app/... paths remain reserved for explicit deep-link actions instead of plain page loads.
+        guard !url.path.hasPrefix("/app/") else {
+            return false
+        }
+
+        return try KotobaLibreCore.matchesConfiguredInstanceHost(url, settings: settings)
+    }
+
+    func handleEmbeddedAppNavigation(_ url: URL) -> Bool {
+        // Embedded OAuth callbacks and app-routed links reuse the same inbound URL rules as external opens.
+        do {
+            try handleIncomingURL(url)
+            return true
+        } catch {
+            NSSound.beep()
+            return true
+        }
+    }
+
+    private func openCustomSchemeURLIfPossible(_ url: URL) throws -> Bool {
+        guard let mappedURL = try KotobaLibreCore.mapCustomSchemeURLToInstanceURL(url, instanceBaseURL: settings.instanceBaseUrl) else {
+            return false
+        }
+
+        try openURLString(mappedURL.absoluteString, forceReload: true)
+        return true
+    }
+
     private func handleAuthenticationSessionCompletion(callbackURL: URL?, error: Error?) {
         activeAuthenticationSession = nil
 
@@ -808,13 +857,13 @@ final class AppController: NSObject, ObservableObject, ASWebAuthenticationPresen
         }
 
         do {
-            try handleDeepLink(callbackURL.absoluteString)
+            try handleIncomingURL(callbackURL)
         } catch {
             NSSound.beep()
         }
     }
 
-    private func openResolvedURL(_ url: URL, preferMainWindow: Bool = false) throws {
+    private func openResolvedURL(_ url: URL, preferMainWindow: Bool = false, forceReload: Bool = false) throws {
         let instanceHost = try KotobaLibreCore.settingsInstanceHost(settings)
         if launcherWindowController.isVisible {
             // Launcher submissions should hand focus to the destination instead of reactivating the previous app.
@@ -830,7 +879,8 @@ final class AppController: NSObject, ObservableObject, ASWebAuthenticationPresen
             url: url,
             settings: settings,
             instanceHost: instanceHost,
-            forceEmbedAllHosts: preferMainWindow
+            forceEmbedAllHosts: preferMainWindow,
+            forceReload: forceReload
         )
 
         hideLauncherWindow()
