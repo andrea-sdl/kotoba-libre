@@ -81,7 +81,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         applyWindowSizing(for: .web)
         installToolbar()
         let controller = ensureWebController()
-        controller.apply(settings: settings)
+        controller.debugLoggingEnabled = settings.debugLoggingEnabled
         window?.contentViewController = controller
     }
 
@@ -95,23 +95,22 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         applyWindowSizing(for: .web)
         installToolbar()
         let controller = ensureWebController()
-        controller.apply(settings: settings)
+        controller.debugLoggingEnabled = settings.debugLoggingEnabled
         window?.contentViewController = controller
         controller.load(url: homeURL)
     }
 
-    func open(url: URL, settings: AppSettings, instanceHost: String?, forceEmbedAllHosts: Bool = false, forceReload: Bool = false) {
+    func open(url: URL, settings: AppSettings, instanceHost: String?, forceEmbedAllHosts: Bool = false) {
         updateAddAgentCandidate(nil)
         installToolbar()
         let controller = ensureWebController()
-        controller.apply(settings: settings)
+        controller.debugLoggingEnabled = settings.debugLoggingEnabled
         window?.contentViewController = controller
         controller.open(
             url: url,
             settings: settings,
             instanceHost: instanceHost,
-            forceEmbedAllHosts: forceEmbedAllHosts,
-            forceReload: forceReload
+            forceEmbedAllHosts: forceEmbedAllHosts
         )
         showAndFocus()
     }
@@ -183,9 +182,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         }
         created.authenticationSessionStarter = { [weak appController] url, callbackURLScheme in
             appController?.startAuthenticationSession(for: url, callbackURLScheme: callbackURLScheme) == true
-        }
-        created.appNavigationHandler = { [weak appController] url in
-            appController?.handleEmbeddedAppNavigation(url) == true
         }
         created.addAgentCandidateHandler = { [weak self] candidate in
             self?.updateAddAgentCandidate(candidate)
@@ -518,8 +514,6 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
     private static let addAgentCandidateHandlerName = "kotobaLibreAddAgentCandidate"
     private static let launcherProgressHandlerName = "kotobaLibreLauncherProgress"
     private static let supportedAuthenticationCallbackScheme = "kotobalibre"
-    private static let appIdentityHeaderName = "X-Kotoba-Libre"
-    private static let appIdentityHeaderValue = "\(appDisplayName)/\(AppResources.appVersionDisplayString)"
 
     private enum ExternalNavigationPolicy {
         case singleHost(String?)
@@ -531,22 +525,6 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
         private static let defaultSize = NSSize(width: 720, height: 640)
 
         var onClose: (() -> Void)?
-
-        init(webView: WKWebView) {
-            let window = NSWindow(
-                contentRect: NSRect(origin: .zero, size: Self.defaultSize),
-                styleMask: [.titled, .closable, .miniaturizable, .resizable],
-                backing: .buffered,
-                defer: false
-            )
-            window.title = appDisplayName
-            window.minSize = NSSize(width: 420, height: 320)
-            window.titlebarAppearsTransparent = true
-            window.contentView = webView
-
-            super.init(window: window)
-            window.delegate = self
-        }
 
         init(webView: WKWebView, windowFeatures: WKWindowFeatures) {
             let requestedWidth = CGFloat(windowFeatures.width?.doubleValue ?? Double(Self.defaultSize.width))
@@ -708,7 +686,6 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
     let webView: WKWebView
     var externalNavigationHandler: ((URL) -> Void)?
     var authenticationSessionStarter: ((URL, String) -> Bool)?
-    var appNavigationHandler: ((URL) -> Bool)?
     var addAgentCandidateHandler: ((WebAddPresetCandidate?) -> Void)?
     var debugLoggingEnabled = false
     private var hasLoadedRemoteContent = false
@@ -721,7 +698,6 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
     private let launcherProgressBadgeView = LauncherProgressBadgeView()
     private var pendingLauncherProgressShow: DispatchWorkItem?
     private var pendingLauncherProgressHide: DispatchWorkItem?
-    private var currentSettings = AppSettings()
 
     init() {
         let configuration = WKWebViewConfiguration()
@@ -792,12 +768,6 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
         view = containerView
     }
 
-    func apply(settings: AppSettings) {
-        // Navigation decisions depend on the latest settings even while the web view instance is reused.
-        currentSettings = settings
-        debugLoggingEnabled = settings.debugLoggingEnabled
-    }
-
     func load(url: URL) {
         if isLauncherChatTransition(url) {
             showLauncherProgress("Loading agent…")
@@ -806,12 +776,11 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
         }
         hasLoadedRemoteContent = true
         debugLog("KotobaLibre SPA: load(url:) -> \(url.absoluteString)")
-        webView.load(appNavigationRequest(for: url))
+        webView.load(URLRequest(url: url))
     }
 
-    func open(url: URL, settings: AppSettings, instanceHost: String?, forceEmbedAllHosts: Bool = false, forceReload: Bool = false) {
+    func open(url: URL, settings: AppSettings, instanceHost: String?, forceEmbedAllHosts: Bool = false) {
         let shouldShowLauncherProgress = isLauncherChatTransition(url)
-        apply(settings: settings)
         if forceEmbedAllHosts {
             externalNavigationPolicy = .embedAllHosts
         } else {
@@ -819,7 +788,7 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
         }
 
         // Same-host launches can stay inside the existing SPA once remote content has loaded at least once.
-        if !forceReload, KotobaLibreCore.canUseSPANavigation(instanceHost: instanceHost, url: url), hasLoadedRemoteContent {
+        if KotobaLibreCore.canUseSPANavigation(instanceHost: instanceHost, url: url), hasLoadedRemoteContent {
             if shouldShowLauncherProgress {
                 showLauncherProgress("Opening agent…")
             }
@@ -887,48 +856,23 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
         case let .singleHost(host):
             host ?? webView.url?.host?.lowercased()
         }
-        logNavigationAction(navigationAction, webView: webView, currentEmbeddedHost: currentEmbeddedHost)
-
-        if routeAppNavigationIfNeeded(url, webView: webView, currentEmbeddedHost: currentEmbeddedHost) {
-            debugLog("KotobaLibre Nav: decision=cancel reason=app-route url=\(url.absoluteString)")
-            decisionHandler(.cancel)
-            return
-        }
 
         if promotePopupAuthenticationRequestIfNeeded(url, webView: webView) {
-            debugLog("KotobaLibre Nav: decision=cancel reason=popup-auth-handoff url=\(url.absoluteString)")
             decisionHandler(.cancel)
             return
         }
 
         if shouldKeepPopupNavigationEmbedded(url, webView: webView) {
-            debugLog("KotobaLibre Nav: decision=allow reason=popup-embedded url=\(url.absoluteString)")
             decisionHandler(.allow)
             return
         }
 
-        if shouldOpenExternalNavigationInDefaultBrowser(url, webView: webView, currentEmbeddedHost: currentEmbeddedHost) {
-            debugLog("KotobaLibre Nav: decision=cancel reason=browser-host-mismatch url=\(url.absoluteString)")
-            externalNavigationHandler?(url)
-            decisionHandler(.cancel)
-            return
-        }
-
         if shouldOpenExternally(url, currentEmbeddedHost: currentEmbeddedHost) {
-            debugLog("KotobaLibre Nav: decision=cancel reason=external-browser url=\(url.absoluteString)")
             externalNavigationHandler?(url)
             decisionHandler(.cancel)
             return
         }
 
-        if shouldReloadNavigationActionWithAppIdentityHeader(navigationAction) {
-            debugLog("KotobaLibre Nav: decision=cancel reason=inject-header url=\(url.absoluteString)")
-            webView.load(appNavigationRequest(for: navigationAction.request))
-            decisionHandler(.cancel)
-            return
-        }
-
-        debugLog("KotobaLibre Nav: decision=allow reason=default url=\(url.absoluteString)")
         decisionHandler(.allow)
     }
 
@@ -938,48 +882,11 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
         decisionHandler: @escaping @MainActor @Sendable (WKNavigationResponsePolicy) -> Void
     ) {
         if !navigationResponse.canShowMIMEType {
-            debugLog("KotobaLibre NavResponse: decision=download url=\(navigationResponse.response.url?.absoluteString ?? "<unknown>") mime=\(navigationResponse.response.mimeType ?? "<unknown>")")
             decisionHandler(.download)
             return
         }
 
-        debugLog("KotobaLibre NavResponse: decision=allow url=\(navigationResponse.response.url?.absoluteString ?? "<unknown>") mime=\(navigationResponse.response.mimeType ?? "<unknown>")")
         decisionHandler(.allow)
-    }
-
-    func webView(_ webView: WKWebView, didReceiveServerRedirectForProvisionalNavigation navigation: WKNavigation!) {
-        let currentEmbeddedHost: String? = switch navigationPolicy(for: webView) {
-        case .embedAllHosts:
-            webView.backForwardList.currentItem?.url.host?.lowercased()
-        case let .singleHost(host):
-            host ?? webView.backForwardList.currentItem?.url.host?.lowercased()
-        }
-
-        guard let redirectedURL = webView.url else {
-            debugLog("KotobaLibre Redirect: missing redirected URL")
-            return
-        }
-
-        if shouldOpenExternalNavigationInDefaultBrowser(
-            redirectedURL,
-            webView: webView,
-            currentEmbeddedHost: currentEmbeddedHost
-        ) {
-            webView.stopLoading()
-            externalNavigationHandler?(redirectedURL)
-            debugLog("KotobaLibre Redirect: moved server redirect into browser -> \(redirectedURL.absoluteString)")
-            return
-        }
-
-        debugLog("KotobaLibre Redirect: stayed-in-place url=\(redirectedURL.absoluteString) currentEmbeddedHost=\(currentEmbeddedHost ?? "<nil>")")
-    }
-
-    func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
-        debugLog("KotobaLibre NavLifecycle: didStartProvisional url=\(webView.url?.absoluteString ?? "<unknown>")")
-    }
-
-    func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
-        debugLog("KotobaLibre NavLifecycle: didCommit url=\(webView.url?.absoluteString ?? "<unknown>")")
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
@@ -1000,31 +907,29 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
         for navigationAction: WKNavigationAction,
         windowFeatures: WKWindowFeatures
     ) -> WKWebView? {
-        let currentEmbeddedHost: String? = switch navigationPolicy(for: webView) {
-        case .embedAllHosts:
-            webView.url?.host?.lowercased()
-        case let .singleHost(host):
-            host ?? webView.url?.host?.lowercased()
-        }
-
-        if let url = navigationAction.request.url, routeAuthenticationRequestIfNeeded(for: url, from: webView.url) {
-            debugLog("KotobaLibre Popup: intercepted createWebView auth handoff url=\(url.absoluteString)")
-            return nil
-        }
-
-        if
-            let url = navigationAction.request.url,
-            shouldOpenExternally(url, currentEmbeddedHost: currentEmbeddedHost)
-        {
-            debugLog("KotobaLibre Popup: routed off-host popup request to external browser url=\(url.absoluteString)")
-            externalNavigationHandler?(url)
+        if let url = navigationAction.request.url, routeAuthenticationRequestIfNeeded(for: url) {
             return nil
         }
 
         configuration.preferences.javaScriptCanOpenWindowsAutomatically = true
 
         let popupWebView = WKWebView(frame: .zero, configuration: configuration)
-        showPopupWindow(for: popupWebView, windowFeatures: windowFeatures)
+        popupWebView.navigationDelegate = self
+        popupWebView.uiDelegate = self
+        popupWebView.allowsBackForwardNavigationGestures = true
+
+        let popupWindowController = PopupWindowController(webView: popupWebView, windowFeatures: windowFeatures)
+        let popupIdentifier = ObjectIdentifier(popupWebView)
+        popupWindowControllers[popupIdentifier] = popupWindowController
+        popupNavigationPolicies[popupIdentifier] = .embedAllHosts
+        popupWindowController.onClose = { [weak self, weak popupWebView] in
+            guard let self, let popupWebView else {
+                return
+            }
+
+            self.cleanupPopupWindow(for: popupWebView)
+        }
+        popupWindowController.showAndFocus()
         debugLog("KotobaLibre Popup: created for \(navigationAction.request.url?.absoluteString ?? "<unknown>")")
         return popupWebView
     }
@@ -1147,48 +1052,6 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
         }
 
         print(message)
-    }
-
-    private func logNavigationAction(_ navigationAction: WKNavigationAction, webView: WKWebView, currentEmbeddedHost: String?) {
-        guard let url = navigationAction.request.url else {
-            debugLog("KotobaLibre Nav: request missing URL")
-            return
-        }
-
-        let sourceURL = webView.url?.absoluteString ?? "<nil>"
-        let targetFrameDescription: String
-        if let targetFrame = navigationAction.targetFrame {
-            targetFrameDescription = targetFrame.isMainFrame ? "main" : "subframe"
-        } else {
-            targetFrameDescription = "new-window"
-        }
-
-        debugLog(
-            """
-            KotobaLibre Nav: request url=\(url.absoluteString) source=\(sourceURL) \
-            currentEmbeddedHost=\(currentEmbeddedHost ?? "<nil>") targetFrame=\(targetFrameDescription) \
-            navType=\(navigationTypeDescription(navigationAction.navigationType))
-            """
-        )
-    }
-
-    private func navigationTypeDescription(_ navigationType: WKNavigationType) -> String {
-        switch navigationType {
-        case .linkActivated:
-            return "linkActivated"
-        case .formSubmitted:
-            return "formSubmitted"
-        case .backForward:
-            return "backForward"
-        case .reload:
-            return "reload"
-        case .formResubmitted:
-            return "formResubmitted"
-        case .other:
-            return "other"
-        @unknown default:
-            return "unknown"
-        }
     }
 
     private func handleLauncherProgressMessage(_ rawValue: Any) {
@@ -1330,100 +1193,6 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
         popupNavigationPolicies[ObjectIdentifier(webView)] ?? externalNavigationPolicy
     }
 
-    private func routeAppNavigationIfNeeded(_ url: URL, webView: WKWebView, currentEmbeddedHost: String?) -> Bool {
-        guard shouldRouteThroughApp(url, currentEmbeddedHost: currentEmbeddedHost) else {
-            return false
-        }
-
-        let handled = appNavigationHandler?(url) ?? false
-        if handled, popupWindowControllers[ObjectIdentifier(webView)] != nil {
-            popupWindowControllers[ObjectIdentifier(webView)]?.close()
-        }
-        return handled
-    }
-
-    private func shouldRouteThroughApp(_ url: URL, currentEmbeddedHost: String?) -> Bool {
-        let scheme = url.scheme?.lowercased()
-        if scheme == Self.supportedAuthenticationCallbackScheme {
-            return true
-        }
-
-        guard
-            scheme == "https",
-            url.path.hasPrefix("/app/"),
-            let currentEmbeddedHost,
-            let host = url.host?.lowercased()
-        else {
-            return false
-        }
-
-        return host.caseInsensitiveCompare(currentEmbeddedHost) == .orderedSame
-    }
-
-    private func shouldReloadNavigationActionWithAppIdentityHeader(_ navigationAction: WKNavigationAction) -> Bool {
-        // WebKit only lets us replace top-level loads, so subframe requests keep their original headers.
-        guard navigationAction.targetFrame?.isMainFrame != false else {
-            return false
-        }
-
-        guard let url = navigationAction.request.url, url.scheme?.lowercased() == "https" else {
-            return false
-        }
-
-        return navigationAction.request.value(forHTTPHeaderField: Self.appIdentityHeaderName) != Self.appIdentityHeaderValue
-    }
-
-    private func appNavigationRequest(for url: URL) -> URLRequest {
-        appNavigationRequest(for: URLRequest(url: url))
-    }
-
-    private func appNavigationRequest(for request: URLRequest) -> URLRequest {
-        // The site reads this header to identify embedded app requests and the running app version.
-        var updatedRequest = request
-        updatedRequest.setValue(Self.appIdentityHeaderValue, forHTTPHeaderField: Self.appIdentityHeaderName)
-        return updatedRequest
-    }
-
-    private func shouldOpenExternalNavigationInDefaultBrowser(
-        _ url: URL,
-        webView: WKWebView,
-        currentEmbeddedHost: String?
-    ) -> Bool {
-        guard currentSettings.openExternalAuthenticationLinksInNewWindow else {
-            return false
-        }
-
-        guard popupWindowControllers[ObjectIdentifier(webView)] == nil else {
-            return false
-        }
-
-        return shouldOpenExternally(url, currentEmbeddedHost: currentEmbeddedHost)
-    }
-    private func showPopupWindow(for popupWebView: WKWebView, windowFeatures: WKWindowFeatures? = nil) {
-        popupWebView.navigationDelegate = self
-        popupWebView.uiDelegate = self
-        popupWebView.allowsBackForwardNavigationGestures = true
-
-        let popupWindowController: PopupWindowController
-        if let windowFeatures {
-            popupWindowController = PopupWindowController(webView: popupWebView, windowFeatures: windowFeatures)
-        } else {
-            popupWindowController = PopupWindowController(webView: popupWebView)
-        }
-
-        let popupIdentifier = ObjectIdentifier(popupWebView)
-        popupWindowControllers[popupIdentifier] = popupWindowController
-        popupNavigationPolicies[popupIdentifier] = .embedAllHosts
-        popupWindowController.onClose = { [weak self, weak popupWebView] in
-            guard let self, let popupWebView else {
-                return
-            }
-
-            self.cleanupPopupWindow(for: popupWebView)
-        }
-        popupWindowController.showAndFocus()
-    }
-
     private func startAuthenticationSessionIfPossible(for url: URL) -> Bool {
         guard let callbackScheme = authenticationCallbackScheme(in: url) else {
             return false
@@ -1432,12 +1201,8 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
         return authenticationSessionStarter?(url, callbackScheme) == true
     }
 
-    private func routeAuthenticationRequestIfNeeded(for url: URL, from sourceURL: URL? = nil) -> Bool {
-        guard currentSettings.openExternalAuthenticationLinksInNewWindow else {
-            return false
-        }
-
-        guard looksLikeAuthenticationTransition(to: url, from: sourceURL) else {
+    private func routeAuthenticationRequestIfNeeded(for url: URL) -> Bool {
+        guard looksLikeAuthenticationURL(url) else {
             return false
         }
 
@@ -1456,7 +1221,7 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
             return false
         }
 
-        guard routeAuthenticationRequestIfNeeded(for: url, from: webView.url) else {
+        guard routeAuthenticationRequestIfNeeded(for: url) else {
             return false
         }
 
@@ -1503,18 +1268,6 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
             "prompt"
         ]
         return !queryItemNames.isDisjoint(with: authQueryKeys)
-    }
-
-    private func looksLikeAuthenticationTransition(to destinationURL: URL, from sourceURL: URL?) -> Bool {
-        if looksLikeAuthenticationURL(destinationURL) {
-            return true
-        }
-
-        guard let sourceURL else {
-            return false
-        }
-
-        return looksLikeAuthenticationURL(sourceURL)
     }
 
     private func authenticationCallbackScheme(in url: URL) -> String? {

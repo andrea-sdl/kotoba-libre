@@ -1882,7 +1882,6 @@ struct SettingsPanelView: View {
     @EnvironmentObject private var navigationGuard: SettingsNavigationGuard
     @State private var instanceBaseURL = ""
     @State private var restrictHost = true
-    @State private var openExternalAuthenticationLinksInNewWindow = true
     @State private var useRouteReloadForLauncherChats = false
     @State private var statusMessage = ""
     @State private var statusIsError = false
@@ -1903,13 +1902,6 @@ struct SettingsPanelView: View {
             Form {
                 TextField("LibreChat Instance URL", text: $instanceBaseURL)
                 Toggle("Restrict URLs to the configured instance host", isOn: $restrictHost)
-                VStack(alignment: .leading, spacing: 6) {
-                    Toggle("Open external login flows in the default browser", isOn: $openExternalAuthenticationLinksInNewWindow)
-                    Text("When a LibreChat login redirects to another host, hand that authentication flow to the default browser instead of keeping it inside a Kotoba Libre popup window. This requires the browser extension to redirect the finished login back to `kotobalibre://...`.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
                 VStack(alignment: .leading, spacing: 6) {
                     Toggle("Use route reload for launcher chats", isOn: $useRouteReloadForLauncherChats)
                     Text("Enable this if the normal SPA navigation flow does not work correctly for launcher chats.")
@@ -1954,9 +1946,6 @@ struct SettingsPanelView: View {
         .onChange(of: restrictHost) {
             scheduleAutosave()
         }
-        .onChange(of: openExternalAuthenticationLinksInNewWindow) {
-            scheduleAutosave()
-        }
         .onChange(of: useRouteReloadForLauncherChats) {
             scheduleAutosave()
         }
@@ -1993,7 +1982,6 @@ struct SettingsPanelView: View {
         // The UI edits local @State first so invalid URLs can be corrected before autosave retries.
         instanceBaseURL = appController.settings.instanceBaseUrl ?? ""
         restrictHost = appController.settings.restrictHostToInstanceHost
-        openExternalAuthenticationLinksInNewWindow = appController.settings.openExternalAuthenticationLinksInNewWindow
         useRouteReloadForLauncherChats = appController.settings.useRouteReloadForLauncherChats
         pendingCleanupPreview = nil
         suppressAutosave = false
@@ -2017,7 +2005,6 @@ struct SettingsPanelView: View {
             showAppWindowShortcut: appController.settings.showAppWindowShortcut,
             autostartEnabled: appController.settings.autostartEnabled,
             restrictHostToInstanceHost: restrictHost,
-            openExternalAuthenticationLinksInNewWindow: openExternalAuthenticationLinksInNewWindow,
             defaultPresetId: appController.settings.defaultPresetId,
             useRouteReloadForLauncherChats: useRouteReloadForLauncherChats,
             debugLoggingEnabled: appController.settings.debugLoggingEnabled,
@@ -2030,7 +2017,6 @@ struct SettingsPanelView: View {
         SettingsDraftState(
             instanceBaseURL: instanceBaseURL,
             restrictHost: restrictHost,
-            openExternalAuthenticationLinksInNewWindow: openExternalAuthenticationLinksInNewWindow,
             useRouteReloadForLauncherChats: useRouteReloadForLauncherChats
         )
     }
@@ -2039,7 +2025,6 @@ struct SettingsPanelView: View {
         SettingsDraftState(
             instanceBaseURL: appController.settings.instanceBaseUrl ?? "",
             restrictHost: appController.settings.restrictHostToInstanceHost,
-            openExternalAuthenticationLinksInNewWindow: appController.settings.openExternalAuthenticationLinksInNewWindow,
             useRouteReloadForLauncherChats: appController.settings.useRouteReloadForLauncherChats
         )
     }
@@ -2177,7 +2162,6 @@ struct SettingsPanelView: View {
 private struct SettingsDraftState: Equatable {
     let instanceBaseURL: String
     let restrictHost: Bool
-    let openExternalAuthenticationLinksInNewWindow: Bool
     let useRouteReloadForLauncherChats: Bool
 }
 
@@ -2345,7 +2329,6 @@ struct SystemPanelView: View {
             showAppWindowShortcut: appController.settings.showAppWindowShortcut,
             autostartEnabled: autostartEnabled,
             restrictHostToInstanceHost: appController.settings.restrictHostToInstanceHost,
-            openExternalAuthenticationLinksInNewWindow: appController.settings.openExternalAuthenticationLinksInNewWindow,
             defaultPresetId: appController.settings.defaultPresetId,
             useRouteReloadForLauncherChats: appController.settings.useRouteReloadForLauncherChats,
             debugLoggingEnabled: debugLoggingEnabled,
