@@ -119,6 +119,16 @@ cat > "${CONTENTS_DIR}/Info.plist" <<EOF
         <string>kotobalibre</string>
       </array>
     </dict>
+    <dict>
+      <key>CFBundleTypeRole</key>
+      <string>Viewer</string>
+      <key>CFBundleURLName</key>
+      <string>${BUNDLE_IDENTIFIER}.https</string>
+      <key>CFBundleURLSchemes</key>
+      <array>
+        <string>https</string>
+      </array>
+    </dict>
   </array>
   <key>LSMinimumSystemVersion</key>
   <string>13.0</string>

@@ -69,6 +69,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var showAppWindowShortcut: String
     public var autostartEnabled: Bool
     public var restrictHostToInstanceHost: Bool
+    public var openExternalAuthenticationLinksInNewWindow: Bool
     public var defaultPresetId: String?
     public var useRouteReloadForLauncherChats: Bool
     public var debugLoggingEnabled: Bool
@@ -82,6 +83,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         case showAppWindowShortcut
         case autostartEnabled
         case restrictHostToInstanceHost
+        case openExternalAuthenticationLinksInNewWindow
         case defaultPresetId
         case useRouteReloadForLauncherChats
         case debugLoggingEnabled
@@ -96,6 +98,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         showAppWindowShortcut: String = AppSettings.defaultShowAppWindowShortcut,
         autostartEnabled: Bool = false,
         restrictHostToInstanceHost: Bool = true,
+        openExternalAuthenticationLinksInNewWindow: Bool = true,
         defaultPresetId: String? = nil,
         useRouteReloadForLauncherChats: Bool = false,
         debugLoggingEnabled: Bool = false,
@@ -108,6 +111,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         self.showAppWindowShortcut = showAppWindowShortcut
         self.autostartEnabled = autostartEnabled
         self.restrictHostToInstanceHost = restrictHostToInstanceHost
+        self.openExternalAuthenticationLinksInNewWindow = openExternalAuthenticationLinksInNewWindow
         self.defaultPresetId = defaultPresetId
         self.useRouteReloadForLauncherChats = useRouteReloadForLauncherChats
         self.debugLoggingEnabled = debugLoggingEnabled
@@ -124,6 +128,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         showAppWindowShortcut = try container.decodeIfPresent(String.self, forKey: .showAppWindowShortcut) ?? AppSettings.defaultShowAppWindowShortcut
         autostartEnabled = try container.decodeIfPresent(Bool.self, forKey: .autostartEnabled) ?? false
         restrictHostToInstanceHost = try container.decodeIfPresent(Bool.self, forKey: .restrictHostToInstanceHost) ?? true
+        openExternalAuthenticationLinksInNewWindow = try container.decodeIfPresent(Bool.self, forKey: .openExternalAuthenticationLinksInNewWindow) ?? true
         defaultPresetId = try container.decodeIfPresent(String.self, forKey: .defaultPresetId)
         useRouteReloadForLauncherChats = try container.decodeIfPresent(Bool.self, forKey: .useRouteReloadForLauncherChats) ?? false
         debugLoggingEnabled = try container.decodeIfPresent(Bool.self, forKey: .debugLoggingEnabled) ?? false
@@ -139,6 +144,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         try container.encode(showAppWindowShortcut, forKey: .showAppWindowShortcut)
         try container.encode(autostartEnabled, forKey: .autostartEnabled)
         try container.encode(restrictHostToInstanceHost, forKey: .restrictHostToInstanceHost)
+        try container.encode(openExternalAuthenticationLinksInNewWindow, forKey: .openExternalAuthenticationLinksInNewWindow)
         try container.encodeIfPresent(defaultPresetId, forKey: .defaultPresetId)
         try container.encode(useRouteReloadForLauncherChats, forKey: .useRouteReloadForLauncherChats)
         try container.encode(debugLoggingEnabled, forKey: .debugLoggingEnabled)
@@ -572,6 +578,60 @@ public enum KotobaLibreCore {
         try parseInstanceBaseURL(settings)?.host?.lowercased()
     }
 
+    public static func matchesConfiguredInstanceHost(_ url: URL, settings: AppSettings) throws -> Bool {
+        // External app handoff should only claim plain web URLs that belong to the configured instance.
+        guard url.scheme?.lowercased() == "https" else {
+            return false
+        }
+
+        guard let configuredHost = try settingsInstanceHost(settings) else {
+            return false
+        }
+
+        guard let host = url.host?.lowercased() else {
+            return false
+        }
+
+        return host.caseInsensitiveCompare(configuredHost) == .orderedSame
+    }
+
+    public static func mapCustomSchemeURLToInstanceURL(_ url: URL, instanceBaseURL: String?) throws -> URL? {
+        guard url.scheme?.lowercased() == "kotobalibre" else {
+            return nil
+        }
+
+        let reservedHosts: Set<String> = ["open", "preset", "settings"]
+        if let host = url.host?.lowercased(), reservedHosts.contains(host) {
+            return nil
+        }
+
+        if let absoluteURL = absoluteHTTPSURL(from: url) {
+            return absoluteURL
+        }
+
+        guard let baseURL = try parseInstanceBaseURL(AppSettings(instanceBaseUrl: instanceBaseURL)) else {
+            throw KotobaLibreError.invalidDestination("Set your Kotoba Libre instance URL in Settings before opening custom-scheme URLs")
+        }
+
+        let relativePath = customSchemeRelativePath(url)
+        guard !relativePath.isEmpty else {
+            return nil
+        }
+
+        let normalizedBaseURL = baseURL.absoluteString.hasSuffix("/") ? baseURL : URL(string: "\(baseURL.absoluteString)/") ?? baseURL
+        guard
+            let relativeURL = URL(string: relativePath, relativeTo: normalizedBaseURL)?.absoluteURL,
+            var components = URLComponents(url: relativeURL, resolvingAgainstBaseURL: false)
+        else {
+            throw KotobaLibreError.invalidDestination("Could not map custom-scheme URL into the configured LibreChat instance")
+        }
+
+        let sourceComponents = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        components.percentEncodedQuery = sourceComponents?.percentEncodedQuery
+        components.percentEncodedFragment = sourceComponents?.percentEncodedFragment
+        return components.url
+    }
+
     public static func presetTemplateHost(_ preset: Preset) throws -> String? {
         if preset.kind == .agent {
             return nil
@@ -797,6 +857,37 @@ public enum KotobaLibreCore {
         case nil:
             throw KotobaLibreError.invalidDeepLink("Invalid deep link host")
         }
+    }
+
+    private static func customSchemeRelativePath(_ url: URL) -> String {
+        let hostSegment = url.host?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let pathSegments = url.pathComponents
+            .dropFirst()
+            .filter { $0 != "/" }
+
+        let segments = ([hostSegment].filter { !$0.isEmpty }) + pathSegments
+        return segments.joined(separator: "/")
+    }
+
+    private static func absoluteHTTPSURL(from url: URL) -> URL? {
+        guard let host = url.host?.trimmingCharacters(in: .whitespacesAndNewlines), !host.isEmpty else {
+            return nil
+        }
+
+        let hostCandidate = "https://\(host)"
+        guard (try? parseInstanceBaseURL(AppSettings(instanceBaseUrl: hostCandidate))) != nil else {
+            return nil
+        }
+
+        let sourceComponents = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        var components = URLComponents()
+        components.scheme = "https"
+        components.host = host
+        components.port = url.port
+        components.percentEncodedPath = sourceComponents?.percentEncodedPath.isEmpty == false ? sourceComponents?.percentEncodedPath ?? "/" : "/"
+        components.percentEncodedQuery = sourceComponents?.percentEncodedQuery
+        components.percentEncodedFragment = sourceComponents?.percentEncodedFragment
+        return components.url
     }
 
     private static func parseWebLink(_ url: URL) throws -> DeepLinkAction {
