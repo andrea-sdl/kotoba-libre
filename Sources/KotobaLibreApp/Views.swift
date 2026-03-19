@@ -1905,7 +1905,7 @@ struct SettingsPanelView: View {
                 Toggle("Restrict URLs to the configured instance host", isOn: $restrictHost)
                 VStack(alignment: .leading, spacing: 6) {
                     Toggle("Open external login flows in the default browser", isOn: $openExternalAuthenticationLinksInNewWindow)
-                    Text("When a LibreChat login redirects to another host, hand that authentication flow to the default browser instead of keeping it inside a Kotoba Libre popup window.")
+                    Text("When a LibreChat login redirects to another host, hand that authentication flow to the default browser instead of keeping it inside a Kotoba Libre popup window. This requires the browser extension to redirect the finished login back to `kotobalibre://...`.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
