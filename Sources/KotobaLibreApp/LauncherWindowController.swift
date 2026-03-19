@@ -76,6 +76,15 @@ final class LauncherWindowController: NSWindowController, NSWindowDelegate {
         viewModel.selectedPresetID = id
     }
 
+    func showAndFocusForSeededTextRequest(query: String, attachmentFileURLs: [URL] = []) {
+        // Service and Dock handoff reuse the launcher so the user can choose an agent before sending.
+        showAndFocus(presentation: .text)
+        viewModel.seedTextRequest(
+            query: query,
+            attachmentFileURLs: attachmentFileURLs
+        )
+    }
+
     init(appController: AppController) {
         self.appController = appController
         self.viewModel = LauncherViewModel(appController: appController)
@@ -257,6 +266,7 @@ final class LauncherViewModel: ObservableObject {
     private var voiceStartTask: Task<Void, Never>?
     private var voiceFinishTask: Task<Void, Never>?
     private var latestVoiceTranscript = ""
+    private var pendingAttachmentFileURLs: [URL] = []
 
     init(appController: AppController) {
         self.appController = appController
@@ -356,6 +366,13 @@ final class LauncherViewModel: ObservableObject {
         }
     }
 
+    func seedTextRequest(query: String, attachmentFileURLs: [URL]) {
+        self.query = query
+        self.pendingAttachmentFileURLs = Array(attachmentFileURLs.prefix(1))
+        setStatus("Choose an agent and press Return.", isError: false)
+        focusToken = UUID()
+    }
+
     func matchesVoiceShortcut(_ event: NSEvent) -> Bool {
         GlobalShortcutRegistrar.shortcutString(from: event) == voiceShortcutValue
     }
@@ -437,7 +454,8 @@ final class LauncherViewModel: ObservableObject {
             try appController.openPreset(
                 id: targetID,
                 query: query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : query,
-                preferMainWindow: true
+                preferMainWindow: true,
+                attachmentFileURLs: pendingAttachmentFileURLs
             )
             resetForNextLaunch()
         } catch {
@@ -492,6 +510,7 @@ final class LauncherViewModel: ObservableObject {
         // Reset after a successful launch so the next shortcut opens a clean prompt.
         query = ""
         latestVoiceTranscript = ""
+        pendingAttachmentFileURLs = []
         voiceState = .idle
         voiceAudioLevel = 0.12
         resetSelectionToDefaultPreset()
