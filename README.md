@@ -16,7 +16,7 @@ LibreChat is powerful, but the browser workflow is easy to interrupt. Kotoba Lib
 - Fast saving of agents and model links as presets so you can recall them in seconds
 - Native-feeling experience around a live WebKit session, without the usual browser-tab reload dance, and with a small app footprint
 - Menu bar only, Dock only, or hybrid presence modes depending on how visible you want the app to be
-- Native onboarding, settings, popup handling, deep links, notifications, Services, and Dock integrations tailored for LibreChat
+- Native onboarding, settings, popup handling, deep links, notifications, and Dock integrations tailored for LibreChat
 
 ## Install
 
@@ -61,7 +61,6 @@ Kotoba Libre now adds a broader layer of Mac-native behavior around the embedded
 - Unread background completions increment the Dock badge and bounce the Dock icon
 - The main app menu includes `Cmd+N` for a new chat, `Cmd+[` and `Cmd+]` for history, `Cmd+K` for message search, and `Escape` for stop generating
 - Dragging one file onto the Dock icon opens a new chat and attaches it
-- macOS Services can send selected text with `Ask Kotoba Libre` or send one file with `Send to Kotoba Libre`, using the launcher to pick an agent when more than one is configured
 - The main window title tracks the current chat title instead of staying static
 
 ### Presets and saved agents

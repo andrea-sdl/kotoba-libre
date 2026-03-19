@@ -27,7 +27,6 @@ This target is intentionally UI-free so behavior can be validated in the self-te
 - Dock/menu bar visibility mode switching
 - Dock badge and attention requests for unread background responses
 - Menu bar status item actions
-- Services integration for selected text and files
 - Main web content window
 - Popup web windows created by LibreChat flows, even when those popup windows navigate to another HTTPS host
 - Settings window
@@ -174,7 +173,6 @@ The native shell also layers on conversation-level commands around that web sess
 - `Cmd+[` and `Cmd+]` drive WebKit history
 - `Cmd+K` opens a native search overlay backed by `WKWebView.find`
 - `Escape` triggers the page stop-generating control when a response is in flight
-- Dock-file and Services handoff use the launcher when multiple agents exist, and queue a single attachment before returning the file to WebKit's upload picker
 
 ## Persistence
 
