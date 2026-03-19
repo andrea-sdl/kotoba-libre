@@ -722,7 +722,6 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
     private var pendingLauncherProgressShow: DispatchWorkItem?
     private var pendingLauncherProgressHide: DispatchWorkItem?
     private var currentSettings = AppSettings()
-    private var lastMainFrameEmbeddedURL: URL?
 
     init() {
         let configuration = WKWebViewConfiguration()
@@ -888,18 +887,10 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
         case let .singleHost(host):
             host ?? webView.url?.host?.lowercased()
         }
-        rememberLastEmbeddedURLIfNeeded(webView.url, currentEmbeddedHost: currentEmbeddedHost, webView: webView)
         logNavigationAction(navigationAction, webView: webView, currentEmbeddedHost: currentEmbeddedHost)
 
         if routeAppNavigationIfNeeded(url, webView: webView, currentEmbeddedHost: currentEmbeddedHost) {
             debugLog("KotobaLibre Nav: decision=cancel reason=app-route url=\(url.absoluteString)")
-            decisionHandler(.cancel)
-            return
-        }
-
-        if shouldReloadNavigationActionWithAppIdentityHeader(navigationAction) {
-            debugLog("KotobaLibre Nav: decision=cancel reason=inject-header url=\(url.absoluteString)")
-            webView.load(appNavigationRequest(for: navigationAction.request))
             decisionHandler(.cancel)
             return
         }
@@ -919,7 +910,6 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
         if shouldOpenExternalNavigationInDefaultBrowser(url, webView: webView, currentEmbeddedHost: currentEmbeddedHost) {
             debugLog("KotobaLibre Nav: decision=cancel reason=browser-host-mismatch url=\(url.absoluteString)")
             externalNavigationHandler?(url)
-            restoreEmbeddedMainWindowAfterExternalBrowserHandoff(currentEmbeddedHost: currentEmbeddedHost)
             decisionHandler(.cancel)
             return
         }
@@ -934,7 +924,13 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
         if shouldOpenExternally(url, currentEmbeddedHost: currentEmbeddedHost) {
             debugLog("KotobaLibre Nav: decision=cancel reason=external-browser url=\(url.absoluteString)")
             externalNavigationHandler?(url)
-            restoreEmbeddedMainWindowAfterExternalBrowserHandoff(currentEmbeddedHost: currentEmbeddedHost)
+            decisionHandler(.cancel)
+            return
+        }
+
+        if shouldReloadNavigationActionWithAppIdentityHeader(navigationAction) {
+            debugLog("KotobaLibre Nav: decision=cancel reason=inject-header url=\(url.absoluteString)")
+            webView.load(appNavigationRequest(for: navigationAction.request))
             decisionHandler(.cancel)
             return
         }
@@ -978,7 +974,6 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
         ) {
             webView.stopLoading()
             externalNavigationHandler?(redirectedURL)
-            restoreEmbeddedMainWindowAfterExternalBrowserHandoff(currentEmbeddedHost: currentEmbeddedHost)
             debugLog("KotobaLibre Redirect: moved server redirect into browser -> \(redirectedURL.absoluteString)")
             return
         }
@@ -1002,25 +997,11 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
     }
 
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
-        let currentEmbeddedHost: String? = switch navigationPolicy(for: webView) {
-        case .embedAllHosts:
-            webView.url?.host?.lowercased()
-        case let .singleHost(host):
-            host ?? webView.url?.host?.lowercased()
-        }
-        rememberLastEmbeddedURLIfNeeded(webView.url, currentEmbeddedHost: currentEmbeddedHost, webView: webView)
         debugLog("KotobaLibre NavLifecycle: didCommit url=\(webView.url?.absoluteString ?? "<unknown>")")
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         if webView == self.webView {
-            let currentEmbeddedHost: String? = switch navigationPolicy(for: webView) {
-            case .embedAllHosts:
-                webView.url?.host?.lowercased()
-            case let .singleHost(host):
-                host ?? webView.url?.host?.lowercased()
-            }
-            rememberLastEmbeddedURLIfNeeded(webView.url, currentEmbeddedHost: currentEmbeddedHost, webView: webView)
             hasLoadedRemoteContent = true
             if !isLauncherAutoSubmitTransition(webView.url) {
                 hideLauncherProgress()
@@ -1381,23 +1362,6 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
         return host.caseInsensitiveCompare(currentEmbeddedHost) == .orderedSame
     }
 
-    private func rememberLastEmbeddedURLIfNeeded(_ url: URL?, currentEmbeddedHost: String?, webView: WKWebView) {
-        guard webView == self.webView else {
-            return
-        }
-
-        guard
-            let url,
-            let currentEmbeddedHost,
-            let host = url.host?.lowercased(),
-            host.caseInsensitiveCompare(currentEmbeddedHost) == .orderedSame
-        else {
-            return
-        }
-
-        lastMainFrameEmbeddedURL = url
-    }
-
     private func shouldReloadNavigationActionWithAppIdentityHeader(_ navigationAction: WKNavigationAction) -> Bool {
         // WebKit only lets us replace top-level loads, so subframe requests keep their original headers.
         guard navigationAction.targetFrame?.isMainFrame != false else {
@@ -1491,29 +1455,6 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
             self.cleanupPopupWindow(for: popupWebView)
         }
         popupWindowController.showAndFocus()
-    }
-
-    private func restoreEmbeddedMainWindowAfterExternalBrowserHandoff(currentEmbeddedHost: String?) {
-        guard let currentEmbeddedHost else {
-            return
-        }
-
-        if
-            let lastMainFrameEmbeddedURL,
-            let host = lastMainFrameEmbeddedURL.host?.lowercased(),
-            host.caseInsensitiveCompare(currentEmbeddedHost) == .orderedSame
-        {
-            debugLog("KotobaLibre Restore: reloading last embedded URL -> \(lastMainFrameEmbeddedURL.absoluteString)")
-            load(url: lastMainFrameEmbeddedURL)
-            return
-        }
-
-        guard let homeURL = try? KotobaLibreCore.parseInstanceBaseURL(currentSettings) else {
-            return
-        }
-
-        debugLog("KotobaLibre Restore: loading instance home -> \(homeURL.absoluteString)")
-        load(url: homeURL)
     }
 
     private func startAuthenticationSessionIfPossible(for url: URL) -> Bool {
