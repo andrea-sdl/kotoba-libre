@@ -4,7 +4,7 @@
 
     const DEFAULT_SETTINGS = {
         allowedHosts: '',
-        callbackPath: '',
+        callbackPath: '/oauth/openid/callback',
         appScheme: 'kotobalibre'
     };
 

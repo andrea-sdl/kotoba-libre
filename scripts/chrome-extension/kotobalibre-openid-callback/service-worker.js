@@ -1,7 +1,7 @@
 // The service worker keeps Chrome's dynamic redirect rules in sync with the saved extension settings.
 const DEFAULT_SETTINGS = {
     allowedHosts: '',
-    callbackPath: '',
+    callbackPath: '/oauth/openid/callback',
     appScheme: 'kotobalibre'
 };
 
