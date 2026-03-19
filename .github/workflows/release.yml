@@ -125,12 +125,16 @@ jobs:
       - name: Build app bundle
         run: ./scripts/build-app.sh "${{ steps.release_meta.outputs.version }}"
 
+      - name: Build Chrome extension zip
+        run: ./scripts/package-chrome-extension.sh
+
       - name: Ensure expected artifacts exist
         shell: bash
         run: |
           set -euo pipefail
           test -d "dist-artifacts/${APP_NAME}.app"
           test -f "dist-artifacts/${APP_NAME}-unsigned.dmg"
+          test -f "dist-artifacts/chrome-extension/kotobalibre-openid-callback.zip"
 
       - name: Create next development version commit
         shell: bash
@@ -164,3 +168,4 @@ jobs:
           fail_on_unmatched_files: true
           files: |
             dist-artifacts/*-unsigned.dmg
+            dist-artifacts/chrome-extension/*.zip

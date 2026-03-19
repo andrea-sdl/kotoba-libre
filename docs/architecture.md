@@ -181,6 +181,7 @@ Supported custom-scheme and HTTPS-mapped routes include:
 - `kotobalibre://open?url=...`
 - `kotobalibre://preset/<presetId>?query=...`
 - `kotobalibre://settings`
+- `kotobalibre://<instance-host>/oauth/openid/callback?...`
 - `/app/open?url=...`
 - `/app/preset/<presetId>?query=...`
 - `/app/settings`
@@ -188,3 +189,4 @@ Supported custom-scheme and HTTPS-mapped routes include:
 When another app opens a plain `https://...` URL with Kotoba Libre, the app treats it as a direct in-app navigation only if the host matches the configured LibreChat instance host.
 
 The shared parsing logic lives in `KotobaLibreCore`.
+OpenID callback URLs that arrive as `kotobalibre://<instance-host>/oauth/openid/callback?...` are normalized back to their HTTPS equivalent before the app routes them.
