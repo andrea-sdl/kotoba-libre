@@ -52,7 +52,7 @@ The build script:
 1. Builds `KotobaLibreApp` in release mode
 2. Creates `dist-artifacts/Kotoba Libre.app`
 3. Copies bundled resources, including the app icon
-4. Writes `Info.plist`
+4. Writes `Info.plist`, including the `kotobalibre://` URL scheme and the macOS Services entries
 5. Applies an ad-hoc signature, optionally including generated `webcredentials` associated-domain entitlements
 6. Creates unsigned `.dmg` and `.zip` artifacts
 

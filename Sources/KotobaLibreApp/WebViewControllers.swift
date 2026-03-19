@@ -15,6 +15,12 @@ private enum MainWindowToolbarItem {
     static let addAgent = NSToolbarItem.Identifier("KotobaLibreAddAgent")
 }
 
+// WebResponseCompletion carries the metadata the native shell needs for badges and notifications.
+struct WebResponseCompletion {
+    let conversationTitle: String?
+    let duration: TimeInterval
+}
+
 // MainWindowController owns the primary app window.
 // It swaps between onboarding and web content and remembers the last usable frame.
 @MainActor
@@ -68,6 +74,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         }
 
         updateAddAgentCandidate(nil)
+        updateWindowTitle(nil)
         applyWindowSizing(for: .onboarding)
         window?.toolbar = nil
         let hostingController = NSHostingController(
@@ -83,6 +90,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         let controller = ensureWebController()
         controller.apply(settings: settings)
         window?.contentViewController = controller
+        updateWindowTitle(controller.currentConversationTitle)
     }
 
     func navigateToHome(settings: AppSettings) {
@@ -98,6 +106,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         controller.apply(settings: settings)
         window?.contentViewController = controller
         controller.load(url: homeURL)
+        updateWindowTitle(controller.currentConversationTitle)
     }
 
     func open(url: URL, settings: AppSettings, instanceHost: String?, forceEmbedAllHosts: Bool = false, forceReload: Bool = false) {
@@ -113,11 +122,28 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
             forceEmbedAllHosts: forceEmbedAllHosts,
             forceReload: forceReload
         )
+        updateWindowTitle(controller.currentConversationTitle)
         showAndFocus()
     }
 
     var isVisible: Bool {
         window?.isVisible ?? false
+    }
+
+    var canNavigateBack: Bool {
+        webController?.canNavigateBack ?? false
+    }
+
+    var canNavigateForward: Bool {
+        webController?.canNavigateForward ?? false
+    }
+
+    var canSearchMessages: Bool {
+        webController != nil
+    }
+
+    var canStopGenerating: Bool {
+        webController?.isGeneratingResponse ?? false
     }
 
     func showAndFocus() {
@@ -149,6 +175,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
 
     func windowDidChangeScreen(_ notification: Notification) {
         normalizeWindowFrameToAvailableScreens()
+    }
+
+    func windowDidBecomeKey(_ notification: Notification) {
+        appController?.markResponsesRead()
     }
 
     func persistStateForTermination() {
@@ -190,8 +220,38 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         created.addAgentCandidateHandler = { [weak self] candidate in
             self?.updateAddAgentCandidate(candidate)
         }
+        created.conversationTitleHandler = { [weak self] title in
+            self?.updateWindowTitle(title)
+        }
+        created.responseCompletionHandler = { [weak appController] completion in
+            appController?.handleWebResponseCompletion(completion)
+        }
         webController = created
         return created
+    }
+
+    func queueAttachment(urls: [URL]) {
+        guard !urls.isEmpty else {
+            return
+        }
+
+        ensureWebController().queueAttachment(urls: urls)
+    }
+
+    func navigateBack() {
+        webController?.navigateBack()
+    }
+
+    func navigateForward() {
+        webController?.navigateForward()
+    }
+
+    func showConversationSearch() {
+        webController?.showConversationSearch()
+    }
+
+    func stopGenerating() -> Bool {
+        webController?.stopGenerating() ?? false
     }
 
     private func installShortcutMonitor() {
@@ -469,6 +529,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         presentAddAgentSheetFromTitlebar()
     }
 
+    private func updateWindowTitle(_ conversationTitle: String?) {
+        let trimmedTitle = conversationTitle?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        window?.title = trimmedTitle.isEmpty ? appDisplayName : "\(trimmedTitle) - \(appDisplayName)"
+    }
+
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         [.flexibleSpace, MainWindowToolbarItem.addAgent]
     }
@@ -517,6 +582,7 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
     private static let logHandlerName = "kotobaLibreLog"
     private static let addAgentCandidateHandlerName = "kotobaLibreAddAgentCandidate"
     private static let launcherProgressHandlerName = "kotobaLibreLauncherProgress"
+    private static let desktopEventHandlerName = "kotobaLibreDesktopEvent"
     private static let supportedAuthenticationCallbackScheme = "kotobalibre"
     private static let appIdentityHeaderName = "X-Kotoba-Libre"
     private static let appIdentityHeaderValue = "\(appDisplayName)/\(AppResources.appVersionDisplayString)"
@@ -705,12 +771,157 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
         }
     }
 
+    // This overlay gives the app a lightweight native search UI for the current conversation.
+    @MainActor
+    private final class ConversationSearchBarView: NSVisualEffectView {
+        private let searchField = NSSearchField()
+        private let previousButton = NSButton()
+        private let nextButton = NSButton()
+        private let closeButton = NSButton()
+
+        var onSearchChange: ((String) -> Void)?
+        var onFindPrevious: ((String) -> Void)?
+        var onFindNext: ((String) -> Void)?
+        var onClose: (() -> Void)?
+
+        override init(frame frameRect: NSRect) {
+            super.init(frame: frameRect)
+
+            material = .hudWindow
+            blendingMode = .withinWindow
+            state = .active
+            wantsLayer = true
+            layer?.cornerRadius = 14
+            layer?.masksToBounds = true
+            translatesAutoresizingMaskIntoConstraints = false
+            alphaValue = 0
+            isHidden = true
+
+            searchField.placeholderString = "Search messages"
+            searchField.sendsSearchStringImmediately = true
+            searchField.target = self
+            searchField.action = #selector(handleSearchChanged)
+            searchField.translatesAutoresizingMaskIntoConstraints = false
+
+            previousButton.bezelStyle = .texturedRounded
+            previousButton.controlSize = .small
+            previousButton.image = NSImage(systemSymbolName: "chevron.up", accessibilityDescription: "Previous match")
+            previousButton.target = self
+            previousButton.action = #selector(handleFindPrevious)
+            previousButton.translatesAutoresizingMaskIntoConstraints = false
+
+            nextButton.bezelStyle = .texturedRounded
+            nextButton.controlSize = .small
+            nextButton.image = NSImage(systemSymbolName: "chevron.down", accessibilityDescription: "Next match")
+            nextButton.target = self
+            nextButton.action = #selector(handleFindNext)
+            nextButton.translatesAutoresizingMaskIntoConstraints = false
+
+            closeButton.bezelStyle = .texturedRounded
+            closeButton.controlSize = .small
+            closeButton.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "Close search")
+            closeButton.target = self
+            closeButton.action = #selector(handleClose)
+            closeButton.translatesAutoresizingMaskIntoConstraints = false
+
+            addSubview(searchField)
+            addSubview(previousButton)
+            addSubview(nextButton)
+            addSubview(closeButton)
+
+            NSLayoutConstraint.activate([
+                searchField.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+                searchField.centerYAnchor.constraint(equalTo: centerYAnchor),
+                searchField.widthAnchor.constraint(equalToConstant: 220),
+                previousButton.leadingAnchor.constraint(equalTo: searchField.trailingAnchor, constant: 8),
+                previousButton.centerYAnchor.constraint(equalTo: centerYAnchor),
+                nextButton.leadingAnchor.constraint(equalTo: previousButton.trailingAnchor, constant: 6),
+                nextButton.centerYAnchor.constraint(equalTo: centerYAnchor),
+                closeButton.leadingAnchor.constraint(equalTo: nextButton.trailingAnchor, constant: 6),
+                closeButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+                closeButton.centerYAnchor.constraint(equalTo: centerYAnchor),
+                topAnchor.constraint(equalTo: searchField.topAnchor, constant: -10),
+                bottomAnchor.constraint(equalTo: searchField.bottomAnchor, constant: 10)
+            ])
+        }
+
+        @available(*, unavailable)
+        required init?(coder: NSCoder) {
+            fatalError("init(coder:) has not been implemented")
+        }
+
+        var query: String {
+            searchField.stringValue
+        }
+
+        func show(animated: Bool) {
+            guard isHidden || alphaValue < 1 else {
+                focus()
+                return
+            }
+
+            isHidden = false
+            if animated {
+                alphaValue = 0
+                NSAnimationContext.runAnimationGroup { context in
+                    context.duration = 0.14
+                    animator().alphaValue = 1
+                }
+            } else {
+                alphaValue = 1
+            }
+            focus()
+        }
+
+        func hide(animated: Bool) {
+            if animated {
+                NSAnimationContext.runAnimationGroup({ context in
+                    context.duration = 0.14
+                    animator().alphaValue = 0
+                }, completionHandler: { [weak self] in
+                    Task { @MainActor [weak self] in
+                        self?.alphaValue = 0
+                        self?.isHidden = true
+                    }
+                })
+            } else {
+                alphaValue = 0
+                isHidden = true
+            }
+        }
+
+        func focus() {
+            window?.makeFirstResponder(searchField)
+            searchField.selectText(nil)
+        }
+
+        @objc private func handleSearchChanged() {
+            onSearchChange?(searchField.stringValue)
+        }
+
+        @objc private func handleFindPrevious() {
+            onFindPrevious?(searchField.stringValue)
+        }
+
+        @objc private func handleFindNext() {
+            onFindNext?(searchField.stringValue)
+        }
+
+        @objc private func handleClose() {
+            onClose?()
+        }
+    }
+
     let webView: WKWebView
     var externalNavigationHandler: ((URL) -> Void)?
     var authenticationSessionStarter: ((URL, String) -> Bool)?
     var appNavigationHandler: ((URL) -> Bool)?
     var addAgentCandidateHandler: ((WebAddPresetCandidate?) -> Void)?
+    var conversationTitleHandler: ((String?) -> Void)?
+    var responseCompletionHandler: ((WebResponseCompletion) -> Void)?
     var debugLoggingEnabled = false
+    private(set) var currentConversationTitle: String?
+    private(set) var isGeneratingResponse = false
     private var hasLoadedRemoteContent = false
     private var externalNavigationPolicy: ExternalNavigationPolicy = .singleHost(nil)
     private var popupWindowControllers: [ObjectIdentifier: PopupWindowController] = [:]
@@ -718,9 +929,12 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
     private let logMessageHandler = ScriptMessageHandler()
     private let addAgentMessageHandler = DictionaryMessageHandler()
     private let launcherProgressMessageHandler = DictionaryMessageHandler()
+    private let desktopEventMessageHandler = DictionaryMessageHandler()
     private let launcherProgressBadgeView = LauncherProgressBadgeView()
+    private let conversationSearchBarView = ConversationSearchBarView()
     private var pendingLauncherProgressShow: DispatchWorkItem?
     private var pendingLauncherProgressHide: DispatchWorkItem?
+    private var pendingQueuedAttachments: [URL] = []
     private var currentSettings = AppSettings()
 
     init() {
@@ -731,6 +945,7 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
         configuration.userContentController.add(logMessageHandler, name: Self.logHandlerName)
         configuration.userContentController.add(addAgentMessageHandler, name: Self.addAgentCandidateHandlerName)
         configuration.userContentController.add(launcherProgressMessageHandler, name: Self.launcherProgressHandlerName)
+        configuration.userContentController.add(desktopEventMessageHandler, name: Self.desktopEventHandlerName)
         configuration.userContentController.addUserScript(
             WKUserScript(
                 source: Self.loggerBootstrapScript,
@@ -752,6 +967,13 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
                 forMainFrameOnly: true
             )
         )
+        configuration.userContentController.addUserScript(
+            WKUserScript(
+                source: Self.desktopStateObserverScript,
+                injectionTime: .atDocumentStart,
+                forMainFrameOnly: true
+            )
+        )
         self.webView = WKWebView(frame: .zero, configuration: configuration)
         super.init(nibName: nil, bundle: nil)
         self.webView.navigationDelegate = self
@@ -766,6 +988,21 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
         launcherProgressMessageHandler.onMessage = { [weak self] body in
             self?.handleLauncherProgressMessage(body)
         }
+        desktopEventMessageHandler.onMessage = { [weak self] body in
+            self?.handleDesktopEventMessage(body)
+        }
+        conversationSearchBarView.onSearchChange = { [weak self] query in
+            self?.runConversationSearch(query: query, backwards: false)
+        }
+        conversationSearchBarView.onFindPrevious = { [weak self] query in
+            self?.runConversationSearch(query: query, backwards: true)
+        }
+        conversationSearchBarView.onFindNext = { [weak self] query in
+            self?.runConversationSearch(query: query, backwards: false)
+        }
+        conversationSearchBarView.onClose = { [weak self] in
+            self?.conversationSearchBarView.hide(animated: true)
+        }
     }
 
     @available(*, unavailable)
@@ -777,6 +1014,7 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
         let containerView = NSView()
         containerView.addSubview(webView)
         containerView.addSubview(launcherProgressBadgeView)
+        containerView.addSubview(conversationSearchBarView)
         webView.translatesAutoresizingMaskIntoConstraints = false
 
         NSLayoutConstraint.activate([
@@ -786,7 +1024,9 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
             webView.bottomAnchor.constraint(equalTo: containerView.bottomAnchor),
             launcherProgressBadgeView.centerXAnchor.constraint(equalTo: containerView.centerXAnchor),
             launcherProgressBadgeView.topAnchor.constraint(equalTo: containerView.topAnchor, constant: 18),
-            launcherProgressBadgeView.widthAnchor.constraint(lessThanOrEqualToConstant: 260)
+            launcherProgressBadgeView.widthAnchor.constraint(lessThanOrEqualToConstant: 260),
+            conversationSearchBarView.topAnchor.constraint(equalTo: containerView.topAnchor, constant: 18),
+            conversationSearchBarView.trailingAnchor.constraint(equalTo: containerView.trailingAnchor, constant: -18)
         ])
 
         view = containerView
@@ -796,6 +1036,14 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
         // Navigation decisions depend on the latest settings even while the web view instance is reused.
         currentSettings = settings
         debugLoggingEnabled = settings.debugLoggingEnabled
+    }
+
+    var canNavigateBack: Bool {
+        webView.canGoBack
+    }
+
+    var canNavigateForward: Bool {
+        webView.canGoForward
     }
 
     func load(url: URL) {
@@ -843,6 +1091,53 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
         }
 
         load(url: url)
+    }
+
+    func queueAttachment(urls: [URL]) {
+        pendingQueuedAttachments = Array(urls.prefix(1))
+    }
+
+    func navigateBack() {
+        guard webView.canGoBack else {
+            return
+        }
+
+        webView.goBack()
+    }
+
+    func navigateForward() {
+        guard webView.canGoForward else {
+            return
+        }
+
+        webView.goForward()
+    }
+
+    func showConversationSearch() {
+        conversationSearchBarView.show(animated: true)
+    }
+
+    func stopGenerating() -> Bool {
+        guard isGeneratingResponse else {
+            return false
+        }
+
+        let script = """
+        (() => {
+          try {
+            const stopGenerating = globalThis.__kotobaLibreStopGenerating;
+            return typeof stopGenerating === "function" ? stopGenerating() : false;
+          } catch (_) {
+            return false;
+          }
+        })();
+        """
+        webView.evaluateJavaScript(script) { [weak self] _, error in
+            if let error {
+                self?.debugLog("KotobaLibre Stop: evaluateJavaScript failed -> \(error.localizedDescription)")
+            }
+        }
+        return true
     }
 
     func fetchCurrentAddAgentCandidate(completion: @escaping (WebAddPresetCandidate?) -> Void) {
@@ -985,9 +1280,11 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         if webView == self.webView {
             hasLoadedRemoteContent = true
+            updateConversationTitle(webView.title)
             if !isLauncherAutoSubmitTransition(webView.url) {
                 hideLauncherProgress()
             }
+            attemptPendingAttachmentIfNeeded()
         }
         popupWindowControllers[ObjectIdentifier(webView)]?.window?.title = webView.title ?? appDisplayName
         debugLog("KotobaLibre SPA: didFinish -> \(webView.url?.absoluteString ?? "<unknown>")")
@@ -1073,6 +1370,13 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
         initiatedByFrame frame: WKFrameInfo,
         completionHandler: @escaping @MainActor ([URL]?) -> Void
     ) {
+        if !pendingQueuedAttachments.isEmpty {
+            let urls = parameters.allowsMultipleSelection ? pendingQueuedAttachments : Array(pendingQueuedAttachments.prefix(1))
+            pendingQueuedAttachments = []
+            completionHandler(urls)
+            return
+        }
+
         let panel = NSOpenPanel()
         panel.canChooseFiles = true
         panel.canChooseDirectories = parameters.allowsDirectories
@@ -1147,6 +1451,93 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
         }
 
         print(message)
+    }
+
+    private func handleDesktopEventMessage(_ rawValue: Any) {
+        guard let payload = rawValue as? [String: Any], let type = payload["type"] as? String else {
+            return
+        }
+
+        switch type {
+        case "title":
+            updateConversationTitle(payload["title"] as? String)
+        case "response-started":
+            isGeneratingResponse = true
+        case "response-finished":
+            isGeneratingResponse = false
+            let title = payload["title"] as? String
+            updateConversationTitle(title)
+            let durationMilliseconds = payload["durationMs"] as? Double ?? 0
+            responseCompletionHandler?(
+                WebResponseCompletion(
+                    conversationTitle: normalizedConversationTitle(title),
+                    duration: durationMilliseconds / 1_000
+                )
+            )
+        default:
+            break
+        }
+    }
+
+    private func updateConversationTitle(_ rawTitle: String?) {
+        let normalizedTitle = normalizedConversationTitle(rawTitle)
+        guard currentConversationTitle != normalizedTitle else {
+            return
+        }
+
+        currentConversationTitle = normalizedTitle
+        conversationTitleHandler?(normalizedTitle)
+    }
+
+    private func normalizedConversationTitle(_ rawTitle: String?) -> String? {
+        let trimmedTitle = rawTitle?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmedTitle.isEmpty ? nil : trimmedTitle
+    }
+
+    private func attemptPendingAttachmentIfNeeded() {
+        guard !pendingQueuedAttachments.isEmpty else {
+            return
+        }
+
+        let script = """
+        (() => {
+          try {
+            const openAttachmentPicker = globalThis.__kotobaLibreOpenAttachmentPicker;
+            return typeof openAttachmentPicker === "function" ? openAttachmentPicker() : false;
+          } catch (_) {
+            return false;
+          }
+        })();
+        """
+        webView.evaluateJavaScript(script) { [weak self] result, error in
+            if let error {
+                self?.debugLog("KotobaLibre Attach: evaluateJavaScript failed -> \(error.localizedDescription)")
+                return
+            }
+
+            guard let self else {
+                return
+            }
+
+            let openedPicker = (result as? Bool) ?? ((result as? NSNumber)?.boolValue ?? false)
+            if !openedPicker {
+                self.debugLog("KotobaLibre Attach: page did not expose an attachment picker")
+            }
+        }
+    }
+
+    private func runConversationSearch(query: String, backwards: Bool) {
+        let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedQuery.isEmpty else {
+            return
+        }
+
+        let configuration = WKFindConfiguration()
+        configuration.backwards = backwards
+        configuration.wraps = true
+        webView.find(trimmedQuery, configuration: configuration) { [weak self] _ in
+            self?.debugLog("KotobaLibre Search: query=\(trimmedQuery) backwards=\(backwards)")
+        }
     }
 
     private func logNavigationAction(_ navigationAction: WKNavigationAction, webView: WKWebView, currentEmbeddedHost: String?) {
@@ -1768,6 +2159,157 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
       };
       beginObserving();
       schedule();
+    })();
+    """
+
+    private static let desktopStateObserverScript = """
+    (() => {
+      const postDesktopEvent = (type, payload = {}) => {
+        try {
+          window.webkit?.messageHandlers?.\(desktopEventHandlerName).postMessage({ type, ...payload });
+        } catch (_) {
+        }
+      };
+      const trimText = (value) => typeof value === "string" ? value.trim() : "";
+      const selectorList = [
+        "[data-testid='stop-generating-button']",
+        "[data-testid='stop-button']",
+        "button[aria-label*='Stop' i]",
+        "button[title*='Stop' i]",
+        "button[data-testid='send-button'][aria-label*='Stop' i]",
+        "button[data-testid='send-button'][title*='Stop' i]",
+      ];
+      const findStopButton = () => {
+        for (const selector of selectorList) {
+          const match = document.querySelector(selector);
+          if (match instanceof HTMLElement && !match.hasAttribute("disabled")) {
+            return match;
+          }
+        }
+        const buttons = Array.from(document.querySelectorAll("button"));
+        return buttons.find((button) => {
+          if (!(button instanceof HTMLElement) || button.hasAttribute("disabled")) {
+            return false;
+          }
+          const description = [
+            button.getAttribute("aria-label") ?? "",
+            button.getAttribute("title") ?? "",
+            button.textContent ?? "",
+          ].join(" ").toLowerCase();
+          return description.includes("stop") && description.includes("generat");
+        }) ?? null;
+      };
+      const fileInputSelectors = [
+        "input[type='file']",
+        "input[type='file'][multiple]",
+      ];
+      const attachmentButtonSelectors = [
+        "[data-testid='attach-file-button']",
+        "[data-testid='upload-button']",
+        "button[aria-label*='Attach' i]",
+        "button[aria-label*='Upload' i]",
+        "button[title*='Attach' i]",
+        "button[title*='Upload' i]",
+      ];
+      const openAttachmentPicker = () => {
+        for (const selector of fileInputSelectors) {
+          const input = document.querySelector(selector);
+          if (input instanceof HTMLInputElement && !input.disabled) {
+            input.click();
+            return true;
+          }
+        }
+        for (const selector of attachmentButtonSelectors) {
+          const button = document.querySelector(selector);
+          if (button instanceof HTMLElement && !button.hasAttribute("disabled")) {
+            button.click();
+            return true;
+          }
+        }
+        return false;
+      };
+      const state = {
+        title: "",
+        isGenerating: false,
+        generationStartedAt: 0,
+      };
+      const currentTitle = () => trimText(document.title);
+      const syncTitle = () => {
+        const title = currentTitle();
+        if (title === state.title) return;
+        state.title = title;
+        postDesktopEvent("title", { title });
+      };
+      const syncGeneration = () => {
+        const isGenerating = !!findStopButton();
+        if (isGenerating === state.isGenerating) return;
+        state.isGenerating = isGenerating;
+        if (isGenerating) {
+          state.generationStartedAt = Date.now();
+          postDesktopEvent("response-started", { title: currentTitle() });
+          return;
+        }
+        const durationMs = state.generationStartedAt > 0 ? Date.now() - state.generationStartedAt : 0;
+        state.generationStartedAt = 0;
+        postDesktopEvent("response-finished", { title: currentTitle(), durationMs });
+      };
+      let queued = false;
+      const scheduleSync = () => {
+        if (queued) return;
+        queued = true;
+        queueMicrotask(() => {
+          queued = false;
+          syncTitle();
+          syncGeneration();
+        });
+      };
+      const wrapHistory = (methodName) => {
+        const original = history[methodName];
+        if (typeof original !== "function") return;
+        history[methodName] = function(...args) {
+          const result = original.apply(this, args);
+          scheduleSync();
+          return result;
+        };
+      };
+      globalThis.__kotobaLibreStopGenerating = () => {
+        const button = findStopButton();
+        if (!(button instanceof HTMLElement)) {
+          return false;
+        }
+        button.click();
+        return true;
+      };
+      globalThis.__kotobaLibreOpenAttachmentPicker = openAttachmentPicker;
+      wrapHistory("pushState");
+      wrapHistory("replaceState");
+      window.addEventListener("load", scheduleSync);
+      window.addEventListener("hashchange", scheduleSync);
+      window.addEventListener("popstate", scheduleSync);
+      document.addEventListener("readystatechange", scheduleSync);
+      const beginObserving = () => {
+        const titleElement = document.querySelector("title");
+        if (titleElement instanceof HTMLElement) {
+          new MutationObserver(scheduleSync).observe(titleElement, {
+            childList: true,
+            characterData: true,
+            subtree: true,
+          });
+        }
+        if (!document.documentElement) {
+          window.setTimeout(beginObserving, 50);
+          return;
+        }
+        new MutationObserver(scheduleSync).observe(document.documentElement, {
+          subtree: true,
+          childList: true,
+          attributes: true,
+          attributeFilter: ["title", "aria-label", "disabled", "data-testid"],
+        });
+      };
+      beginObserving();
+      window.setInterval(syncGeneration, 750);
+      scheduleSync();
     })();
     """
 
