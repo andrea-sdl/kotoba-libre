@@ -914,13 +914,6 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
             return
         }
 
-        if shouldOpenExternalNavigationInNewWindow(url, webView: webView, currentEmbeddedHost: currentEmbeddedHost) {
-            debugLog("KotobaLibre Nav: decision=cancel reason=popup-host-mismatch url=\(url.absoluteString)")
-            openPopupWindow(for: url)
-            decisionHandler(.cancel)
-            return
-        }
-
         if shouldOpenExternally(url, currentEmbeddedHost: currentEmbeddedHost) {
             debugLog("KotobaLibre Nav: decision=cancel reason=external-browser url=\(url.absoluteString)")
             externalNavigationHandler?(url)
@@ -978,17 +971,6 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
             return
         }
 
-        if shouldOpenExternalNavigationInNewWindow(
-            redirectedURL,
-            webView: webView,
-            currentEmbeddedHost: currentEmbeddedHost
-        ) {
-            webView.stopLoading()
-            openPopupWindow(for: redirectedURL)
-            debugLog("KotobaLibre Redirect: moved server redirect into popup -> \(redirectedURL.absoluteString)")
-            return
-        }
-
         debugLog("KotobaLibre Redirect: stayed-in-place url=\(redirectedURL.absoluteString) currentEmbeddedHost=\(currentEmbeddedHost ?? "<nil>")")
     }
 
@@ -1018,8 +1000,24 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
         for navigationAction: WKNavigationAction,
         windowFeatures: WKWindowFeatures
     ) -> WKWebView? {
+        let currentEmbeddedHost: String? = switch navigationPolicy(for: webView) {
+        case .embedAllHosts:
+            webView.url?.host?.lowercased()
+        case let .singleHost(host):
+            host ?? webView.url?.host?.lowercased()
+        }
+
         if let url = navigationAction.request.url, routeAuthenticationRequestIfNeeded(for: url, from: webView.url) {
             debugLog("KotobaLibre Popup: intercepted createWebView auth handoff url=\(url.absoluteString)")
+            return nil
+        }
+
+        if
+            let url = navigationAction.request.url,
+            shouldOpenExternally(url, currentEmbeddedHost: currentEmbeddedHost)
+        {
+            debugLog("KotobaLibre Popup: routed off-host popup request to external browser url=\(url.absoluteString)")
+            externalNavigationHandler?(url)
             return nil
         }
 
@@ -1386,26 +1384,6 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
         return updatedRequest
     }
 
-    private func shouldOpenExternalNavigationInNewWindow(
-        _ url: URL,
-        webView: WKWebView,
-        currentEmbeddedHost: String?
-    ) -> Bool {
-        guard !currentSettings.openExternalAuthenticationLinksInNewWindow else {
-            return false
-        }
-
-        guard popupWindowControllers[ObjectIdentifier(webView)] == nil else {
-            return false
-        }
-
-        guard shouldOpenExternally(url, currentEmbeddedHost: currentEmbeddedHost) else {
-            return false
-        }
-
-        return true
-    }
-
     private func shouldOpenExternalNavigationInDefaultBrowser(
         _ url: URL,
         webView: WKWebView,
@@ -1421,17 +1399,6 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
 
         return shouldOpenExternally(url, currentEmbeddedHost: currentEmbeddedHost)
     }
-
-    private func openPopupWindow(for url: URL) {
-        let configuration = WKWebViewConfiguration()
-        configuration.preferences.javaScriptCanOpenWindowsAutomatically = true
-
-        let popupWebView = WKWebView(frame: .zero, configuration: configuration)
-        showPopupWindow(for: popupWebView)
-        popupWebView.load(appNavigationRequest(for: url))
-        debugLog("KotobaLibre Popup: opened external auth flow -> \(url.absoluteString)")
-    }
-
     private func showPopupWindow(for popupWebView: WKWebView, windowFeatures: WKWindowFeatures? = nil) {
         popupWebView.navigationDelegate = self
         popupWebView.uiDelegate = self
