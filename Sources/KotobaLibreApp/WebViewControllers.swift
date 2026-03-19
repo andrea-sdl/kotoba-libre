@@ -586,6 +586,8 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
     private static let supportedAuthenticationCallbackScheme = "kotobalibre"
     private static let appIdentityHeaderName = "X-Kotoba-Libre"
     private static let appIdentityHeaderValue = "\(appDisplayName)/\(AppResources.appVersionDisplayString)"
+    private static let attachmentPickerRetryDelay: TimeInterval = 0.35
+    private static let attachmentPickerRetryLimit = 12
 
     private enum ExternalNavigationPolicy {
         case singleHost(String?)
@@ -935,6 +937,8 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
     private var pendingLauncherProgressShow: DispatchWorkItem?
     private var pendingLauncherProgressHide: DispatchWorkItem?
     private var pendingQueuedAttachments: [URL] = []
+    private var pendingAttachmentPickerRetry: DispatchWorkItem?
+    private var pendingAttachmentPickerRetryCount = 0
     private var currentSettings = AppSettings()
 
     init() {
@@ -1094,6 +1098,7 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
     }
 
     func queueAttachment(urls: [URL]) {
+        cancelPendingAttachmentPickerRetry(resetCounter: true)
         pendingQueuedAttachments = Array(urls.prefix(1))
     }
 
@@ -1270,6 +1275,9 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
     }
 
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+        if webView == self.webView {
+            cancelPendingAttachmentPickerRetry(resetCounter: false)
+        }
         debugLog("KotobaLibre NavLifecycle: didStartProvisional url=\(webView.url?.absoluteString ?? "<unknown>")")
     }
 
@@ -1284,7 +1292,7 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
             if !isLauncherAutoSubmitTransition(webView.url) {
                 hideLauncherProgress()
             }
-            attemptPendingAttachmentIfNeeded()
+            attemptPendingAttachmentIfNeeded(resetRetryWindow: true)
         }
         popupWindowControllers[ObjectIdentifier(webView)]?.window?.title = webView.title ?? appDisplayName
         debugLog("KotobaLibre SPA: didFinish -> \(webView.url?.absoluteString ?? "<unknown>")")
@@ -1372,6 +1380,7 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
     ) {
         if !pendingQueuedAttachments.isEmpty {
             let urls = parameters.allowsMultipleSelection ? pendingQueuedAttachments : Array(pendingQueuedAttachments.prefix(1))
+            cancelPendingAttachmentPickerRetry(resetCounter: true)
             pendingQueuedAttachments = []
             completionHandler(urls)
             return
@@ -1494,9 +1503,19 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
         return trimmedTitle.isEmpty ? nil : trimmedTitle
     }
 
-    private func attemptPendingAttachmentIfNeeded() {
+    private func attemptPendingAttachmentIfNeeded(resetRetryWindow: Bool = false) {
         guard !pendingQueuedAttachments.isEmpty else {
             return
+        }
+
+        guard isReadyForQueuedAttachment else {
+            debugLog("KotobaLibre Attach: discarding queued attachment because the page left the new chat route")
+            clearQueuedAttachments()
+            return
+        }
+
+        if resetRetryWindow {
+            cancelPendingAttachmentPickerRetry(resetCounter: true)
         }
 
         let script = """
@@ -1510,20 +1529,82 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
         })();
         """
         webView.evaluateJavaScript(script) { [weak self] result, error in
-            if let error {
-                self?.debugLog("KotobaLibre Attach: evaluateJavaScript failed -> \(error.localizedDescription)")
+            guard let self else {
                 return
             }
 
-            guard let self else {
+            if let error {
+                self.debugLog("KotobaLibre Attach: evaluateJavaScript failed -> \(error.localizedDescription)")
+                self.scheduleAttachmentPickerRetryIfNeeded()
                 return
             }
 
             let openedPicker = (result as? Bool) ?? ((result as? NSNumber)?.boolValue ?? false)
             if !openedPicker {
                 self.debugLog("KotobaLibre Attach: page did not expose an attachment picker")
+                self.scheduleAttachmentPickerRetryIfNeeded()
+                return
             }
+
+            self.cancelPendingAttachmentPickerRetry(resetCounter: true)
         }
+    }
+
+    private var isReadyForQueuedAttachment: Bool {
+        guard let currentURL = webView.url else {
+            return true
+        }
+
+        let path = currentURL.path.lowercased()
+        return path == "/c/new" || path.hasPrefix("/c/new/")
+    }
+
+    private func scheduleAttachmentPickerRetryIfNeeded() {
+        guard !pendingQueuedAttachments.isEmpty else {
+            return
+        }
+
+        guard isReadyForQueuedAttachment else {
+            debugLog("KotobaLibre Attach: clearing queued attachment after route changed")
+            clearQueuedAttachments()
+            return
+        }
+
+        guard pendingAttachmentPickerRetryCount < Self.attachmentPickerRetryLimit else {
+            debugLog("KotobaLibre Attach: clearing queued attachment after retry limit")
+            clearQueuedAttachments()
+            return
+        }
+
+        pendingAttachmentPickerRetryCount += 1
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self else {
+                return
+            }
+
+            self.pendingAttachmentPickerRetry = nil
+            self.attemptPendingAttachmentIfNeeded()
+        }
+
+        pendingAttachmentPickerRetry?.cancel()
+        pendingAttachmentPickerRetry = workItem
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + Self.attachmentPickerRetryDelay,
+            execute: workItem
+        )
+    }
+
+    private func cancelPendingAttachmentPickerRetry(resetCounter: Bool) {
+        pendingAttachmentPickerRetry?.cancel()
+        pendingAttachmentPickerRetry = nil
+        if resetCounter {
+            pendingAttachmentPickerRetryCount = 0
+        }
+    }
+
+    private func clearQueuedAttachments() {
+        cancelPendingAttachmentPickerRetry(resetCounter: true)
+        pendingQueuedAttachments = []
     }
 
     private func runConversationSearch(query: String, backwards: Bool) {
@@ -2774,8 +2855,11 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
               log("startPlainNewConversation clicking native new chat");
               const previousTextarea = document.getElementById("prompt-textarea");
               nativeTrigger.click();
-              const submitTask = submitPromptViaChatForm(targetPrompt, previousTextarea);
-              await waitForPlainNewConversation(5000);
+              const plainNewConversation = await waitForPlainNewConversation(5000);
+              if (!plainNewConversation) {
+                log("startPlainNewConversation missing new conversation state after click");
+                return false;
+              }
               await waitForElement(
                 () =>
                   window.location.pathname === `${basePath}/c/new` ||
@@ -2784,7 +2868,11 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
                     : null,
                 5000,
               );
-              return await submitTask;
+              if (!targetPrompt) {
+                postLauncherProgress("ready");
+                return true;
+              }
+              return await submitPromptViaChatForm(targetPrompt, previousTextarea);
             };
             const startAgentChatViaMarketplace = async () => {
               if (!shouldAutoSubmitFromQuery || useRouteReloadForLauncherChats) return false;
