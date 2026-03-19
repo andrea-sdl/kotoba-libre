@@ -240,6 +240,8 @@ Top-level `WKWebView` navigations send `X-Kotoba-Libre: Kotoba Libre/<version>` 
 
 If another app opens a plain `https://...` URL with Kotoba Libre, the app accepts it as an in-app navigation when the URL host matches the configured LibreChat instance host. `https://.../app/...` paths still stay reserved for the explicit deep-link actions above.
 
+The Instance Settings option that opens external login flows in the default browser depends on the browser extension redirecting the completed auth flow back to `kotobalibre://...`.
+
 See [docs/architecture.md](docs/architecture.md) for behavior details.
 
 ## Data Storage

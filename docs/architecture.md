@@ -41,7 +41,7 @@ The UI stack is mixed by design:
 - SwiftUI renders onboarding, settings, sheets, and launcher content with native Glass surfaces
 - WebKit renders LibreChat content inside `WKWebView`
 - Top-level `WKWebView` navigations add `X-Kotoba-Libre: Kotoba Libre/<version>` so the site can detect the embedded desktop app build
-- When enabled in Instance Settings, external-host login redirects are lifted into a separate popup `WKWebView` window so host restriction does not force those auth flows into the external browser
+- When enabled in Instance Settings, external-host login redirects can be handed to the default browser, but that flow depends on the browser extension redirecting the completed auth back to `kotobalibre://...`
 - Likely OAuth popup flows can be promoted into `ASWebAuthenticationSession` when their redirect URI returns through `kotobalibre://...`, otherwise they fall back to the external browser instead of staying trapped in `WKWebView`
 - Popup-based passkey and security-key login can use build-configured `webcredentials` associated domains
 - Passkey or FIDO/security-key prompts are still not supported when the login flow stays inside the main embedded Swift window
