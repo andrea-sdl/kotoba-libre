@@ -235,6 +235,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
             return
         }
 
+        appController?.debugLog("KotobaLibre Dock: MainWindowController queueAttachment received \(urls.count) file(s)")
         ensureWebController().queueAttachment(urls: urls)
     }
 
@@ -1100,6 +1101,7 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
     func queueAttachment(urls: [URL]) {
         cancelPendingAttachmentPickerRetry(resetCounter: true)
         pendingQueuedAttachments = Array(urls.prefix(1))
+        debugLog("KotobaLibre Dock: WebContentViewController queued \(pendingQueuedAttachments.count) file(s)")
     }
 
     func navigateBack() {
@@ -1289,6 +1291,7 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
         if webView == self.webView {
             hasLoadedRemoteContent = true
             updateConversationTitle(webView.title)
+            debugLog("KotobaLibre Dock: didFinish main web view at \(webView.url?.absoluteString ?? "<unknown>") pendingQueuedAttachments=\(pendingQueuedAttachments.count)")
             if !isLauncherAutoSubmitTransition(webView.url) {
                 hideLauncherProgress()
             }
@@ -1380,6 +1383,7 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
     ) {
         if !pendingQueuedAttachments.isEmpty {
             let urls = parameters.allowsMultipleSelection ? pendingQueuedAttachments : Array(pendingQueuedAttachments.prefix(1))
+            debugLog("KotobaLibre Dock: runOpenPanelWith consuming \(urls.count) queued file(s)")
             cancelPendingAttachmentPickerRetry(resetCounter: true)
             pendingQueuedAttachments = []
             completionHandler(urls)
@@ -1508,6 +1512,11 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
             return
         }
 
+        debugLog(
+            "KotobaLibre Dock: attemptPendingAttachmentIfNeeded url=\(webView.url?.absoluteString ?? "<nil>") " +
+            "retry=\(pendingAttachmentPickerRetryCount) reset=\(resetRetryWindow)"
+        )
+
         guard isReadyForQueuedAttachment else {
             debugLog("KotobaLibre Attach: discarding queued attachment because the page left the new chat route")
             clearQueuedAttachments()
@@ -1540,6 +1549,7 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
             }
 
             let openedPicker = (result as? Bool) ?? ((result as? NSNumber)?.boolValue ?? false)
+            self.debugLog("KotobaLibre Dock: openAttachmentPicker result=\(openedPicker)")
             if !openedPicker {
                 self.debugLog("KotobaLibre Attach: page did not expose an attachment picker")
                 self.scheduleAttachmentPickerRetryIfNeeded()
@@ -1556,7 +1566,7 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
         }
 
         let path = currentURL.path.lowercased()
-        return path == "/c/new" || path.hasPrefix("/c/new/")
+        return path == "/c/new" || path.hasPrefix("/c/new/") || path.contains("/c/new")
     }
 
     private func scheduleAttachmentPickerRetryIfNeeded() {
@@ -1577,6 +1587,7 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
         }
 
         pendingAttachmentPickerRetryCount += 1
+        debugLog("KotobaLibre Dock: scheduling attachment retry \(pendingAttachmentPickerRetryCount)/\(Self.attachmentPickerRetryLimit)")
         let workItem = DispatchWorkItem { [weak self] in
             guard let self else {
                 return
@@ -1603,6 +1614,7 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
     }
 
     private func clearQueuedAttachments() {
+        debugLog("KotobaLibre Dock: clearing \(pendingQueuedAttachments.count) queued attachment file(s)")
         cancelPendingAttachmentPickerRetry(resetCounter: true)
         pendingQueuedAttachments = []
     }
@@ -2304,6 +2316,14 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
           const button = document.querySelector(selector);
           if (button instanceof HTMLElement && !button.hasAttribute("disabled")) {
             button.click();
+            break;
+          }
+        }
+
+        for (const selector of fileInputSelectors) {
+          const input = document.querySelector(selector);
+          if (input instanceof HTMLInputElement && !input.disabled) {
+            input.click();
             return true;
           }
         }

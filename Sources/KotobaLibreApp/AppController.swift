@@ -386,9 +386,21 @@ final class AppController: NSObject, ObservableObject, ASWebAuthenticationPresen
     }
 
     func handleOpenFiles(_ urls: [URL]) {
+        debugLog("KotobaLibre Dock: handleOpenFiles starting with \(urls.count) file(s)")
         do {
-            try openNewChat(attachmentFileURLs: urls)
+            if let defaultPresetID = settings.defaultPresetId, presets.contains(where: { $0.id == defaultPresetID }) {
+                debugLog("KotobaLibre Dock: opening default preset \(defaultPresetID) for dropped file")
+                try openPreset(id: defaultPresetID, query: nil, preferMainWindow: true, attachmentFileURLs: urls)
+            } else if let fallbackPresetID = sortedPresets().first?.id {
+                debugLog("KotobaLibre Dock: opening first available preset \(fallbackPresetID) for dropped file")
+                try openPreset(id: fallbackPresetID, query: nil, preferMainWindow: true, attachmentFileURLs: urls)
+            } else {
+                debugLog("KotobaLibre Dock: no presets configured, falling back to plain new chat")
+                try openNewChat(attachmentFileURLs: urls)
+            }
+            debugLog("KotobaLibre Dock: handleOpenFiles queued attachment flow successfully")
         } catch {
+            debugLog("KotobaLibre Dock: handleOpenFiles failed -> \(error.localizedDescription)")
             restoreOrOpenPrimaryWindow()
             NSSound.beep()
         }
@@ -802,7 +814,7 @@ final class AppController: NSObject, ObservableObject, ASWebAuthenticationPresen
         try openURLString(destination)
     }
 
-    func openPreset(id: String, query: String?, preferMainWindow: Bool = false) throws {
+    func openPreset(id: String, query: String?, preferMainWindow: Bool = false, attachmentFileURLs: [URL] = []) throws {
         guard let preset = presets.first(where: { $0.id == id }) else {
             throw KotobaLibreError.invalidDestination("Preset '\(id)' not found")
         }
@@ -812,7 +824,15 @@ final class AppController: NSObject, ObservableObject, ASWebAuthenticationPresen
             instanceBaseURL: settings.instanceBaseUrl,
             query: query
         )
-        try openURLString(destination, preferMainWindow: preferMainWindow)
+        if !attachmentFileURLs.isEmpty {
+            debugLog("KotobaLibre Dock: queueing \(attachmentFileURLs.count) attachment file(s) for preset \(id)")
+            mainWindowController.queueAttachment(urls: attachmentFileURLs)
+        }
+        try openURLString(
+            destination,
+            preferMainWindow: preferMainWindow,
+            forceReload: !attachmentFileURLs.isEmpty
+        )
     }
 
     func openURLString(_ destination: String, preferMainWindow: Bool = false, forceReload: Bool = false) throws {
@@ -843,9 +863,11 @@ final class AppController: NSObject, ObservableObject, ASWebAuthenticationPresen
         }
 
         if !attachmentFileURLs.isEmpty {
+            debugLog("KotobaLibre Dock: queueing \(attachmentFileURLs.count) attachment file(s) for \(targetURL.absoluteString)")
             mainWindowController.queueAttachment(urls: attachmentFileURLs)
         }
 
+        debugLog("KotobaLibre Dock: opening new chat at \(targetURL.absoluteString) forceReload=\(!attachmentFileURLs.isEmpty)")
         try openResolvedURL(targetURL, preferMainWindow: true, forceReload: !attachmentFileURLs.isEmpty)
     }
 
@@ -1313,6 +1335,14 @@ final class AppController: NSObject, ObservableObject, ASWebAuthenticationPresen
             trigger: nil
         )
         UNUserNotificationCenter.current().add(request)
+    }
+
+    func debugLog(_ message: String) {
+        guard settings.debugLoggingEnabled else {
+            return
+        }
+
+        print(message)
     }
 
     private func applyAppVisibilityMode(_ mode: AppVisibilityMode) {
