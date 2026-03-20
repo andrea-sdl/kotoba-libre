@@ -108,6 +108,8 @@ final class LauncherWindowController: NSWindowController, NSWindowDelegate {
 
         viewModel.prepareForPresentation(presentation)
         positionPanelOnActiveDisplay(presentation: presentation)
+        // Visibility is tracked separately so hidden panels can stop their background motion.
+        viewModel.setPanelVisible(true)
         window?.orderFrontRegardless()
         // The launcher should accept typing without surfacing the main window until a submission opens it.
         window?.makeKeyAndOrderFront(nil)
@@ -123,6 +125,8 @@ final class LauncherWindowController: NSWindowController, NSWindowDelegate {
     }
 
     func hide() {
+        // Hidden launcher content stays mounted, so visibility must drop before the panel leaves the screen.
+        viewModel.setPanelVisible(false)
         window?.orderOut(nil)
         viewModel.cancelPresentation()
         restorePreviouslyFrontmostApplicationIfNeeded()
@@ -243,6 +247,7 @@ final class LauncherWindowController: NSWindowController, NSWindowDelegate {
 @MainActor
 final class LauncherViewModel: ObservableObject {
     @Published private(set) var presentationMode: LauncherPresentation = .text
+    @Published private(set) var isPanelVisible = false
     @Published var query = ""
     @Published var selectedPresetID: String?
     @Published var statusMessage = ""
@@ -321,6 +326,10 @@ final class LauncherViewModel: ObservableObject {
 
     var voiceShortcutValue: String {
         appController?.settings.voiceGlobalShortcut ?? AppSettings.defaultVoiceShortcut
+    }
+
+    func setPanelVisible(_ isVisible: Bool) {
+        isPanelVisible = isVisible
     }
 
     func prepareForPresentation(_ presentation: LauncherPresentation) {
