@@ -2869,7 +2869,8 @@ struct LauncherRootView: View {
             .background(
                 LauncherPanelSurface(
                     opacity: viewModel.opacity,
-                    presentationMode: viewModel.presentationMode
+                    presentationMode: viewModel.presentationMode,
+                    showsMotion: viewModel.isPanelVisible
                 )
             )
 
@@ -2916,6 +2917,7 @@ struct LauncherRootView: View {
 private struct LauncherPanelSurface: View {
     let opacity: Double
     let presentationMode: LauncherPresentation
+    let showsMotion: Bool
 
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: 18, style: .continuous)
@@ -2929,7 +2931,10 @@ private struct LauncherPanelSurface: View {
                 )
                 .overlay(
                     shape
-                        .launcherGlowOverlay(isVoice: presentationMode == .voice)
+                        .launcherGlowOverlay(
+                            isVoice: presentationMode == .voice,
+                            showsMotion: showsMotion
+                        )
                 )
         }
     }
@@ -2939,12 +2944,13 @@ private struct LauncherPanelSurface: View {
 // for the launcher surfaces. See THIRD_PARTY_NOTICES.md for attribution details.
 private extension InsettableShape {
     @MainActor
-    func launcherGlowOverlay(isVoice: Bool) -> some View {
+    func launcherGlowOverlay(isVoice: Bool, showsMotion: Bool) -> some View {
         launcherGlowStroke(
             lineWidths: isVoice ? [2.5, 4.5, 7.5] : [2, 3.5, 6],
             blurs: isVoice ? [0, 2, 6] : [0, 2, 5],
             updateInterval: 0.42,
-            animationDurations: isVoice ? [0.44, 0.58, 0.76] : [0.40, 0.54, 0.70]
+            animationDurations: isVoice ? [0.44, 0.58, 0.76] : [0.40, 0.54, 0.70],
+            showsMotion: showsMotion
         )
         .opacity(isVoice ? 0.82 : 0.68)
     }
@@ -2954,14 +2960,16 @@ private extension InsettableShape {
         lineWidths: [CGFloat],
         blurs: [CGFloat],
         updateInterval: TimeInterval,
-        animationDurations: [TimeInterval]
+        animationDurations: [TimeInterval],
+        showsMotion: Bool
     ) -> some View {
         LauncherGlowStrokeView(
             shape: self,
             lineWidths: lineWidths,
             blurs: blurs,
             updateInterval: updateInterval,
-            animationDurations: animationDurations
+            animationDurations: animationDurations,
+            showsMotion: showsMotion
         )
         .allowsHitTesting(false)
         .accessibilityHidden(true)
@@ -2977,9 +2985,10 @@ private struct LauncherGlowStrokeView<S: InsettableShape>: View {
     let blurs: [CGFloat]
     let updateInterval: TimeInterval
     let animationDurations: [TimeInterval]
+    let showsMotion: Bool
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var stops: [Gradient.Stop] = .launcherGlowStyle
+    @State private var stops: [Gradient.Stop] = .launcherGlowStaticStyle
 
     var body: some View {
         let layerCount = min(lineWidths.count, blurs.count, animationDurations.count)
@@ -2994,28 +3003,41 @@ private struct LauncherGlowStrokeView<S: InsettableShape>: View {
                     .strokeBorder(gradient, lineWidth: lineWidths[index])
                     .blur(radius: blurs[index])
                     .animation(
-                        reduceMotion ? .linear(duration: 0) : .easeInOut(duration: animationDurations[index]),
+                        shouldAnimate ? .easeInOut(duration: animationDurations[index]) : .linear(duration: 0),
                         value: stops
                     )
             }
         }
-        .task(id: updateInterval) {
-            guard !reduceMotion else {
-                stops = .launcherGlowStyle
+        .task(id: shouldAnimate) {
+            guard shouldAnimate else {
+                stops = .launcherGlowStaticStyle
                 return
             }
 
             while !Task.isCancelled {
-                stops = .launcherGlowStyle
+                stops = .launcherGlowAnimatedStyle
                 try? await Task.sleep(for: .seconds(updateInterval))
             }
         }
     }
+
+    private var shouldAnimate: Bool {
+        showsMotion && !reduceMotion
+    }
 }
 
-// The palette stays airy and oceanic while the randomized stop locations keep the motion organic.
+// The palette keeps a calm static fallback while the visible launcher re-randomizes stop locations for motion.
 private extension Array where Element == Gradient.Stop {
-    static var launcherGlowStyle: [Gradient.Stop] {
+    static let launcherGlowStaticStyle: [Gradient.Stop] = [
+        Gradient.Stop(color: Color(red: 0.47, green: 0.83, blue: 1.00), location: 0.00),
+        Gradient.Stop(color: Color(red: 0.62, green: 0.95, blue: 0.86), location: 0.18),
+        Gradient.Stop(color: Color(red: 0.99, green: 0.79, blue: 0.62), location: 0.37),
+        Gradient.Stop(color: Color(red: 0.96, green: 0.66, blue: 0.78), location: 0.58),
+        Gradient.Stop(color: Color(red: 0.66, green: 0.74, blue: 1.00), location: 0.79),
+        Gradient.Stop(color: Color(red: 0.83, green: 0.73, blue: 0.98), location: 1.00)
+    ]
+
+    static var launcherGlowAnimatedStyle: [Gradient.Stop] {
         [
             Color(red: 0.47, green: 0.83, blue: 1.00),
             Color(red: 0.62, green: 0.95, blue: 0.86),
