@@ -1121,7 +1121,56 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
     }
 
     func showConversationSearch() {
-        conversationSearchBarView.show(animated: true)
+        let script = """
+        (() => {
+          const inputSelectors = [
+            "input[aria-label='Search messages']",
+            "input[placeholder='Search messages']",
+            "input[data-testid*='search']",
+          ];
+          for (const selector of inputSelectors) {
+            const input = document.querySelector(selector);
+            if (input instanceof HTMLInputElement) {
+              input.focus();
+              input.select?.();
+              return true;
+            }
+          }
+
+          const buttonSelectors = [
+            "button[aria-label='Search messages']",
+            "button[data-testid*='search']",
+          ];
+          for (const selector of buttonSelectors) {
+            const button = document.querySelector(selector);
+            if (button instanceof HTMLElement) {
+              button.click();
+              window.setTimeout(() => {
+                const input = document.querySelector("input[aria-label='Search messages']");
+                if (input instanceof HTMLInputElement) {
+                  input.focus();
+                  input.select?.();
+                }
+              }, 50);
+              return true;
+            }
+          }
+
+          return false;
+        })();
+        """
+        webView.evaluateJavaScript(script) { [weak self] result, error in
+            if let error {
+                self?.debugLog("KotobaLibre Search: evaluateJavaScript failed -> \(error.localizedDescription)")
+                return
+            }
+
+            let focusedSearch = (result as? Bool) ?? ((result as? NSNumber)?.boolValue ?? false)
+            self?.debugLog("KotobaLibre Search: focused wide search=\(focusedSearch)")
+            if !focusedSearch {
+                NSSound.beep()
+            }
+        }
     }
 
     func stopGenerating() -> Bool {
@@ -2301,8 +2350,12 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
         "[data-testid='upload-button']",
         "button[aria-label*='Attach' i]",
         "button[aria-label*='Upload' i]",
+        "button[aria-label*='File' i]",
         "button[title*='Attach' i]",
         "button[title*='Upload' i]",
+        "button[data-testid*='attach' i]",
+        "button[data-testid*='upload' i]",
+        "button[data-testid*='file' i]",
       ];
       const openAttachmentPicker = () => {
         for (const selector of fileInputSelectors) {
