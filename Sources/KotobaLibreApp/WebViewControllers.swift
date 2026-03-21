@@ -251,8 +251,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         webController?.showConversationSearch()
     }
 
-    func stopGenerating() -> Bool {
-        webController?.stopGenerating() ?? false
+    func stopGenerating(force: Bool = false) -> Bool {
+        webController?.stopGenerating(force: force) ?? false
     }
 
     private func installShortcutMonitor() {
@@ -261,13 +261,23 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
             guard
                 let self,
                 let window = self.window,
-                event.window == window,
-                self.appController?.handleShortcutKeyEvent(event) == true
+                event.window == window
             else {
                 return event
             }
 
-            return nil
+            if self.appController?.handleShortcutKeyEvent(event) == true {
+                return nil
+            }
+
+            if event.keyCode == 53, self.contentKind == .web {
+                let shouldConsumeStop = self.webController?.isGeneratingResponse ?? false
+                if self.stopGenerating(force: true) {
+                    return shouldConsumeStop ? nil : event
+                }
+            }
+
+            return event
         }
     }
 
@@ -1173,8 +1183,8 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
         }
     }
 
-    func stopGenerating() -> Bool {
-        guard isGeneratingResponse else {
+    func stopGenerating(force: Bool = false) -> Bool {
+        guard force || isGeneratingResponse else {
             return false
         }
 
@@ -1188,10 +1198,14 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
           }
         })();
         """
-        webView.evaluateJavaScript(script) { [weak self] _, error in
+        webView.evaluateJavaScript(script) { [weak self] result, error in
             if let error {
                 self?.debugLog("KotobaLibre Stop: evaluateJavaScript failed -> \(error.localizedDescription)")
+                return
             }
+
+            let stoppedGeneration = (result as? Bool) ?? ((result as? NSNumber)?.boolValue ?? false)
+            self?.debugLog("KotobaLibre Stop: stop request result=\(stoppedGeneration)")
         }
         return true
     }
