@@ -15,6 +15,12 @@ private enum MainWindowToolbarItem {
     static let addAgent = NSToolbarItem.Identifier("KotobaLibreAddAgent")
 }
 
+// WebResponseCompletion carries the metadata the native shell needs for badges and notifications.
+struct WebResponseCompletion {
+    let conversationTitle: String?
+    let duration: TimeInterval
+}
+
 // MainWindowController owns the primary app window.
 // It swaps between onboarding and web content and remembers the last usable frame.
 @MainActor
@@ -68,6 +74,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         }
 
         updateAddAgentCandidate(nil)
+        updateWindowTitle(nil)
         applyWindowSizing(for: .onboarding)
         window?.toolbar = nil
         let hostingController = NSHostingController(
@@ -83,6 +90,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         let controller = ensureWebController()
         controller.apply(settings: settings)
         window?.contentViewController = controller
+        updateWindowTitle(controller.currentConversationTitle)
     }
 
     func navigateToHome(settings: AppSettings) {
@@ -98,6 +106,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         controller.apply(settings: settings)
         window?.contentViewController = controller
         controller.load(url: homeURL)
+        updateWindowTitle(controller.currentConversationTitle)
     }
 
     func open(url: URL, settings: AppSettings, instanceHost: String?, forceEmbedAllHosts: Bool = false, forceReload: Bool = false) {
@@ -113,11 +122,28 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
             forceEmbedAllHosts: forceEmbedAllHosts,
             forceReload: forceReload
         )
+        updateWindowTitle(controller.currentConversationTitle)
         showAndFocus()
     }
 
     var isVisible: Bool {
         window?.isVisible ?? false
+    }
+
+    var canNavigateBack: Bool {
+        webController?.canNavigateBack ?? false
+    }
+
+    var canNavigateForward: Bool {
+        webController?.canNavigateForward ?? false
+    }
+
+    var canSearchMessages: Bool {
+        webController != nil
+    }
+
+    var canStopGenerating: Bool {
+        webController?.isGeneratingResponse ?? false
     }
 
     func showAndFocus() {
@@ -149,6 +175,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
 
     func windowDidChangeScreen(_ notification: Notification) {
         normalizeWindowFrameToAvailableScreens()
+    }
+
+    func windowDidBecomeKey(_ notification: Notification) {
+        appController?.markResponsesRead()
     }
 
     func persistStateForTermination() {
@@ -190,8 +220,39 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         created.addAgentCandidateHandler = { [weak self] candidate in
             self?.updateAddAgentCandidate(candidate)
         }
+        created.conversationTitleHandler = { [weak self] title in
+            self?.updateWindowTitle(title)
+        }
+        created.responseCompletionHandler = { [weak appController] completion in
+            appController?.handleWebResponseCompletion(completion)
+        }
         webController = created
         return created
+    }
+
+    func queueAttachment(urls: [URL]) {
+        guard !urls.isEmpty else {
+            return
+        }
+
+        appController?.debugLog("KotobaLibre Dock: MainWindowController queueAttachment received \(urls.count) file(s)")
+        ensureWebController().queueAttachment(urls: urls)
+    }
+
+    func navigateBack() {
+        webController?.navigateBack()
+    }
+
+    func navigateForward() {
+        webController?.navigateForward()
+    }
+
+    func showConversationSearch() {
+        webController?.showConversationSearch()
+    }
+
+    func stopGenerating(force: Bool = false) -> Bool {
+        webController?.stopGenerating(force: force) ?? false
     }
 
     private func installShortcutMonitor() {
@@ -200,13 +261,23 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
             guard
                 let self,
                 let window = self.window,
-                event.window == window,
-                self.appController?.handleShortcutKeyEvent(event) == true
+                event.window == window
             else {
                 return event
             }
 
-            return nil
+            if self.appController?.handleShortcutKeyEvent(event) == true {
+                return nil
+            }
+
+            if event.keyCode == 53, self.contentKind == .web {
+                let shouldConsumeStop = self.webController?.isGeneratingResponse ?? false
+                if self.stopGenerating(force: true) {
+                    return shouldConsumeStop ? nil : event
+                }
+            }
+
+            return event
         }
     }
 
@@ -469,6 +540,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         presentAddAgentSheetFromTitlebar()
     }
 
+    private func updateWindowTitle(_ conversationTitle: String?) {
+        let trimmedTitle = conversationTitle?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        window?.title = trimmedTitle.isEmpty ? appDisplayName : "\(trimmedTitle) - \(appDisplayName)"
+    }
+
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         [.flexibleSpace, MainWindowToolbarItem.addAgent]
     }
@@ -517,9 +593,12 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
     private static let logHandlerName = "kotobaLibreLog"
     private static let addAgentCandidateHandlerName = "kotobaLibreAddAgentCandidate"
     private static let launcherProgressHandlerName = "kotobaLibreLauncherProgress"
+    private static let desktopEventHandlerName = "kotobaLibreDesktopEvent"
     private static let supportedAuthenticationCallbackScheme = "kotobalibre"
     private static let appIdentityHeaderName = "X-Kotoba-Libre"
     private static let appIdentityHeaderValue = "\(appDisplayName)/\(AppResources.appVersionDisplayString)"
+    private static let attachmentPickerRetryDelay: TimeInterval = 0.35
+    private static let attachmentPickerRetryLimit = 12
 
     private enum ExternalNavigationPolicy {
         case singleHost(String?)
@@ -705,12 +784,157 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
         }
     }
 
+    // This overlay gives the app a lightweight native search UI for the current conversation.
+    @MainActor
+    private final class ConversationSearchBarView: NSVisualEffectView {
+        private let searchField = NSSearchField()
+        private let previousButton = NSButton()
+        private let nextButton = NSButton()
+        private let closeButton = NSButton()
+
+        var onSearchChange: ((String) -> Void)?
+        var onFindPrevious: ((String) -> Void)?
+        var onFindNext: ((String) -> Void)?
+        var onClose: (() -> Void)?
+
+        override init(frame frameRect: NSRect) {
+            super.init(frame: frameRect)
+
+            material = .hudWindow
+            blendingMode = .withinWindow
+            state = .active
+            wantsLayer = true
+            layer?.cornerRadius = 14
+            layer?.masksToBounds = true
+            translatesAutoresizingMaskIntoConstraints = false
+            alphaValue = 0
+            isHidden = true
+
+            searchField.placeholderString = "Search messages"
+            searchField.sendsSearchStringImmediately = true
+            searchField.target = self
+            searchField.action = #selector(handleSearchChanged)
+            searchField.translatesAutoresizingMaskIntoConstraints = false
+
+            previousButton.bezelStyle = .texturedRounded
+            previousButton.controlSize = .small
+            previousButton.image = NSImage(systemSymbolName: "chevron.up", accessibilityDescription: "Previous match")
+            previousButton.target = self
+            previousButton.action = #selector(handleFindPrevious)
+            previousButton.translatesAutoresizingMaskIntoConstraints = false
+
+            nextButton.bezelStyle = .texturedRounded
+            nextButton.controlSize = .small
+            nextButton.image = NSImage(systemSymbolName: "chevron.down", accessibilityDescription: "Next match")
+            nextButton.target = self
+            nextButton.action = #selector(handleFindNext)
+            nextButton.translatesAutoresizingMaskIntoConstraints = false
+
+            closeButton.bezelStyle = .texturedRounded
+            closeButton.controlSize = .small
+            closeButton.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "Close search")
+            closeButton.target = self
+            closeButton.action = #selector(handleClose)
+            closeButton.translatesAutoresizingMaskIntoConstraints = false
+
+            addSubview(searchField)
+            addSubview(previousButton)
+            addSubview(nextButton)
+            addSubview(closeButton)
+
+            NSLayoutConstraint.activate([
+                searchField.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+                searchField.centerYAnchor.constraint(equalTo: centerYAnchor),
+                searchField.widthAnchor.constraint(equalToConstant: 220),
+                previousButton.leadingAnchor.constraint(equalTo: searchField.trailingAnchor, constant: 8),
+                previousButton.centerYAnchor.constraint(equalTo: centerYAnchor),
+                nextButton.leadingAnchor.constraint(equalTo: previousButton.trailingAnchor, constant: 6),
+                nextButton.centerYAnchor.constraint(equalTo: centerYAnchor),
+                closeButton.leadingAnchor.constraint(equalTo: nextButton.trailingAnchor, constant: 6),
+                closeButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+                closeButton.centerYAnchor.constraint(equalTo: centerYAnchor),
+                topAnchor.constraint(equalTo: searchField.topAnchor, constant: -10),
+                bottomAnchor.constraint(equalTo: searchField.bottomAnchor, constant: 10)
+            ])
+        }
+
+        @available(*, unavailable)
+        required init?(coder: NSCoder) {
+            fatalError("init(coder:) has not been implemented")
+        }
+
+        var query: String {
+            searchField.stringValue
+        }
+
+        func show(animated: Bool) {
+            guard isHidden || alphaValue < 1 else {
+                focus()
+                return
+            }
+
+            isHidden = false
+            if animated {
+                alphaValue = 0
+                NSAnimationContext.runAnimationGroup { context in
+                    context.duration = 0.14
+                    animator().alphaValue = 1
+                }
+            } else {
+                alphaValue = 1
+            }
+            focus()
+        }
+
+        func hide(animated: Bool) {
+            if animated {
+                NSAnimationContext.runAnimationGroup({ context in
+                    context.duration = 0.14
+                    animator().alphaValue = 0
+                }, completionHandler: { [weak self] in
+                    Task { @MainActor [weak self] in
+                        self?.alphaValue = 0
+                        self?.isHidden = true
+                    }
+                })
+            } else {
+                alphaValue = 0
+                isHidden = true
+            }
+        }
+
+        func focus() {
+            window?.makeFirstResponder(searchField)
+            searchField.selectText(nil)
+        }
+
+        @objc private func handleSearchChanged() {
+            onSearchChange?(searchField.stringValue)
+        }
+
+        @objc private func handleFindPrevious() {
+            onFindPrevious?(searchField.stringValue)
+        }
+
+        @objc private func handleFindNext() {
+            onFindNext?(searchField.stringValue)
+        }
+
+        @objc private func handleClose() {
+            onClose?()
+        }
+    }
+
     let webView: WKWebView
     var externalNavigationHandler: ((URL) -> Void)?
     var authenticationSessionStarter: ((URL, String) -> Bool)?
     var appNavigationHandler: ((URL) -> Bool)?
     var addAgentCandidateHandler: ((WebAddPresetCandidate?) -> Void)?
+    var conversationTitleHandler: ((String?) -> Void)?
+    var responseCompletionHandler: ((WebResponseCompletion) -> Void)?
     var debugLoggingEnabled = false
+    private(set) var currentConversationTitle: String?
+    private(set) var isGeneratingResponse = false
     private var hasLoadedRemoteContent = false
     private var externalNavigationPolicy: ExternalNavigationPolicy = .singleHost(nil)
     private var popupWindowControllers: [ObjectIdentifier: PopupWindowController] = [:]
@@ -718,9 +942,14 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
     private let logMessageHandler = ScriptMessageHandler()
     private let addAgentMessageHandler = DictionaryMessageHandler()
     private let launcherProgressMessageHandler = DictionaryMessageHandler()
+    private let desktopEventMessageHandler = DictionaryMessageHandler()
     private let launcherProgressBadgeView = LauncherProgressBadgeView()
+    private let conversationSearchBarView = ConversationSearchBarView()
     private var pendingLauncherProgressShow: DispatchWorkItem?
     private var pendingLauncherProgressHide: DispatchWorkItem?
+    private var pendingQueuedAttachments: [URL] = []
+    private var pendingAttachmentPickerRetry: DispatchWorkItem?
+    private var pendingAttachmentPickerRetryCount = 0
     private var currentSettings = AppSettings()
 
     init() {
@@ -731,6 +960,7 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
         configuration.userContentController.add(logMessageHandler, name: Self.logHandlerName)
         configuration.userContentController.add(addAgentMessageHandler, name: Self.addAgentCandidateHandlerName)
         configuration.userContentController.add(launcherProgressMessageHandler, name: Self.launcherProgressHandlerName)
+        configuration.userContentController.add(desktopEventMessageHandler, name: Self.desktopEventHandlerName)
         configuration.userContentController.addUserScript(
             WKUserScript(
                 source: Self.loggerBootstrapScript,
@@ -752,6 +982,13 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
                 forMainFrameOnly: true
             )
         )
+        configuration.userContentController.addUserScript(
+            WKUserScript(
+                source: Self.desktopStateObserverScript,
+                injectionTime: .atDocumentStart,
+                forMainFrameOnly: true
+            )
+        )
         self.webView = WKWebView(frame: .zero, configuration: configuration)
         super.init(nibName: nil, bundle: nil)
         self.webView.navigationDelegate = self
@@ -766,6 +1003,21 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
         launcherProgressMessageHandler.onMessage = { [weak self] body in
             self?.handleLauncherProgressMessage(body)
         }
+        desktopEventMessageHandler.onMessage = { [weak self] body in
+            self?.handleDesktopEventMessage(body)
+        }
+        conversationSearchBarView.onSearchChange = { [weak self] query in
+            self?.runConversationSearch(query: query, backwards: false)
+        }
+        conversationSearchBarView.onFindPrevious = { [weak self] query in
+            self?.runConversationSearch(query: query, backwards: true)
+        }
+        conversationSearchBarView.onFindNext = { [weak self] query in
+            self?.runConversationSearch(query: query, backwards: false)
+        }
+        conversationSearchBarView.onClose = { [weak self] in
+            self?.conversationSearchBarView.hide(animated: true)
+        }
     }
 
     @available(*, unavailable)
@@ -777,6 +1029,7 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
         let containerView = NSView()
         containerView.addSubview(webView)
         containerView.addSubview(launcherProgressBadgeView)
+        containerView.addSubview(conversationSearchBarView)
         webView.translatesAutoresizingMaskIntoConstraints = false
 
         NSLayoutConstraint.activate([
@@ -786,7 +1039,9 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
             webView.bottomAnchor.constraint(equalTo: containerView.bottomAnchor),
             launcherProgressBadgeView.centerXAnchor.constraint(equalTo: containerView.centerXAnchor),
             launcherProgressBadgeView.topAnchor.constraint(equalTo: containerView.topAnchor, constant: 18),
-            launcherProgressBadgeView.widthAnchor.constraint(lessThanOrEqualToConstant: 260)
+            launcherProgressBadgeView.widthAnchor.constraint(lessThanOrEqualToConstant: 260),
+            conversationSearchBarView.topAnchor.constraint(equalTo: containerView.topAnchor, constant: 18),
+            conversationSearchBarView.trailingAnchor.constraint(equalTo: containerView.trailingAnchor, constant: -18)
         ])
 
         view = containerView
@@ -796,6 +1051,14 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
         // Navigation decisions depend on the latest settings even while the web view instance is reused.
         currentSettings = settings
         debugLoggingEnabled = settings.debugLoggingEnabled
+    }
+
+    var canNavigateBack: Bool {
+        webView.canGoBack
+    }
+
+    var canNavigateForward: Bool {
+        webView.canGoForward
     }
 
     func load(url: URL) {
@@ -843,6 +1106,108 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
         }
 
         load(url: url)
+    }
+
+    func queueAttachment(urls: [URL]) {
+        cancelPendingAttachmentPickerRetry(resetCounter: true)
+        pendingQueuedAttachments = Array(urls.prefix(1))
+        debugLog("KotobaLibre Dock: WebContentViewController queued \(pendingQueuedAttachments.count) file(s)")
+    }
+
+    func navigateBack() {
+        guard webView.canGoBack else {
+            return
+        }
+
+        webView.goBack()
+    }
+
+    func navigateForward() {
+        guard webView.canGoForward else {
+            return
+        }
+
+        webView.goForward()
+    }
+
+    func showConversationSearch() {
+        let script = """
+        (() => {
+          const inputSelectors = [
+            "input[aria-label='Search messages']",
+            "input[placeholder='Search messages']",
+            "input[data-testid*='search']",
+          ];
+          for (const selector of inputSelectors) {
+            const input = document.querySelector(selector);
+            if (input instanceof HTMLInputElement) {
+              input.focus();
+              input.select?.();
+              return true;
+            }
+          }
+
+          const buttonSelectors = [
+            "button[aria-label='Search messages']",
+            "button[data-testid*='search']",
+          ];
+          for (const selector of buttonSelectors) {
+            const button = document.querySelector(selector);
+            if (button instanceof HTMLElement) {
+              button.click();
+              window.setTimeout(() => {
+                const input = document.querySelector("input[aria-label='Search messages']");
+                if (input instanceof HTMLInputElement) {
+                  input.focus();
+                  input.select?.();
+                }
+              }, 50);
+              return true;
+            }
+          }
+
+          return false;
+        })();
+        """
+        webView.evaluateJavaScript(script) { [weak self] result, error in
+            if let error {
+                self?.debugLog("KotobaLibre Search: evaluateJavaScript failed -> \(error.localizedDescription)")
+                return
+            }
+
+            let focusedSearch = (result as? Bool) ?? ((result as? NSNumber)?.boolValue ?? false)
+            self?.debugLog("KotobaLibre Search: focused wide search=\(focusedSearch)")
+            if !focusedSearch {
+                NSSound.beep()
+            }
+        }
+    }
+
+    func stopGenerating(force: Bool = false) -> Bool {
+        guard force || isGeneratingResponse else {
+            return false
+        }
+
+        let script = """
+        (() => {
+          try {
+            const stopGenerating = globalThis.__kotobaLibreStopGenerating;
+            return typeof stopGenerating === "function" ? stopGenerating() : false;
+          } catch (_) {
+            return false;
+          }
+        })();
+        """
+        webView.evaluateJavaScript(script) { [weak self] result, error in
+            if let error {
+                self?.debugLog("KotobaLibre Stop: evaluateJavaScript failed -> \(error.localizedDescription)")
+                return
+            }
+
+            let stoppedGeneration = (result as? Bool) ?? ((result as? NSNumber)?.boolValue ?? false)
+            self?.debugLog("KotobaLibre Stop: stop request result=\(stoppedGeneration)")
+        }
+        return true
     }
 
     func fetchCurrentAddAgentCandidate(completion: @escaping (WebAddPresetCandidate?) -> Void) {
@@ -975,6 +1340,9 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
     }
 
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+        if webView == self.webView {
+            cancelPendingAttachmentPickerRetry(resetCounter: false)
+        }
         debugLog("KotobaLibre NavLifecycle: didStartProvisional url=\(webView.url?.absoluteString ?? "<unknown>")")
     }
 
@@ -985,9 +1353,12 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         if webView == self.webView {
             hasLoadedRemoteContent = true
+            updateConversationTitle(webView.title)
+            debugLog("KotobaLibre Dock: didFinish main web view at \(webView.url?.absoluteString ?? "<unknown>") pendingQueuedAttachments=\(pendingQueuedAttachments.count)")
             if !isLauncherAutoSubmitTransition(webView.url) {
                 hideLauncherProgress()
             }
+            attemptPendingAttachmentIfNeeded(resetRetryWindow: true)
         }
         popupWindowControllers[ObjectIdentifier(webView)]?.window?.title = webView.title ?? appDisplayName
         debugLog("KotobaLibre SPA: didFinish -> \(webView.url?.absoluteString ?? "<unknown>")")
@@ -1073,6 +1444,15 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
         initiatedByFrame frame: WKFrameInfo,
         completionHandler: @escaping @MainActor ([URL]?) -> Void
     ) {
+        if !pendingQueuedAttachments.isEmpty {
+            let urls = parameters.allowsMultipleSelection ? pendingQueuedAttachments : Array(pendingQueuedAttachments.prefix(1))
+            debugLog("KotobaLibre Dock: runOpenPanelWith consuming \(urls.count) queued file(s)")
+            cancelPendingAttachmentPickerRetry(resetCounter: true)
+            pendingQueuedAttachments = []
+            completionHandler(urls)
+            return
+        }
+
         let panel = NSOpenPanel()
         panel.canChooseFiles = true
         panel.canChooseDirectories = parameters.allowsDirectories
@@ -1147,6 +1527,173 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
         }
 
         print(message)
+    }
+
+    private func handleDesktopEventMessage(_ rawValue: Any) {
+        guard let payload = rawValue as? [String: Any], let type = payload["type"] as? String else {
+            return
+        }
+
+        switch type {
+        case "title":
+            updateConversationTitle(payload["title"] as? String)
+        case "response-started":
+            isGeneratingResponse = true
+        case "response-finished":
+            isGeneratingResponse = false
+            let title = payload["title"] as? String
+            updateConversationTitle(title)
+            let durationMilliseconds = payload["durationMs"] as? Double ?? 0
+            responseCompletionHandler?(
+                WebResponseCompletion(
+                    conversationTitle: normalizedConversationTitle(title),
+                    duration: durationMilliseconds / 1_000
+                )
+            )
+        default:
+            break
+        }
+    }
+
+    private func updateConversationTitle(_ rawTitle: String?) {
+        let normalizedTitle = normalizedConversationTitle(rawTitle)
+        guard currentConversationTitle != normalizedTitle else {
+            return
+        }
+
+        currentConversationTitle = normalizedTitle
+        conversationTitleHandler?(normalizedTitle)
+    }
+
+    private func normalizedConversationTitle(_ rawTitle: String?) -> String? {
+        let trimmedTitle = rawTitle?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmedTitle.isEmpty ? nil : trimmedTitle
+    }
+
+    private func attemptPendingAttachmentIfNeeded(resetRetryWindow: Bool = false) {
+        guard !pendingQueuedAttachments.isEmpty else {
+            return
+        }
+
+        debugLog(
+            "KotobaLibre Dock: attemptPendingAttachmentIfNeeded url=\(webView.url?.absoluteString ?? "<nil>") " +
+            "retry=\(pendingAttachmentPickerRetryCount) reset=\(resetRetryWindow)"
+        )
+
+        guard isReadyForQueuedAttachment else {
+            debugLog("KotobaLibre Attach: discarding queued attachment because the page left the new chat route")
+            clearQueuedAttachments()
+            return
+        }
+
+        if resetRetryWindow {
+            cancelPendingAttachmentPickerRetry(resetCounter: true)
+        }
+
+        let script = """
+        (() => {
+          try {
+            const openAttachmentPicker = globalThis.__kotobaLibreOpenAttachmentPicker;
+            return typeof openAttachmentPicker === "function" ? openAttachmentPicker() : false;
+          } catch (_) {
+            return false;
+          }
+        })();
+        """
+        webView.evaluateJavaScript(script) { [weak self] result, error in
+            guard let self else {
+                return
+            }
+
+            if let error {
+                self.debugLog("KotobaLibre Attach: evaluateJavaScript failed -> \(error.localizedDescription)")
+                self.scheduleAttachmentPickerRetryIfNeeded()
+                return
+            }
+
+            let openedPicker = (result as? Bool) ?? ((result as? NSNumber)?.boolValue ?? false)
+            self.debugLog("KotobaLibre Dock: openAttachmentPicker result=\(openedPicker)")
+            if !openedPicker {
+                self.debugLog("KotobaLibre Attach: page did not expose an attachment picker")
+                self.scheduleAttachmentPickerRetryIfNeeded()
+                return
+            }
+
+            self.cancelPendingAttachmentPickerRetry(resetCounter: true)
+        }
+    }
+
+    private var isReadyForQueuedAttachment: Bool {
+        guard let currentURL = webView.url else {
+            return true
+        }
+
+        let path = currentURL.path.lowercased()
+        return path == "/c/new" || path.hasPrefix("/c/new/") || path.contains("/c/new")
+    }
+
+    private func scheduleAttachmentPickerRetryIfNeeded() {
+        guard !pendingQueuedAttachments.isEmpty else {
+            return
+        }
+
+        guard isReadyForQueuedAttachment else {
+            debugLog("KotobaLibre Attach: clearing queued attachment after route changed")
+            clearQueuedAttachments()
+            return
+        }
+
+        guard pendingAttachmentPickerRetryCount < Self.attachmentPickerRetryLimit else {
+            debugLog("KotobaLibre Attach: clearing queued attachment after retry limit")
+            clearQueuedAttachments()
+            return
+        }
+
+        pendingAttachmentPickerRetryCount += 1
+        debugLog("KotobaLibre Dock: scheduling attachment retry \(pendingAttachmentPickerRetryCount)/\(Self.attachmentPickerRetryLimit)")
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self else {
+                return
+            }
+
+            self.pendingAttachmentPickerRetry = nil
+            self.attemptPendingAttachmentIfNeeded()
+        }
+
+        pendingAttachmentPickerRetry?.cancel()
+        pendingAttachmentPickerRetry = workItem
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + Self.attachmentPickerRetryDelay,
+            execute: workItem
+        )
+    }
+
+    private func cancelPendingAttachmentPickerRetry(resetCounter: Bool) {
+        pendingAttachmentPickerRetry?.cancel()
+        pendingAttachmentPickerRetry = nil
+        if resetCounter {
+            pendingAttachmentPickerRetryCount = 0
+        }
+    }
+
+    private func clearQueuedAttachments() {
+        debugLog("KotobaLibre Dock: clearing \(pendingQueuedAttachments.count) queued attachment file(s)")
+        cancelPendingAttachmentPickerRetry(resetCounter: true)
+        pendingQueuedAttachments = []
+    }
+
+    private func runConversationSearch(query: String, backwards: Bool) {
+        let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedQuery.isEmpty else {
+            return
+        }
+
+        let configuration = WKFindConfiguration()
+        configuration.backwards = backwards
+        configuration.wraps = true
+        webView.find(trimmedQuery, configuration: configuration) { [weak self] _ in
+            self?.debugLog("KotobaLibre Search: query=\(trimmedQuery) backwards=\(backwards)")
+        }
     }
 
     private func logNavigationAction(_ navigationAction: WKNavigationAction, webView: WKWebView, currentEmbeddedHost: String?) {
@@ -1771,6 +2318,169 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
     })();
     """
 
+    private static let desktopStateObserverScript = """
+    (() => {
+      const postDesktopEvent = (type, payload = {}) => {
+        try {
+          window.webkit?.messageHandlers?.\(desktopEventHandlerName).postMessage({ type, ...payload });
+        } catch (_) {
+        }
+      };
+      const trimText = (value) => typeof value === "string" ? value.trim() : "";
+      const selectorList = [
+        "[data-testid='stop-generating-button']",
+        "[data-testid='stop-button']",
+        "button[aria-label*='Stop' i]",
+        "button[title*='Stop' i]",
+        "button[data-testid='send-button'][aria-label*='Stop' i]",
+        "button[data-testid='send-button'][title*='Stop' i]",
+      ];
+      const findStopButton = () => {
+        for (const selector of selectorList) {
+          const match = document.querySelector(selector);
+          if (match instanceof HTMLElement && !match.hasAttribute("disabled")) {
+            return match;
+          }
+        }
+        const buttons = Array.from(document.querySelectorAll("button"));
+        return buttons.find((button) => {
+          if (!(button instanceof HTMLElement) || button.hasAttribute("disabled")) {
+            return false;
+          }
+          const description = [
+            button.getAttribute("aria-label") ?? "",
+            button.getAttribute("title") ?? "",
+            button.textContent ?? "",
+          ].join(" ").toLowerCase();
+          return description.includes("stop") && description.includes("generat");
+        }) ?? null;
+      };
+      const fileInputSelectors = [
+        "input[type='file']",
+        "input[type='file'][multiple]",
+      ];
+      const attachmentButtonSelectors = [
+        "[data-testid='attach-file-button']",
+        "[data-testid='upload-button']",
+        "button[aria-label*='Attach' i]",
+        "button[aria-label*='Upload' i]",
+        "button[aria-label*='File' i]",
+        "button[title*='Attach' i]",
+        "button[title*='Upload' i]",
+        "button[data-testid*='attach' i]",
+        "button[data-testid*='upload' i]",
+        "button[data-testid*='file' i]",
+      ];
+      const openAttachmentPicker = () => {
+        for (const selector of fileInputSelectors) {
+          const input = document.querySelector(selector);
+          if (input instanceof HTMLInputElement && !input.disabled) {
+            input.click();
+            return true;
+          }
+        }
+        for (const selector of attachmentButtonSelectors) {
+          const button = document.querySelector(selector);
+          if (button instanceof HTMLElement && !button.hasAttribute("disabled")) {
+            button.click();
+            break;
+          }
+        }
+
+        for (const selector of fileInputSelectors) {
+          const input = document.querySelector(selector);
+          if (input instanceof HTMLInputElement && !input.disabled) {
+            input.click();
+            return true;
+          }
+        }
+        return false;
+      };
+      const state = {
+        title: "",
+        isGenerating: false,
+        generationStartedAt: 0,
+      };
+      const currentTitle = () => trimText(document.title);
+      const syncTitle = () => {
+        const title = currentTitle();
+        if (title === state.title) return;
+        state.title = title;
+        postDesktopEvent("title", { title });
+      };
+      const syncGeneration = () => {
+        const isGenerating = !!findStopButton();
+        if (isGenerating === state.isGenerating) return;
+        state.isGenerating = isGenerating;
+        if (isGenerating) {
+          state.generationStartedAt = Date.now();
+          postDesktopEvent("response-started", { title: currentTitle() });
+          return;
+        }
+        const durationMs = state.generationStartedAt > 0 ? Date.now() - state.generationStartedAt : 0;
+        state.generationStartedAt = 0;
+        postDesktopEvent("response-finished", { title: currentTitle(), durationMs });
+      };
+      let queued = false;
+      const scheduleSync = () => {
+        if (queued) return;
+        queued = true;
+        queueMicrotask(() => {
+          queued = false;
+          syncTitle();
+          syncGeneration();
+        });
+      };
+      const wrapHistory = (methodName) => {
+        const original = history[methodName];
+        if (typeof original !== "function") return;
+        history[methodName] = function(...args) {
+          const result = original.apply(this, args);
+          scheduleSync();
+          return result;
+        };
+      };
+      globalThis.__kotobaLibreStopGenerating = () => {
+        const button = findStopButton();
+        if (!(button instanceof HTMLElement)) {
+          return false;
+        }
+        button.click();
+        return true;
+      };
+      globalThis.__kotobaLibreOpenAttachmentPicker = openAttachmentPicker;
+      wrapHistory("pushState");
+      wrapHistory("replaceState");
+      window.addEventListener("load", scheduleSync);
+      window.addEventListener("hashchange", scheduleSync);
+      window.addEventListener("popstate", scheduleSync);
+      document.addEventListener("readystatechange", scheduleSync);
+      const beginObserving = () => {
+        const titleElement = document.querySelector("title");
+        if (titleElement instanceof HTMLElement) {
+          new MutationObserver(scheduleSync).observe(titleElement, {
+            childList: true,
+            characterData: true,
+            subtree: true,
+          });
+        }
+        if (!document.documentElement) {
+          window.setTimeout(beginObserving, 50);
+          return;
+        }
+        new MutationObserver(scheduleSync).observe(document.documentElement, {
+          subtree: true,
+          childList: true,
+          attributes: true,
+          attributeFilter: ["title", "aria-label", "disabled", "data-testid"],
+        });
+      };
+      beginObserving();
+      window.setInterval(syncGeneration, 750);
+      scheduleSync();
+    })();
+    """
+
     private func spaNavigationScript(destination: String, useRouteReload: Bool) -> String {
         let payloadData = try? JSONEncoder().encode(destination)
         let payload = payloadData.flatMap { String(data: $0, encoding: .utf8) } ?? "\"\(destination)\""
@@ -1819,6 +2529,9 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
             };
             const targetAppPath = toAppPath(next.href);
             const targetRouterPath = toRouterPath(next.href);
+            const isNewChatTarget = next.pathname === "/c/new" || next.pathname.startsWith("/c/new/");
+            const targetAgentId = next.searchParams.get("agent_id");
+            const targetPrompt = next.searchParams.get("prompt") ?? next.searchParams.get("q") ?? "";
             const shouldAutoSubmitFromQuery =
               (next.searchParams.get("submit") ?? "").toLowerCase() === "true" &&
               (next.searchParams.has("prompt") || next.searchParams.has("q"));
@@ -1836,15 +2549,14 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
               shouldAutoSubmitFromQuery,
               useRouteReloadForLauncherChats,
             });
-            if (next.pathname === "/c/new" || next.pathname.startsWith("/c/new/")) {
+            if (isNewChatTarget) {
               postLauncherProgress("opening-agent");
             }
             const seedLauncherSelection = () => {
-              if (!(next.pathname === "/c/new" || next.pathname.startsWith("/c/new/"))) return;
-              const agentId = next.searchParams.get("agent_id");
-              if (agentId) {
-                localStorage.setItem("agent_id__0", agentId);
-                log("seedLauncherSelection", agentId);
+              if (!isNewChatTarget) return;
+              if (targetAgentId) {
+                localStorage.setItem("agent_id__0", targetAgentId);
+                log("seedLauncherSelection", targetAgentId);
               }
             };
             seedLauncherSelection();
@@ -2107,6 +2819,26 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
               );
             const waitForChatContext = async (timeoutMs = 240) =>
               await waitForResult(() => getChatContext(), timeoutMs, 20);
+            const waitForPlainNewConversation = async (timeoutMs = 5000) => {
+              const started = Date.now();
+              while (Date.now() - started < timeoutMs) {
+                const chatContext = getChatContext();
+                const conversation = chatContext?.conversation;
+                if (
+                  conversation &&
+                  conversation.conversationId === "new" &&
+                  !conversation.agent_id
+                ) {
+                  log("waitForPlainNewConversation ready", {
+                    conversationId: conversation.conversationId,
+                  });
+                  return chatContext;
+                }
+                await delay(30);
+              }
+              log("waitForPlainNewConversation timed out");
+              return getChatContext();
+            };
             const waitForChatContextConversation = async (agentId, timeoutMs = 5000) => {
               const started = Date.now();
               while (Date.now() - started < timeoutMs) {
@@ -2131,10 +2863,10 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
             };
             const startAgentChatViaReactContext = async () => {
               if (useRouteReloadForLauncherChats) return false;
-              if (!(next.pathname === "/c/new" || next.pathname.startsWith("/c/new/"))) return false;
-              const agentId = next.searchParams.get("agent_id");
+              if (!isNewChatTarget) return false;
+              const agentId = targetAgentId;
               if (!agentId) return false;
-              const prompt = next.searchParams.get("prompt") ?? next.searchParams.get("q") ?? "";
+              const prompt = targetPrompt;
               try {
                 const chatContext = await waitForChatContext(240);
                 if (!chatContext) {
@@ -2185,11 +2917,55 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
                 return false;
               }
             };
+            const findNativeNewChatTrigger = () => {
+              const selectors = [
+                "[data-testid='wide-header-new-chat-button']",
+                "[data-testid='nav-new-chat-button']",
+                "a[href='/c/new'][data-testid]",
+                "button[aria-label='New Chat']",
+              ];
+              for (const selector of selectors) {
+                const match = document.querySelector(selector);
+                if (match instanceof HTMLElement && !match.hasAttribute("disabled")) {
+                  return match;
+                }
+              }
+              return null;
+            };
+            const startPlainNewConversation = async () => {
+              if (!isNewChatTarget || targetAgentId) return false;
+              const nativeTrigger = findNativeNewChatTrigger();
+              if (!(nativeTrigger instanceof HTMLElement)) {
+                log("startPlainNewConversation missing native trigger");
+                return false;
+              }
+              log("startPlainNewConversation clicking native new chat");
+              const previousTextarea = document.getElementById("prompt-textarea");
+              nativeTrigger.click();
+              const plainNewConversation = await waitForPlainNewConversation(5000);
+              if (!plainNewConversation) {
+                log("startPlainNewConversation missing new conversation state after click");
+                return false;
+              }
+              await waitForElement(
+                () =>
+                  window.location.pathname === `${basePath}/c/new` ||
+                  window.location.pathname === "/c/new"
+                    ? document.body
+                    : null,
+                5000,
+              );
+              if (!targetPrompt) {
+                postLauncherProgress("ready");
+                return true;
+              }
+              return await submitPromptViaChatForm(targetPrompt, previousTextarea);
+            };
             const startAgentChatViaMarketplace = async () => {
               if (!shouldAutoSubmitFromQuery || useRouteReloadForLauncherChats) return false;
-              if (!(next.pathname === "/c/new" || next.pathname.startsWith("/c/new/"))) return false;
-              const agentId = next.searchParams.get("agent_id");
-              const prompt = next.searchParams.get("prompt") ?? next.searchParams.get("q") ?? "";
+              if (!isNewChatTarget) return false;
+              const agentId = targetAgentId;
+              const prompt = targetPrompt;
               if (!agentId) {
                 log("startAgentChatViaMarketplace missing agent id");
                 return false;
@@ -2282,6 +3058,7 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
               return result;
             };
             if (await startAgentChatViaReactContext()) return;
+            if (await startPlainNewConversation()) return;
             if (await startAgentChatViaMarketplace()) return;
             if (await performSubmitRouteRemount()) return;
             if (await navigateInternally(targetRouterPath, shouldAutoSubmitFromQuery ? 1400 : 200)) {

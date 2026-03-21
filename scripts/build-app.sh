@@ -101,6 +101,26 @@ cat > "${CONTENTS_DIR}/Info.plist" <<EOF
   <string>6.0</string>
   <key>CFBundleName</key>
   <string>${APP_NAME}</string>
+  <key>CFBundleDocumentTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleTypeName</key>
+      <string>${APP_NAME} Supported File</string>
+      <key>CFBundleTypeRole</key>
+      <string>Viewer</string>
+      <key>LSHandlerRank</key>
+      <string>Alternate</string>
+      <key>LSItemContentTypes</key>
+      <array>
+        <string>public.image</string>
+        <string>com.adobe.pdf</string>
+        <string>public.plain-text</string>
+        <string>public.rtf</string>
+        <string>org.openxmlformats.wordprocessingml.document</string>
+        <string>public.comma-separated-values-text</string>
+      </array>
+    </dict>
+  </array>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
