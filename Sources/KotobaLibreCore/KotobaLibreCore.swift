@@ -62,6 +62,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public static let defaultShortcut = "Ctrl+Alt+Space"
     public static let defaultVoiceShortcut = "Ctrl+Alt+V"
     public static let defaultShowAppWindowShortcut = "Ctrl+Alt+K"
+    public static let defaultLongResponseNotificationThresholdSeconds = 8
 
     public var instanceBaseUrl: String?
     public var globalShortcut: String
@@ -75,6 +76,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var debugLoggingEnabled: Bool
     public var launcherOpacity: Double
     public var appVisibilityMode: AppVisibilityMode
+    public var backgroundResponseNotificationsEnabled: Bool
+    public var longResponseNotificationThresholdSeconds: Int
 
     enum CodingKeys: String, CodingKey {
         case instanceBaseUrl
@@ -89,6 +92,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
         case debugLoggingEnabled
         case launcherOpacity
         case appVisibilityMode
+        case backgroundResponseNotificationsEnabled
+        case longResponseNotificationThresholdSeconds
     }
 
     public init(
@@ -103,7 +108,9 @@ public struct AppSettings: Codable, Equatable, Sendable {
         useRouteReloadForLauncherChats: Bool = false,
         debugLoggingEnabled: Bool = false,
         launcherOpacity: Double = 0.95,
-        appVisibilityMode: AppVisibilityMode = .dockOnly
+        appVisibilityMode: AppVisibilityMode = .dockOnly,
+        backgroundResponseNotificationsEnabled: Bool = true,
+        longResponseNotificationThresholdSeconds: Int = AppSettings.defaultLongResponseNotificationThresholdSeconds
     ) {
         self.instanceBaseUrl = instanceBaseUrl
         self.globalShortcut = globalShortcut
@@ -117,6 +124,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
         self.debugLoggingEnabled = debugLoggingEnabled
         self.launcherOpacity = launcherOpacity
         self.appVisibilityMode = appVisibilityMode
+        self.backgroundResponseNotificationsEnabled = backgroundResponseNotificationsEnabled
+        self.longResponseNotificationThresholdSeconds = longResponseNotificationThresholdSeconds
     }
 
     public init(from decoder: any Decoder) throws {
@@ -134,6 +143,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
         debugLoggingEnabled = try container.decodeIfPresent(Bool.self, forKey: .debugLoggingEnabled) ?? false
         launcherOpacity = try container.decodeIfPresent(Double.self, forKey: .launcherOpacity) ?? 0.95
         appVisibilityMode = try container.decodeIfPresent(AppVisibilityMode.self, forKey: .appVisibilityMode) ?? .dockOnly
+        backgroundResponseNotificationsEnabled = try container.decodeIfPresent(Bool.self, forKey: .backgroundResponseNotificationsEnabled) ?? true
+        longResponseNotificationThresholdSeconds = try container.decodeIfPresent(Int.self, forKey: .longResponseNotificationThresholdSeconds) ?? AppSettings.defaultLongResponseNotificationThresholdSeconds
     }
 
     public func encode(to encoder: any Encoder) throws {
@@ -150,6 +161,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
         try container.encode(debugLoggingEnabled, forKey: .debugLoggingEnabled)
         try container.encode(launcherOpacity, forKey: .launcherOpacity)
         try container.encode(appVisibilityMode, forKey: .appVisibilityMode)
+        try container.encode(backgroundResponseNotificationsEnabled, forKey: .backgroundResponseNotificationsEnabled)
+        try container.encode(longResponseNotificationThresholdSeconds, forKey: .longResponseNotificationThresholdSeconds)
     }
 }
 
@@ -304,6 +317,10 @@ public enum KotobaLibreCore {
         }
 
         normalized.launcherOpacity = min(max(normalized.launcherOpacity, 0.5), 1.0)
+        normalized.longResponseNotificationThresholdSeconds = min(
+            max(normalized.longResponseNotificationThresholdSeconds, 1),
+            300
+        )
 
         return normalized
     }

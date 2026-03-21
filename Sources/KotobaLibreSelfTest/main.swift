@@ -40,7 +40,9 @@ struct KotobaLibreSelfTest {
                 restrictHostToInstanceHost: true,
                 defaultPresetId: "preset-1",
                 useRouteReloadForLauncherChats: false,
-                launcherOpacity: 0.95
+                launcherOpacity: 0.95,
+                backgroundResponseNotificationsEnabled: true,
+                longResponseNotificationThresholdSeconds: AppSettings.defaultLongResponseNotificationThresholdSeconds
             )
         }
 
@@ -63,7 +65,9 @@ struct KotobaLibreSelfTest {
                 useRouteReloadForLauncherChats: false,
                 debugLoggingEnabled: true,
                 launcherOpacity: 0.95,
-                appVisibilityMode: .dockAndMenuBar
+                appVisibilityMode: .dockAndMenuBar,
+                backgroundResponseNotificationsEnabled: false,
+                longResponseNotificationThresholdSeconds: 14
             )
         )
         expect(normalizedSettings.globalShortcut == "CmdOrCtrl+Alt+KeyV", "settingsNormalizeShortcutAliases")
@@ -71,7 +75,17 @@ struct KotobaLibreSelfTest {
         expect(normalizedSettings.showAppWindowShortcut == "Ctrl+Alt+KeyK", "settingsNormalizeShowAppWindowShortcutAliases")
         expect(normalizedSettings.appVisibilityMode == .dockAndMenuBar, "settingsPreserveVisibilityMode")
         expect(normalizedSettings.debugLoggingEnabled, "settingsPreserveDebugLoggingFlag")
+        expect(!normalizedSettings.backgroundResponseNotificationsEnabled, "settingsPreserveBackgroundResponseNotificationToggle")
+        expect(normalizedSettings.longResponseNotificationThresholdSeconds == 14, "settingsPreserveLongResponseThreshold")
         expect(KotobaLibreCore.validateShortcutConfiguration(normalizedSettings).valid, "settingsAllowDistinctTextAndVoiceShortcuts")
+
+        let normalizedNotificationThreshold = KotobaLibreCore.normalizeSettings(
+            AppSettings(longResponseNotificationThresholdSeconds: 0)
+        )
+        expect(
+            normalizedNotificationThreshold.longResponseNotificationThresholdSeconds == 1,
+            "settingsClampLongResponseThresholdToMinimum"
+        )
 
         let conflictingShortcuts = AppSettings(
             instanceBaseUrl: "https://chat.example.com",
@@ -217,6 +231,11 @@ struct KotobaLibreSelfTest {
         let decodedSettings = try JSONDecoder().decode(AppSettings.self, from: encodedSettings)
         expect(decodedSettings == AppSettings(), "settingsRoundTrip")
         expect(decodedSettings.openExternalAuthenticationLinksInNewWindow, "settingsDefaultExternalAuthWindowEnabled")
+        expect(decodedSettings.backgroundResponseNotificationsEnabled, "settingsDefaultBackgroundResponseNotificationsEnabled")
+        expect(
+            decodedSettings.longResponseNotificationThresholdSeconds == AppSettings.defaultLongResponseNotificationThresholdSeconds,
+            "settingsDefaultLongResponseThreshold"
+        )
 
         let legacySettingsJSON = """
         {"instanceBaseUrl":"https://chat.example.com","globalShortcut":"CmdOrCtrl+Shift+Space","autostartEnabled":false,"restrictHostToInstanceHost":true,"defaultPresetId":"preset-1","useRouteReloadForLauncherChats":false,"launcherOpacity":0.95}
@@ -227,6 +246,11 @@ struct KotobaLibreSelfTest {
         expect(decodedLegacySettings.voiceGlobalShortcut == AppSettings.defaultVoiceShortcut, "settingsDecodeLegacyVoiceShortcutDefault")
         expect(decodedLegacySettings.showAppWindowShortcut == AppSettings.defaultShowAppWindowShortcut, "settingsDecodeLegacyShowAppWindowShortcutDefault")
         expect(decodedLegacySettings.openExternalAuthenticationLinksInNewWindow, "settingsDecodeLegacyExternalAuthWindowDefault")
+        expect(decodedLegacySettings.backgroundResponseNotificationsEnabled, "settingsDecodeLegacyBackgroundResponseNotificationsDefault")
+        expect(
+            decodedLegacySettings.longResponseNotificationThresholdSeconds == AppSettings.defaultLongResponseNotificationThresholdSeconds,
+            "settingsDecodeLegacyLongResponseThresholdDefault"
+        )
         expect(AppResources.iconPNGURL?.lastPathComponent == "AppIcon.png", "appResourcesResolvePNG")
         expect(AppResources.iconICNSURL?.lastPathComponent == "AppIcon.icns", "appResourcesResolveICNS")
 
