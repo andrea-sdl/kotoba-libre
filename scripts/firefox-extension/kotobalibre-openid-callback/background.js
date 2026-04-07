@@ -4,6 +4,8 @@ const DEFAULT_SETTINGS = {
     callbackPath: '/oauth/openid/callback',
     appScheme: 'kotobalibre'
 };
+let cachedSettings = { ...DEFAULT_SETTINGS };
+let settingsReadyPromise = null;
 
 function normalizePath(path) {
     const segments = String(path || '')
@@ -78,6 +80,19 @@ function hasUsableSettings(settings) {
         && normalizeCallbackPathValue(settings.callbackPath || DEFAULT_SETTINGS.callbackPath).length > 0;
 }
 
+async function refreshCachedSettings() {
+    cachedSettings = await browser.storage.sync.get(DEFAULT_SETTINGS);
+    return cachedSettings;
+}
+
+function ensureCachedSettings() {
+    if (!settingsReadyPromise) {
+        settingsReadyPromise = refreshCachedSettings();
+    }
+
+    return settingsReadyPromise;
+}
+
 function buildRedirectUrl(detailsUrl, settings) {
     if (!hasUsableSettings(settings)) {
         return '';
@@ -107,7 +122,7 @@ function buildRedirectUrl(detailsUrl, settings) {
 
 browser.webRequest.onBeforeRequest.addListener(
     async (details) => {
-        const settings = await browser.storage.sync.get(DEFAULT_SETTINGS);
+        const settings = await ensureCachedSettings();
         const redirectUrl = buildRedirectUrl(details.url, settings);
 
         if (!redirectUrl) {
@@ -126,7 +141,7 @@ browser.webRequest.onBeforeRequest.addListener(
 );
 
 browser.runtime.onInstalled.addListener(() => {
-    browser.storage.sync.get(DEFAULT_SETTINGS).then((settings) => {
+    refreshCachedSettings().then((settings) => {
         if (!hasUsableSettings(settings)) {
             return browser.runtime.openOptionsPage();
         }
@@ -134,6 +149,30 @@ browser.runtime.onInstalled.addListener(() => {
     });
 });
 
+browser.runtime.onStartup.addListener(() => {
+    void refreshCachedSettings();
+});
+
+browser.storage.onChanged.addListener((changes, areaName) => {
+    if (areaName !== 'sync') {
+        return;
+    }
+
+    if (!changes.allowedHosts && !changes.callbackPath && !changes.appScheme) {
+        return;
+    }
+
+    cachedSettings = {
+        ...cachedSettings,
+        ...(changes.allowedHosts ? { allowedHosts: changes.allowedHosts.newValue } : {}),
+        ...(changes.callbackPath ? { callbackPath: changes.callbackPath.newValue } : {}),
+        ...(changes.appScheme ? { appScheme: changes.appScheme.newValue } : {})
+    };
+    settingsReadyPromise = Promise.resolve(cachedSettings);
+});
+
 browser.action.onClicked.addListener(() => {
     void browser.runtime.openOptionsPage();
 });
+
+void ensureCachedSettings();
