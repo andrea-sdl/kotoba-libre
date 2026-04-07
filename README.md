@@ -257,22 +257,24 @@ The Instance Settings option that opens external login flows in the default brow
 
 See [docs/architecture.md](docs/architecture.md) for behavior details.
 
-### Chrome Extension Helper
+### Browser Extension Helpers
 
-Load the unpacked Chrome extension from `scripts/chrome-extension/kotobalibre-openid-callback`.
+Load the unpacked Chrome extension from `scripts/chrome-extension/kotobalibre-openid-callback` or the Firefox extension from `scripts/firefox-extension/kotobalibre-openid-callback`.
 
-The extension:
+Both extensions:
 
-- Uses Chrome dynamic redirect rules so callback navigations can be caught before the page renders
+- Uses browser-native redirect handling so callback navigations can be caught before the page renders
 - Keeps the content-script redirect as a fallback for already-loaded callback pages
 - Uses the same icon artwork as Kotoba Libre
 - Opens its settings page when you click the extension icon
-- Stores the allowed hosts and callback path with Chrome sync storage
+- Stores the allowed hosts and callback path with browser sync storage
 - Defaults the callback path to `/oauth/openid/callback`, so most setups only need a host entry
 - Preserves an optional `:port` in callback hosts, so `localhost:3000`-style setups redirect correctly
 - Accepts plain hosts, HTTPS base URLs, or pasted callback URLs in its settings and normalizes them into a working redirect rule
 - Always redirects into the fixed `kotobalibre://` scheme
 - Starts inactive on a fresh install and opens its settings page so each user can enter their own default config
+
+The Firefox build uses `webRequest` blocking redirects instead of Chrome dynamic rules, but it keeps the same settings model and redirect behavior.
 
 To test it in Chrome:
 
@@ -283,15 +285,24 @@ To test it in Chrome:
 5. When the extension opens its setup page, enter the host list and callback path you want to use
 6. Retry the login flow
 
-To create a distributable source zip for the extension:
+To test it in Firefox:
+
+1. Open `about:debugging#/runtime/this-firefox`
+2. Click `Load Temporary Add-on`
+3. Select `scripts/firefox-extension/kotobalibre-openid-callback/manifest.json`
+4. When the extension opens its setup page, enter the host list and callback path you want to use
+5. Retry the login flow
+
+To create distributable source zips for the extensions:
 
 ```bash
 ./scripts/package-chrome-extension.sh
+./scripts/package-firefox-extension.sh
 ```
 
-That writes `dist-artifacts/chrome-extension/kotobalibre-openid-callback.zip` with the extension files at the archive root, which is the shape you want for sharing or Chrome Web Store upload.
+That writes `dist-artifacts/chrome-extension/kotobalibre-openid-callback.zip` and `dist-artifacts/firefox-extension/kotobalibre-openid-callback.zip` with the extension files at the archive root, which is the shape you want for sharing or browser-store upload.
 
-The release workflow also builds and publishes that extension zip alongside the unsigned app artifacts.
+The release workflow also builds and publishes both extension zips alongside the unsigned app artifacts.
 
 ## Data Storage
 
@@ -314,7 +325,7 @@ Validate the version before release:
 
 Unsigned release automation is defined in `.github/workflows/release.yml`.
 
-The release workflow is launched manually from the default branch, creates the release tag for the selected `patch`, `minor`, or `major` bump, publishes the unsigned DMG to GitHub Releases, and then advances `VERSION` to the next `-dev` version on the default branch.
+The release workflow is launched manually from the default branch, creates the release tag for the selected `patch`, `minor`, or `major` bump, publishes the unsigned DMG plus both browser extension zips to GitHub Releases, and then advances `VERSION` to the next `-dev` version on the default branch.
 
 ## Third-Party Notices
 

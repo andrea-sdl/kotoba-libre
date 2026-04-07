@@ -54,7 +54,8 @@ The build script:
 3. Copies bundled resources, including the app icon
 4. Writes `Info.plist`
 5. Applies an ad-hoc signature, optionally including generated `webcredentials` associated-domain entitlements
-6. Creates unsigned `.dmg` and `.zip` artifacts
+6. Creates unsigned `.dmg` and `.zip` app artifacts
+7. Packages the Chrome and Firefox browser extension zips into `dist-artifacts/chrome-extension/` and `dist-artifacts/firefox-extension/`
 
 ## Expected Artifacts
 
@@ -63,6 +64,8 @@ After a successful packaging run, expect:
 - `dist-artifacts/Kotoba Libre.app`
 - `dist-artifacts/Kotoba Libre-unsigned.dmg`
 - `dist-artifacts/Kotoba Libre-unsigned-app.zip`
+- `dist-artifacts/chrome-extension/kotobalibre-openid-callback.zip`
+- `dist-artifacts/firefox-extension/kotobalibre-openid-callback.zip`
 
 ## GitHub Release Workflow
 
@@ -72,7 +75,7 @@ The workflow in `.github/workflows/release.yml` supports:
 - A required bump choice: `patch`, `minor`, or `major`
 - Automatic release commit + tag creation
 - Automatic post-release bump to the next patch `-dev` version
-- Publishing only the unsigned DMG to the GitHub release
+- Publishing the unsigned DMG plus the Chrome and Firefox extension zips to the GitHub release
 
 High-level flow:
 
@@ -80,10 +83,10 @@ High-level flow:
 2. Compute the release version from the selected bump and current `VERSION`
 3. Fail if the tag or GitHub release already exists
 4. Commit `VERSION=<release version>` and create `v<release version>`
-5. Build unsigned artifacts
+5. Build unsigned app artifacts plus the Chrome and Firefox browser extension zips
 6. Commit `VERSION=<next patch>-dev` locally on top of the release commit
 7. Push the branch update and the release tag
-8. Publish the GitHub release with the unsigned DMG only
+8. Publish the GitHub release with the unsigned DMG and both browser extension zips
 
 ## Distribution Notes
 
