@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Kotoba Libre Redirector Settings</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f5efe6;
+      --card: #fffaf4;
+      --ink: #201710;
+      --muted: #6d5747;
+      --accent: #a74b1f;
+      --accent-soft: #f0c4a8;
+      --border: #d8b9a4;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: "Avenir Next", "Segoe UI", sans-serif;
+      background:
+        radial-gradient(circle at top right, rgba(167, 75, 31, 0.18), transparent 32%),
+        linear-gradient(180deg, #fdf9f4 0%, var(--bg) 100%);
+      color: var(--ink);
+      min-height: 100vh;
+      padding: 32px 18px;
+    }
+
+    main {
+      max-width: 760px;
+      margin: 0 auto;
+      background: rgba(255, 250, 244, 0.92);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      box-shadow: 0 18px 50px rgba(53, 32, 18, 0.12);
+      padding: 28px;
+      backdrop-filter: blur(12px);
+    }
+
+    h1 {
+      margin: 0 0 10px;
+      font-size: 30px;
+      line-height: 1.1;
+    }
+
+    p {
+      margin: 0 0 18px;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+
+    form {
+      display: grid;
+      gap: 18px;
+      margin-top: 22px;
+    }
+
+    label {
+      display: grid;
+      gap: 8px;
+      font-weight: 600;
+    }
+
+    span {
+      font-size: 14px;
+    }
+
+    input {
+      width: 100%;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 12px 14px;
+      font: inherit;
+      color: inherit;
+      background: white;
+    }
+
+    input:focus {
+      outline: 2px solid var(--accent-soft);
+      border-color: var(--accent);
+    }
+
+    .actions {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-top: 6px;
+    }
+
+    button {
+      border: 0;
+      border-radius: 999px;
+      padding: 11px 18px;
+      font: inherit;
+      font-weight: 700;
+      cursor: pointer;
+      transition: transform 120ms ease, opacity 120ms ease;
+    }
+
+    button:hover {
+      transform: translateY(-1px);
+    }
+
+    button[type="submit"] {
+      background: var(--accent);
+      color: white;
+    }
+
+    button[type="button"] {
+      background: #eadacc;
+      color: var(--ink);
+    }
+
+    #status {
+      min-height: 24px;
+      margin-top: 10px;
+      color: var(--accent);
+      font-weight: 600;
+    }
+
+    code {
+      background: rgba(167, 75, 31, 0.08);
+      border-radius: 6px;
+      padding: 1px 6px;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Kotoba Libre Redirector</h1>
+    <p>Configure which HTTPS callback pages should be handed off to the fixed <code>kotobalibre://</code> app scheme.</p>
+    <p>On first install the extension stays inactive until you save a default config here. The callback path defaults to <code>/oauth/openid/callback</code>, so you usually only need to enter the host list. Use a comma-separated host list, including optional ports like <code>localhost:3000</code>. You can also paste an HTTPS base URL or callback URL, and the extension will normalize it for you. Enter <code>*</code> to match any HTTPS authority.</p>
+
+    <form id="settings-form">
+      <label>
+        <span>Allowed hosts</span>
+        <input id="allowed-hosts" name="allowedHosts" type="text" autocomplete="off">
+      </label>
+
+      <label>
+        <span>Callback path</span>
+        <input id="callback-path" name="callbackPath" type="text" autocomplete="off">
+      </label>
+
+      <div class="actions">
+        <button type="submit">Save settings</button>
+        <button id="reset-button" type="button">Reset defaults</button>
+      </div>
+    </form>
+
+    <div id="status" aria-live="polite"></div>
+  </main>
+
+  <script src="options.js"></script>
+</body>
+</html>

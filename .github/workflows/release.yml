@@ -122,11 +122,8 @@ jobs:
           git commit -m "Release ${tag}"
           git tag -a "${tag}" -m "Release ${tag}"
 
-      - name: Build app bundle
+      - name: Build app bundle and browser extension zips
         run: ./scripts/build-app.sh "${{ steps.release_meta.outputs.version }}"
-
-      - name: Build Chrome extension zip
-        run: ./scripts/package-chrome-extension.sh
 
       - name: Ensure expected artifacts exist
         shell: bash
@@ -135,6 +132,7 @@ jobs:
           test -d "dist-artifacts/${APP_NAME}.app"
           test -f "dist-artifacts/${APP_NAME}-unsigned.dmg"
           test -f "dist-artifacts/chrome-extension/kotobalibre-openid-callback.zip"
+          test -f "dist-artifacts/firefox-extension/kotobalibre-openid-callback.zip"
 
       - name: Create next development version commit
         shell: bash
@@ -169,3 +167,4 @@ jobs:
           files: |
             dist-artifacts/*-unsigned.dmg
             dist-artifacts/chrome-extension/*.zip
+            dist-artifacts/firefox-extension/*.zip

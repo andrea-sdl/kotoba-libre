@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# This helper assembles the signed app bundle and the browser extension artifacts used by local builds and releases.
 APP_NAME="Kotoba Libre"
 BUNDLE_IDENTIFIER="com.andreagrassi.kotobalibre"
 VERSION="${1:-$(tr -d '[:space:]' < VERSION)}"
@@ -179,3 +180,5 @@ echo "Built app bundle:"
 echo "- ${APP_DIR}"
 
 "$(dirname "$0")/create-unsigned-dmg.sh" "${APP_NAME}"
+"$(dirname "$0")/package-chrome-extension.sh"
+"$(dirname "$0")/package-firefox-extension.sh"
