@@ -76,6 +76,8 @@ final class AppController: NSObject, ObservableObject, ASWebAuthenticationPresen
         let launcherWindowKey: Bool
         let launcherSelectedPresetID: String?
         let mainContentKind: MainWindowController.ContentKind
+        let microphonePermissionState: MicrophonePermissionState
+        let speechRecognitionPermissionState: SpeechRecognitionPermissionState
     }
 
     // Published state here drives all SwiftUI settings and onboarding views.
@@ -111,6 +113,10 @@ final class AppController: NSObject, ObservableObject, ASWebAuthenticationPresen
     private var activeAuthenticationSession: ASWebAuthenticationSession?
     private var unreadResponseCount = 0
     private var hasInstalledApplicationObservers = false
+    private var mcpAutoReconnectTimer: Timer?
+    private var mcpAutoReconnectDeferredTask: Task<Void, Never>?
+    private var isMCPAutoReconnectRunning = false
+    private var shouldRunMCPAutoReconnectAfterCurrentRun = false
     private lazy var mainWindowController = MainWindowController(appController: self, store: store)
     private lazy var settingsWindowController = SettingsWindowController(appController: self)
     private lazy var launcherWindowController = LauncherWindowController(appController: self)
@@ -178,6 +184,7 @@ final class AppController: NSObject, ObservableObject, ASWebAuthenticationPresen
             refreshShortcutDiagnostics()
         }
         refreshMainWindowContent(openHomeIfNeeded: settings.instanceBaseUrl != nil)
+        configureMCPAutoReconnectTimer()
         launcherWindowController.prepare()
         mainWindowController.showAndFocus()
     }
@@ -204,11 +211,13 @@ final class AppController: NSObject, ObservableObject, ASWebAuthenticationPresen
             if window.isKeyWindow {
                 mainWindowController.hide()
             } else {
+                hideLauncherWindow(suppressingPreviousApplicationRestore: true)
                 mainWindowController.showAndFocus()
             }
             return
         }
 
+        hideLauncherWindow(suppressingPreviousApplicationRestore: true)
         restoreOrOpenPrimaryWindow()
     }
 
@@ -225,6 +234,16 @@ final class AppController: NSObject, ObservableObject, ASWebAuthenticationPresen
 
     func showSettingsWindow() {
         settingsWindowController.showAndFocus()
+    }
+
+    func mainWindowDidShow() {
+        runMCPAutoReconnect(reason: "window-show")
+        scheduleDeferredMCPAutoReconnect(reason: "window-show-settled")
+    }
+
+    func mainWebViewDidFinishNavigation() {
+        runMCPAutoReconnect(reason: "page-load")
+        scheduleDeferredMCPAutoReconnect(reason: "page-load-settled")
     }
 
     func showLauncherWindow() {
@@ -295,7 +314,7 @@ final class AppController: NSObject, ObservableObject, ASWebAuthenticationPresen
         }
 
         guard microphonePermissionState == .granted else {
-            throw KotobaLibreError.invalidDestination("Microphone access is required for voice mode.")
+            throw KotobaLibreError.invalidDestination(microphonePermissionState.statusMessage)
         }
 
         refreshSpeechRecognitionPermissionState()
@@ -307,11 +326,15 @@ final class AppController: NSObject, ObservableObject, ASWebAuthenticationPresen
         }
 
         guard speechRecognitionPermissionState == .granted else {
-            throw KotobaLibreError.invalidDestination("Speech recognition access is required for voice mode.")
+            throw KotobaLibreError.invalidDestination(speechRecognitionPermissionState.statusMessage)
         }
     }
 
-    func hideLauncherWindow() {
+    func hideLauncherWindow(suppressingPreviousApplicationRestore: Bool = false) {
+        if suppressingPreviousApplicationRestore {
+            launcherWindowController.suppressPreviousApplicationRestore()
+        }
+
         launcherWindowController.hide()
     }
 
@@ -432,6 +455,11 @@ final class AppController: NSObject, ObservableObject, ASWebAuthenticationPresen
     func applicationWillTerminate() {
         activeAuthenticationSession?.cancel()
         activeAuthenticationSession = nil
+        mcpAutoReconnectDeferredTask?.cancel()
+        mcpAutoReconnectDeferredTask = nil
+        shouldRunMCPAutoReconnectAfterCurrentRun = false
+        mcpAutoReconnectTimer?.invalidate()
+        mcpAutoReconnectTimer = nil
         mainWindowController.persistStateForTermination()
     }
 
@@ -464,7 +492,7 @@ final class AppController: NSObject, ObservableObject, ASWebAuthenticationPresen
     }
 
     func previewSettingsChange(_ nextSettings: AppSettings) throws -> SettingsChangePreview {
-        let previousHost = try KotobaLibreCore.settingsInstanceHost(settings)
+        let previousHost = try? KotobaLibreCore.settingsInstanceHost(settings)
         var normalized = KotobaLibreCore.normalizeSettings(nextSettings)
         normalized = try KotobaLibreCore.normalizeInstanceBaseURL(normalized)
         let shortcutValidation = KotobaLibreCore.validateShortcutConfiguration(normalized)
@@ -530,6 +558,7 @@ final class AppController: NSObject, ObservableObject, ASWebAuthenticationPresen
         } else {
             refreshShortcutDiagnostics()
         }
+        configureMCPAutoReconnectTimer()
         refreshMainWindowContent(openHomeIfNeeded: previousSettings.instanceBaseUrl != normalized.instanceBaseUrl)
 
         return SettingsSaveResult(removedPresets: preview.incompatiblePresets)
@@ -576,6 +605,7 @@ final class AppController: NSObject, ObservableObject, ASWebAuthenticationPresen
             } else {
                 refreshShortcutDiagnostics()
             }
+            configureMCPAutoReconnectTimer()
             refreshMainWindowContent(openHomeIfNeeded: false)
             mainWindowController.resetToDefaultSize()
             mainWindowController.showAndFocus()
@@ -588,6 +618,7 @@ final class AppController: NSObject, ObservableObject, ASWebAuthenticationPresen
         } else {
             refreshShortcutDiagnostics()
         }
+        configureMCPAutoReconnectTimer()
         refreshMainWindowContent(openHomeIfNeeded: false)
         mainWindowController.resetToDefaultSize()
         mainWindowController.showAndFocus()
@@ -1015,7 +1046,9 @@ final class AppController: NSObject, ObservableObject, ASWebAuthenticationPresen
             launcherWindowVisible: launcherWindowController.isVisible,
             launcherWindowKey: launcherWindowController.window?.isKeyWindow ?? false,
             launcherSelectedPresetID: launcherWindowController.selectedPresetID,
-            mainContentKind: mainWindowController.contentKind
+            mainContentKind: mainWindowController.contentKind,
+            microphonePermissionState: microphonePermissionState,
+            speechRecognitionPermissionState: speechRecognitionPermissionState
         )
     }
 
@@ -1156,6 +1189,101 @@ final class AppController: NSObject, ObservableObject, ASWebAuthenticationPresen
         mainWindowController.showWebView(settings: settings)
         if openHomeIfNeeded {
             mainWindowController.navigateToHome(settings: settings)
+        }
+    }
+
+    private func configureMCPAutoReconnectTimer() {
+        mcpAutoReconnectDeferredTask?.cancel()
+        mcpAutoReconnectDeferredTask = nil
+        shouldRunMCPAutoReconnectAfterCurrentRun = false
+        mcpAutoReconnectTimer?.invalidate()
+        mcpAutoReconnectTimer = nil
+
+        guard runtimeMode == .standard else {
+            return
+        }
+
+        guard settings.mcpAutoReconnectEnabled, settings.instanceBaseUrl != nil else {
+            return
+        }
+
+        let interval = TimeInterval(settings.mcpAutoReconnectIntervalMinutes * 60)
+        let timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.runMCPAutoReconnect(reason: "timer")
+            }
+        }
+        timer.tolerance = min(interval * 0.1, 5)
+        mcpAutoReconnectTimer = timer
+        debugLog("KotobaLibre MCP: scheduled auto-reconnect every \(settings.mcpAutoReconnectIntervalMinutes)m")
+    }
+
+    private func scheduleDeferredMCPAutoReconnect(reason: String) {
+        guard runtimeMode == .standard else {
+            return
+        }
+
+        guard settings.mcpAutoReconnectEnabled, settings.instanceBaseUrl != nil else {
+            return
+        }
+
+        guard mainWindowController.contentKind == .web else {
+            return
+        }
+
+        mcpAutoReconnectDeferredTask?.cancel()
+        mcpAutoReconnectDeferredTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            guard !Task.isCancelled else {
+                return
+            }
+
+            self?.mcpAutoReconnectDeferredTask = nil
+            self?.runMCPAutoReconnect(reason: reason)
+        }
+    }
+
+    private func runMCPAutoReconnect(reason: String) {
+        guard runtimeMode == .standard else {
+            return
+        }
+
+        guard settings.mcpAutoReconnectEnabled, settings.instanceBaseUrl != nil else {
+            return
+        }
+
+        guard mainWindowController.contentKind == .web else {
+            return
+        }
+
+        guard !isMCPAutoReconnectRunning else {
+            shouldRunMCPAutoReconnectAfterCurrentRun = true
+            debugLog("KotobaLibre MCP: skipped auto-reconnect reason=\(reason) because a run is already active")
+            return
+        }
+
+        isMCPAutoReconnectRunning = true
+        mainWindowController.reconnectMCPServersIfNeeded { [weak self] result in
+            guard let self else {
+                return
+            }
+
+            self.isMCPAutoReconnectRunning = false
+            let shouldRunAgain = self.shouldRunMCPAutoReconnectAfterCurrentRun
+            self.shouldRunMCPAutoReconnectAfterCurrentRun = false
+            self.debugLog(
+                "KotobaLibre MCP: auto-reconnect reason=\(reason) checked=\(result.checkedServerCount) " +
+                "ui=\(result.uiClickedControlCount) reinitialized=\(result.reinitializedServerCount) " +
+                "connected=\(result.connectedServerCount) " +
+                "oauth=\(result.oauthURLCount) " +
+                "errors=\(result.errorMessages.count)"
+            )
+            if !result.errorMessages.isEmpty {
+                self.debugLog("KotobaLibre MCP: auto-reconnect errors -> \(result.errorMessages.joined(separator: " | "))")
+            }
+            if shouldRunAgain {
+                self.runMCPAutoReconnect(reason: "pending-after-active")
+            }
         }
     }
 

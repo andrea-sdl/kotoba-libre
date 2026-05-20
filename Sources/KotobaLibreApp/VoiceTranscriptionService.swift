@@ -30,6 +30,14 @@ final class VoiceTranscriptionService {
             throw VoiceTranscriptionServiceError.alreadyRunning
         }
 
+        guard PrivacyUsageDescription.hasMicrophoneDescription else {
+            throw VoiceTranscriptionServiceError.microphoneUsageDescriptionMissing
+        }
+
+        guard PrivacyUsageDescription.hasSpeechRecognitionDescription else {
+            throw VoiceTranscriptionServiceError.speechRecognitionUsageDescriptionMissing
+        }
+
         guard let speechRecognizer = SFSpeechRecognizer(locale: .autoupdatingCurrent) else {
             throw VoiceTranscriptionServiceError.recognizerUnavailable
         }
@@ -217,6 +225,8 @@ enum VoiceTranscriptionServiceError: LocalizedError {
     case recognizerUnavailable
     case recognitionUnavailable
     case noSpeechDetected
+    case microphoneUsageDescriptionMissing
+    case speechRecognitionUsageDescriptionMissing
 
     var errorDescription: String? {
         switch self {
@@ -230,6 +240,10 @@ enum VoiceTranscriptionServiceError: LocalizedError {
             return "Speech recognition is temporarily unavailable on this Mac."
         case .noSpeechDetected:
             return "No speech was detected. Try again and press the voice shortcut when you're done."
+        case .microphoneUsageDescriptionMissing:
+            return "Microphone permission is unavailable in this launch mode. Run the packaged app bundle so macOS can read its privacy description."
+        case .speechRecognitionUsageDescriptionMissing:
+            return "Speech recognition permission is unavailable in this launch mode. Run the packaged app bundle so macOS can read its privacy description."
         }
     }
 }
