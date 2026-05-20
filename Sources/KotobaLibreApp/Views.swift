@@ -127,6 +127,10 @@ struct OnboardingFlowView: View {
         .onChange(of: currentStep) {
             focusedField = currentStep == .instance ? .instanceBaseURL : nil
             refreshShortcutPermissionsIfNeeded()
+            setStatus("", isError: false)
+        }
+        .onChange(of: instanceBaseURL) {
+            setStatus("", isError: false)
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             refreshShortcutPermissionsIfNeeded()
@@ -166,7 +170,7 @@ struct OnboardingFlowView: View {
 
     private var onboardingCompleteStep: some View {
         OnboardingCompleteStepView(
-            instanceBaseURL: instanceBaseURL,
+            instanceBaseURL: normalizedInstanceBaseURL ?? instanceBaseURL.trimmingCharacters(in: .whitespacesAndNewlines),
             microphonePermissionState: appController.microphonePermissionState,
             speechPermissionState: appController.speechRecognitionPermissionState,
             launcherShortcut: appController.shortcutDraft,
@@ -186,6 +190,15 @@ struct OnboardingFlowView: View {
         case .complete:
             return "Start Using LibreChat"
         }
+    }
+
+    private var normalizedInstanceBaseURL: String? {
+        let candidate = KotobaLibreCore.cleanURLInput(instanceBaseURL)
+        guard !candidate.isEmpty else {
+            return nil
+        }
+
+        return try? KotobaLibreCore.parseInstanceBaseURL(AppSettings(instanceBaseUrl: candidate))?.absoluteString
     }
 
     private var primaryActionDisabled: Bool {
@@ -230,7 +243,7 @@ struct OnboardingFlowView: View {
 
     private var instanceValidation: ValidationResult {
         // Validation delegates to the core URL rules, so onboarding matches later save behavior.
-        let candidate = instanceBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        let candidate = KotobaLibreCore.cleanURLInput(instanceBaseURL)
         guard !candidate.isEmpty else {
             return ValidationResult(valid: false, reason: "Enter your LibreChat base URL to continue.")
         }
@@ -269,9 +282,18 @@ struct OnboardingFlowView: View {
             }
             setStatus("", isError: false)
         case .complete:
+            guard let normalizedInstanceBaseURL else {
+                focusedField = .instanceBaseURL
+                withAnimation(.easeInOut(duration: 0.18)) {
+                    currentStep = .instance
+                }
+                setStatus(instanceValidation.reason ?? "Enter your LibreChat base URL to continue.", isError: true)
+                return
+            }
+
             do {
                 try appController.completeOnboarding(
-                    instanceBaseURL: instanceBaseURL,
+                    instanceBaseURL: normalizedInstanceBaseURL,
                     launcherShortcut: appController.shortcutDraft,
                     voiceShortcut: appController.voiceShortcutDraft,
                     showAppWindowShortcut: appController.showAppWindowShortcutDraft
@@ -631,6 +653,8 @@ private struct OnboardingCompleteStepView: View {
             return "Blocked in System Settings"
         case .restricted:
             return "Restricted on this Mac"
+        case .unavailableInLaunchMode:
+            return "Unavailable in this launch mode"
         }
     }
 
@@ -644,6 +668,8 @@ private struct OnboardingCompleteStepView: View {
             return "Blocked in System Settings"
         case .restricted:
             return "Restricted on this Mac"
+        case .unavailableInLaunchMode:
+            return "Unavailable in this launch mode"
         }
     }
 }
@@ -967,6 +993,11 @@ private struct OnboardingMicrophonePermissionRow: View {
                         appController.refreshMicrophonePermissionState()
                     }
                     .buttonStyle(.glass)
+                case .unavailableInLaunchMode:
+                    Button("Refresh") {
+                        appController.refreshMicrophonePermissionState()
+                    }
+                    .buttonStyle(.glass)
                 }
             }
         }
@@ -987,6 +1018,8 @@ private struct OnboardingMicrophonePermissionRow: View {
             return "mic.slash.fill"
         case .restricted:
             return "lock.circle.fill"
+        case .unavailableInLaunchMode:
+            return "exclamationmark.triangle.fill"
         }
     }
 
@@ -994,7 +1027,7 @@ private struct OnboardingMicrophonePermissionRow: View {
         switch appController.microphonePermissionState {
         case .granted:
             return .secondary
-        case .notDetermined, .denied, .restricted:
+        case .notDetermined, .denied, .restricted, .unavailableInLaunchMode:
             return .orange
         }
     }
@@ -1042,6 +1075,11 @@ private struct OnboardingSpeechPermissionRow: View {
                         appController.refreshSpeechRecognitionPermissionState()
                     }
                     .buttonStyle(.glass)
+                case .unavailableInLaunchMode:
+                    Button("Refresh") {
+                        appController.refreshSpeechRecognitionPermissionState()
+                    }
+                    .buttonStyle(.glass)
                 }
             }
         }
@@ -1062,6 +1100,8 @@ private struct OnboardingSpeechPermissionRow: View {
             return "waveform.slash"
         case .restricted:
             return "lock.circle.fill"
+        case .unavailableInLaunchMode:
+            return "exclamationmark.triangle.fill"
         }
     }
 
@@ -1069,7 +1109,7 @@ private struct OnboardingSpeechPermissionRow: View {
         switch appController.speechRecognitionPermissionState {
         case .granted:
             return .secondary
-        case .notDetermined, .denied, .restricted:
+        case .notDetermined, .denied, .restricted, .unavailableInLaunchMode:
             return .orange
         }
     }
@@ -1131,6 +1171,10 @@ private struct MicrophonePermissionSection: View {
                     Button("Refresh Status") {
                         appController.refreshMicrophonePermissionState()
                     }
+                case .unavailableInLaunchMode:
+                    Button("Refresh Status") {
+                        appController.refreshMicrophonePermissionState()
+                    }
                 }
             }
             .frame(maxWidth: .infinity, alignment: .center)
@@ -1160,6 +1204,8 @@ private struct MicrophonePermissionSection: View {
             return "mic.slash.fill"
         case .restricted:
             return "lock.circle.fill"
+        case .unavailableInLaunchMode:
+            return "exclamationmark.triangle.fill"
         }
     }
 
@@ -1167,7 +1213,7 @@ private struct MicrophonePermissionSection: View {
         switch permissionState {
         case .granted:
             return .secondary
-        case .notDetermined, .denied, .restricted:
+        case .notDetermined, .denied, .restricted, .unavailableInLaunchMode:
             return .orange
         }
     }
@@ -1220,6 +1266,10 @@ private struct SpeechRecognitionPermissionSection: View {
                     Button("Refresh Status") {
                         appController.refreshSpeechRecognitionPermissionState()
                     }
+                case .unavailableInLaunchMode:
+                    Button("Refresh Status") {
+                        appController.refreshSpeechRecognitionPermissionState()
+                    }
                 }
             }
             .frame(maxWidth: .infinity, alignment: .center)
@@ -1249,6 +1299,8 @@ private struct SpeechRecognitionPermissionSection: View {
             return "waveform.slash"
         case .restricted:
             return "lock.circle.fill"
+        case .unavailableInLaunchMode:
+            return "exclamationmark.triangle.fill"
         }
     }
 
@@ -1256,7 +1308,7 @@ private struct SpeechRecognitionPermissionSection: View {
         switch permissionState {
         case .granted:
             return .secondary
-        case .notDetermined, .denied, .restricted:
+        case .notDetermined, .denied, .restricted, .unavailableInLaunchMode:
             return .orange
         }
     }
@@ -2024,7 +2076,9 @@ struct SettingsPanelView: View {
             launcherOpacity: appController.settings.launcherOpacity,
             appVisibilityMode: appController.settings.appVisibilityMode,
             backgroundResponseNotificationsEnabled: appController.settings.backgroundResponseNotificationsEnabled,
-            longResponseNotificationThresholdSeconds: appController.settings.longResponseNotificationThresholdSeconds
+            longResponseNotificationThresholdSeconds: appController.settings.longResponseNotificationThresholdSeconds,
+            mcpAutoReconnectEnabled: appController.settings.mcpAutoReconnectEnabled,
+            mcpAutoReconnectIntervalMinutes: appController.settings.mcpAutoReconnectIntervalMinutes
         )
     }
 
@@ -2191,6 +2245,8 @@ struct SystemPanelView: View {
     @State private var debugLoggingEnabled = false
     @State private var backgroundResponseNotificationsEnabled = true
     @State private var longResponseNotificationThresholdSeconds = Double(AppSettings.defaultLongResponseNotificationThresholdSeconds)
+    @State private var mcpAutoReconnectEnabled = true
+    @State private var mcpAutoReconnectIntervalMinutes = Double(AppSettings.defaultMCPAutoReconnectIntervalMinutes)
     @State private var launcherOpacity = 95.0
     @State private var appVisibilityMode = AppVisibilityMode.dockOnly
     @State private var statusMessage = ""
@@ -2208,6 +2264,17 @@ struct SystemPanelView: View {
             Form {
                 Toggle("Launch Kotoba Libre at login", isOn: $autostartEnabled)
                 Toggle("Enable debug logs", isOn: $debugLoggingEnabled)
+                VStack(alignment: .leading, spacing: 8) {
+                    Toggle("Automatically reconnect MCP servers", isOn: $mcpAutoReconnectEnabled)
+                    Text("When the main LibreChat window is shown, and then on this interval, Kotoba Libre asks LibreChat to reinitialize disconnected or erroring MCP servers.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                    if mcpAutoReconnectEnabled {
+                        Stepper(value: $mcpAutoReconnectIntervalMinutes, in: 1...240, step: 1) {
+                            Text("Check every \(Int(mcpAutoReconnectIntervalMinutes)) minute\(Int(mcpAutoReconnectIntervalMinutes) == 1 ? "" : "s")")
+                        }
+                    }
+                }
                 VStack(alignment: .leading, spacing: 8) {
                     Toggle("Notify when a long background response finishes", isOn: $backgroundResponseNotificationsEnabled)
                     Text("Dock badge counts and Dock bounce happen automatically for unread responses. This setting controls the extra system notification only.")
@@ -2297,6 +2364,12 @@ struct SystemPanelView: View {
         .onChange(of: longResponseNotificationThresholdSeconds) {
             autosaveSettings()
         }
+        .onChange(of: mcpAutoReconnectEnabled) {
+            autosaveSettings()
+        }
+        .onChange(of: mcpAutoReconnectIntervalMinutes) {
+            autosaveSettings()
+        }
         .onChange(of: launcherOpacity) {
             autosaveSettings()
         }
@@ -2323,6 +2396,8 @@ struct SystemPanelView: View {
         debugLoggingEnabled = appController.settings.debugLoggingEnabled
         backgroundResponseNotificationsEnabled = appController.settings.backgroundResponseNotificationsEnabled
         longResponseNotificationThresholdSeconds = Double(appController.settings.longResponseNotificationThresholdSeconds)
+        mcpAutoReconnectEnabled = appController.settings.mcpAutoReconnectEnabled
+        mcpAutoReconnectIntervalMinutes = Double(appController.settings.mcpAutoReconnectIntervalMinutes)
         launcherOpacity = (appController.settings.launcherOpacity * 100).rounded()
         appVisibilityMode = appController.settings.appVisibilityMode
         navigationGuard.setDirty(false, for: .system)
@@ -2334,6 +2409,7 @@ struct SystemPanelView: View {
             return
         }
 
+        navigationGuard.setDirty(draftState != savedState, for: .system)
         do {
             _ = try appController.saveSettings(draftSettings)
             setStatus("", isError: false)
@@ -2375,9 +2451,49 @@ struct SystemPanelView: View {
             launcherOpacity: launcherOpacity / 100,
             appVisibilityMode: appVisibilityMode,
             backgroundResponseNotificationsEnabled: backgroundResponseNotificationsEnabled,
-            longResponseNotificationThresholdSeconds: Int(longResponseNotificationThresholdSeconds.rounded())
+            longResponseNotificationThresholdSeconds: Int(longResponseNotificationThresholdSeconds.rounded()),
+            mcpAutoReconnectEnabled: mcpAutoReconnectEnabled,
+            mcpAutoReconnectIntervalMinutes: Int(mcpAutoReconnectIntervalMinutes.rounded())
         )
     }
+
+    private var draftState: SystemDraftState {
+        SystemDraftState(
+            autostartEnabled: autostartEnabled,
+            debugLoggingEnabled: debugLoggingEnabled,
+            backgroundResponseNotificationsEnabled: backgroundResponseNotificationsEnabled,
+            longResponseNotificationThresholdSeconds: Int(longResponseNotificationThresholdSeconds.rounded()),
+            mcpAutoReconnectEnabled: mcpAutoReconnectEnabled,
+            mcpAutoReconnectIntervalMinutes: Int(mcpAutoReconnectIntervalMinutes.rounded()),
+            launcherOpacity: launcherOpacity,
+            appVisibilityMode: appVisibilityMode
+        )
+    }
+
+    private var savedState: SystemDraftState {
+        SystemDraftState(
+            autostartEnabled: appController.settings.autostartEnabled,
+            debugLoggingEnabled: appController.settings.debugLoggingEnabled,
+            backgroundResponseNotificationsEnabled: appController.settings.backgroundResponseNotificationsEnabled,
+            longResponseNotificationThresholdSeconds: appController.settings.longResponseNotificationThresholdSeconds,
+            mcpAutoReconnectEnabled: appController.settings.mcpAutoReconnectEnabled,
+            mcpAutoReconnectIntervalMinutes: appController.settings.mcpAutoReconnectIntervalMinutes,
+            launcherOpacity: (appController.settings.launcherOpacity * 100).rounded(),
+            appVisibilityMode: appController.settings.appVisibilityMode
+        )
+    }
+}
+
+// SystemDraftState keeps autosaved System settings tied into the shared dirty-tab guard.
+private struct SystemDraftState: Equatable {
+    let autostartEnabled: Bool
+    let debugLoggingEnabled: Bool
+    let backgroundResponseNotificationsEnabled: Bool
+    let longResponseNotificationThresholdSeconds: Int
+    let mcpAutoReconnectEnabled: Bool
+    let mcpAutoReconnectIntervalMinutes: Int
+    let launcherOpacity: Double
+    let appVisibilityMode: AppVisibilityMode
 }
 
 // ShortcutPanelView lets the user record and save the app's global shortcuts.

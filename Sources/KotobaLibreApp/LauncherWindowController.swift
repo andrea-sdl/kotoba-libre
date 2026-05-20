@@ -59,6 +59,7 @@ final class LauncherWindowController: NSWindowController, NSWindowDelegate {
     private var eventMonitor: Any?
     private var previouslyFrontmostApplication: NSRunningApplication?
     private var shouldRestorePreviouslyFrontmostApplication = true
+    private var isPresentingPanel = false
 
     var isVisible: Bool {
         window?.isVisible ?? false
@@ -109,10 +110,19 @@ final class LauncherWindowController: NSWindowController, NSWindowDelegate {
         viewModel.prepareForPresentation(presentation)
         positionPanelOnActiveDisplay(presentation: presentation)
         // Visibility is tracked separately so hidden panels can stop their background motion.
+        isPresentingPanel = true
         viewModel.setPanelVisible(true)
         window?.orderFrontRegardless()
         // The launcher should accept typing without surfacing the main window until a submission opens it.
         window?.makeKeyAndOrderFront(nil)
+        DispatchQueue.main.async { [weak self] in
+            guard let self else {
+                return
+            }
+
+            self.window?.makeKeyAndOrderFront(nil)
+            self.isPresentingPanel = false
+        }
         viewModel.focusToken = UUID()
     }
 
@@ -125,6 +135,7 @@ final class LauncherWindowController: NSWindowController, NSWindowDelegate {
     }
 
     func hide() {
+        isPresentingPanel = false
         // Hidden launcher content stays mounted, so visibility must drop before the panel leaves the screen.
         viewModel.setPanelVisible(false)
         window?.orderOut(nil)
@@ -133,15 +144,7 @@ final class LauncherWindowController: NSWindowController, NSWindowDelegate {
     }
 
     func windowDidResignKey(_ notification: Notification) {
-        guard isVisible, viewModel.shouldHideOnFocusLoss else {
-            return
-        }
-
-        hide()
-    }
-
-    func windowDidResignMain(_ notification: Notification) {
-        guard isVisible, viewModel.shouldHideOnFocusLoss else {
+        guard !isPresentingPanel, isVisible, viewModel.shouldHideOnFocusLoss else {
             return
         }
 
