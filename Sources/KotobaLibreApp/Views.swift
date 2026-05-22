@@ -3167,28 +3167,35 @@ private struct LauncherGlowStrokeView<S: InsettableShape>: View {
     }
 }
 
+// LauncherGlowPalette mirrors the four-color app icon border for text and voice launcher highlights.
+private enum LauncherGlowPalette {
+    static let cyan = Color(red: 0.004, green: 0.584, blue: 0.729)
+    static let yellow = Color(red: 0.918, green: 0.918, blue: 0.090)
+    static let orange = Color(red: 0.973, green: 0.718, blue: 0.016)
+    static let green = Color(red: 0.471, green: 0.690, blue: 0.047)
+
+    static let iconColors = [cyan, yellow, orange, green]
+    static let loopedIconColors = iconColors + [cyan]
+
+    static func loopedColors(opacity: Double) -> [Color] {
+        loopedIconColors.map { $0.opacity(opacity) }
+    }
+}
+
 // The palette keeps a calm static fallback while the visible launcher re-randomizes stop locations for motion.
 private extension Array where Element == Gradient.Stop {
     static let launcherGlowStaticStyle: [Gradient.Stop] = [
-        Gradient.Stop(color: Color(red: 0.47, green: 0.83, blue: 1.00), location: 0.00),
-        Gradient.Stop(color: Color(red: 0.62, green: 0.95, blue: 0.86), location: 0.18),
-        Gradient.Stop(color: Color(red: 0.99, green: 0.79, blue: 0.62), location: 0.37),
-        Gradient.Stop(color: Color(red: 0.96, green: 0.66, blue: 0.78), location: 0.58),
-        Gradient.Stop(color: Color(red: 0.66, green: 0.74, blue: 1.00), location: 0.79),
-        Gradient.Stop(color: Color(red: 0.83, green: 0.73, blue: 0.98), location: 1.00)
+        Gradient.Stop(color: LauncherGlowPalette.cyan, location: 0.00),
+        Gradient.Stop(color: LauncherGlowPalette.yellow, location: 0.25),
+        Gradient.Stop(color: LauncherGlowPalette.orange, location: 0.50),
+        Gradient.Stop(color: LauncherGlowPalette.green, location: 0.75),
+        Gradient.Stop(color: LauncherGlowPalette.cyan, location: 1.00)
     ]
 
     static var launcherGlowAnimatedStyle: [Gradient.Stop] {
-        [
-            Color(red: 0.47, green: 0.83, blue: 1.00),
-            Color(red: 0.62, green: 0.95, blue: 0.86),
-            Color(red: 0.99, green: 0.79, blue: 0.62),
-            Color(red: 0.96, green: 0.66, blue: 0.78),
-            Color(red: 0.66, green: 0.74, blue: 1.00),
-            Color(red: 0.83, green: 0.73, blue: 0.98)
-        ]
-        .map { Gradient.Stop(color: $0, location: Double.random(in: 0...1)) }
-        .sorted { $0.location < $1.location }
+        LauncherGlowPalette.iconColors
+            .map { Gradient.Stop(color: $0, location: Double.random(in: 0...1)) }
+            .sorted { $0.location < $1.location }
     }
 }
 
@@ -3217,26 +3224,33 @@ private struct VoiceLauncherIndicator: View {
             ZStack {
                 Circle()
                     .fill(
-                        LinearGradient(
-                            colors: [
-                                Color.accentColor.opacity(0.88),
-                                Color.accentColor.opacity(0.26),
-                                Color.white.opacity(0.72)
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
+                        AngularGradient(
+                            gradient: Gradient(colors: LauncherGlowPalette.loopedColors(opacity: 0.78)),
+                            center: .center
                         )
                     )
                     .frame(width: coreDiameter, height: coreDiameter)
                     .scaleEffect(pulseScale)
 
                 Circle()
-                    .stroke(Color.accentColor.opacity(0.34), lineWidth: 2)
+                    .stroke(
+                        AngularGradient(
+                            gradient: Gradient(colors: LauncherGlowPalette.loopedColors(opacity: 0.46)),
+                            center: .center
+                        ),
+                        lineWidth: 2
+                    )
                     .frame(width: middleRingDiameter, height: middleRingDiameter)
                     .scaleEffect(ringScale)
 
                 Circle()
-                    .stroke(Color.white.opacity(0.42), lineWidth: 1)
+                    .stroke(
+                        AngularGradient(
+                            gradient: Gradient(colors: LauncherGlowPalette.loopedColors(opacity: 0.34)),
+                            center: .center
+                        ),
+                        lineWidth: 1
+                    )
                     .frame(width: outerRingDiameter, height: outerRingDiameter)
                     .scaleEffect(0.96 + (ringScale - 1.0) * 0.6)
 
