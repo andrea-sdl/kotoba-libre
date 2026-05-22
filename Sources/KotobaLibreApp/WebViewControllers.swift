@@ -21,6 +21,29 @@ struct WebResponseCompletion {
     let duration: TimeInterval
 }
 
+// MCPAutoReconnectResult summarizes one bridge run for debug logging and scheduler bookkeeping.
+struct MCPAutoReconnectResult {
+    let checkedServerCount: Int
+    let uiClickedControlCount: Int
+    let reinitializedServerCount: Int
+    let connectedServerCount: Int
+    let oauthURLCount: Int
+    let reloadPerformed: Bool
+    let reloadDeferred: Bool
+    let errorMessages: [String]
+
+    static let empty = MCPAutoReconnectResult(
+        checkedServerCount: 0,
+        uiClickedControlCount: 0,
+        reinitializedServerCount: 0,
+        connectedServerCount: 0,
+        oauthURLCount: 0,
+        reloadPerformed: false,
+        reloadDeferred: false,
+        errorMessages: []
+    )
+}
+
 // MainWindowController owns the primary app window.
 // It swaps between onboarding and web content and remembers the last usable frame.
 @MainActor
@@ -147,16 +170,21 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     }
 
     func showAndFocus() {
+        let wasVisible = window?.isVisible ?? false
         // The first show restores a saved frame. Later shows only clamp the frame to current screens.
         applyInitialWindowFrameIfNeeded()
         normalizeWindowFrameToAvailableScreens(centerIfNeeded: savedWindowFrame == nil)
-        window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+        window?.makeKeyAndOrderFront(nil)
+        if !wasVisible {
+            appController?.mainWindowDidShow()
+        }
     }
 
     func hide() {
         persistWindowFrame()
         window?.orderOut(nil)
+        appController?.mainWindowDidHide()
     }
 
     func resetToDefaultSize() {
@@ -170,6 +198,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     func windowShouldClose(_ sender: NSWindow) -> Bool {
         persistWindowFrame()
         sender.orderOut(nil)
+        appController?.mainWindowDidHide()
         return false
     }
 
@@ -223,6 +252,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         created.conversationTitleHandler = { [weak self] title in
             self?.updateWindowTitle(title)
         }
+        created.pageLoadHandler = { [weak appController] in
+            appController?.mainWebViewDidFinishNavigation()
+        }
         created.responseCompletionHandler = { [weak appController] completion in
             appController?.handleWebResponseCompletion(completion)
         }
@@ -253,6 +285,34 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
 
     func stopGenerating(force: Bool = false) -> Bool {
         webController?.stopGenerating(force: force) ?? false
+    }
+
+    private var canSafelyReloadMCPUI: Bool {
+        guard webController?.isGeneratingResponse != true else {
+            return false
+        }
+
+        guard let window, window.isVisible else {
+            return true
+        }
+
+        return !window.isKeyWindow
+    }
+
+    func reconnectMCPServersIfNeeded(
+        reloadPendingSync: Bool,
+        completion: @escaping (MCPAutoReconnectResult) -> Void
+    ) {
+        guard let webController else {
+            completion(.empty)
+            return
+        }
+
+        webController.reconnectMCPServersIfNeeded(
+            allowReloadAfterReconnect: canSafelyReloadMCPUI,
+            reloadPendingSync: reloadPendingSync,
+            completion: completion
+        )
     }
 
     private func installShortcutMonitor() {
@@ -931,6 +991,7 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
     var appNavigationHandler: ((URL) -> Bool)?
     var addAgentCandidateHandler: ((WebAddPresetCandidate?) -> Void)?
     var conversationTitleHandler: ((String?) -> Void)?
+    var pageLoadHandler: (() -> Void)?
     var responseCompletionHandler: ((WebResponseCompletion) -> Void)?
     var debugLoggingEnabled = false
     private(set) var currentConversationTitle: String?
@@ -1210,6 +1271,64 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
         return true
     }
 
+    func reconnectMCPServersIfNeeded(
+        allowReloadAfterReconnect: Bool,
+        reloadPendingSync: Bool,
+        completion: @escaping (MCPAutoReconnectResult) -> Void
+    ) {
+        guard let currentURL = webView.url else {
+            debugLog("KotobaLibre MCP: skipped reconnect because the web view has no URL yet")
+            completion(.empty)
+            return
+        }
+
+        guard currentURL.scheme?.lowercased() == "https" else {
+            debugLog("KotobaLibre MCP: skipped reconnect because the current URL is not https -> \(currentURL.absoluteString)")
+            completion(.empty)
+            return
+        }
+
+        guard (try? KotobaLibreCore.matchesConfiguredInstanceOrigin(currentURL, settings: currentSettings)) == true else {
+            debugLog("KotobaLibre MCP: skipped reconnect because the current URL is outside the configured origin -> \(currentURL.absoluteString)")
+            completion(.empty)
+            return
+        }
+
+        webView.callAsyncJavaScript(
+            Self.mcpAutoReconnectScript,
+            arguments: [
+                "reloadAfterReconnect": allowReloadAfterReconnect,
+                "reloadPendingSync": reloadPendingSync,
+            ],
+            in: nil,
+            in: .page
+        ) { [weak self] result in
+            guard let self else {
+                completion(.empty)
+                return
+            }
+
+            switch result {
+            case let .success(value):
+                completion(self.parseMCPAutoReconnectResult(value as Any))
+            case let .failure(error):
+                self.debugLog("KotobaLibre MCP: bridge failed -> \(error.localizedDescription)")
+                completion(
+                    MCPAutoReconnectResult(
+                        checkedServerCount: 0,
+                        uiClickedControlCount: 0,
+                        reinitializedServerCount: 0,
+                        connectedServerCount: 0,
+                        oauthURLCount: 0,
+                        reloadPerformed: false,
+                        reloadDeferred: false,
+                        errorMessages: [error.localizedDescription]
+                    )
+                )
+            }
+        }
+    }
+
     func fetchCurrentAddAgentCandidate(completion: @escaping (WebAddPresetCandidate?) -> Void) {
         let script = """
         (() => {
@@ -1359,6 +1478,7 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
                 hideLauncherProgress()
             }
             attemptPendingAttachmentIfNeeded(resetRetryWindow: true)
+            pageLoadHandler?()
         }
         popupWindowControllers[ObjectIdentifier(webView)]?.window?.title = webView.title ?? appDisplayName
         debugLog("KotobaLibre SPA: didFinish -> \(webView.url?.absoluteString ?? "<unknown>")")
@@ -1527,6 +1647,71 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
         }
 
         print(message)
+    }
+
+    private func parseMCPAutoReconnectResult(_ rawValue: Any) -> MCPAutoReconnectResult {
+        guard let payload = rawValue as? [String: Any] else {
+            return MCPAutoReconnectResult(
+                checkedServerCount: 0,
+                uiClickedControlCount: 0,
+                reinitializedServerCount: 0,
+                connectedServerCount: 0,
+                oauthURLCount: 0,
+                reloadPerformed: false,
+                reloadDeferred: false,
+                errorMessages: ["MCP reconnect bridge returned an unexpected result"]
+            )
+        }
+
+        let errors = stringArray(payload["errors"])
+        return MCPAutoReconnectResult(
+            checkedServerCount: intValue(payload["checked"]),
+            uiClickedControlCount: intValue(payload["uiClicked"]),
+            reinitializedServerCount: intValue(payload["reinitialized"]),
+            connectedServerCount: intValue(payload["connected"]),
+            oauthURLCount: intValue(payload["oauthOpened"]),
+            reloadPerformed: boolValue(payload["reloadPerformed"]),
+            reloadDeferred: boolValue(payload["reloadDeferred"]),
+            errorMessages: errors
+        )
+    }
+
+    private func intValue(_ value: Any?) -> Int {
+        if let value = value as? Int {
+            return value
+        }
+
+        if let value = value as? Double {
+            return Int(value)
+        }
+
+        if let value = value as? NSNumber {
+            return value.intValue
+        }
+
+        return 0
+    }
+
+    private func boolValue(_ value: Any?) -> Bool {
+        if let value = value as? Bool {
+            return value
+        }
+
+        if let value = value as? NSNumber {
+            return value.boolValue
+        }
+
+        return false
+    }
+
+    private func stringArray(_ value: Any?) -> [String] {
+        guard let values = value as? [Any] else {
+            return []
+        }
+
+        return values.compactMap { item in
+            (item as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        }.filter { !$0.isEmpty }
     }
 
     private func handleDesktopEventMessage(_ rawValue: Any) {
@@ -2149,6 +2334,527 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
 
         return host.caseInsensitiveCompare(currentEmbeddedHost) != .orderedSame
     }
+
+    private static let mcpAutoReconnectScript = """
+        const result = {
+          checked: 0,
+          uiClicked: 0,
+          reinitialized: 0,
+          connected: 0,
+          skipped: 0,
+          oauthOpened: 0,
+          reloadPerformed: false,
+          reloadDeferred: false,
+          errors: [],
+        };
+        const oauthPollTimeout = 180000;
+        const reconnectPollTimeout = 15000;
+        const oauthOpenRepeatWindow = 5 * 60 * 1000;
+        const oauthOpenDelay = 1000;
+        const reconnectRequestTimeout = 60000;
+        const reconnectReloadDelay = 1000;
+        const uiClickSettleDelay = 2000;
+        const mcpConnectControlSelector = [
+          'button[aria-label="Connect"]',
+          '[role="button"][aria-label="Connect"]',
+          'button[aria-label="Reconnect"]',
+          '[role="button"][aria-label="Reconnect"]',
+        ].join(",");
+        const shouldReloadAfterReconnect = reloadAfterReconnect === true;
+        const shouldAttemptPendingReload = reloadPendingSync === true;
+        const editableSelector = "textarea, input, [contenteditable='true'], [contenteditable=''], [role='textbox']";
+        let authorizationHeader = "";
+        const trimText = (value) => typeof value === "string" ? value.trim() : "";
+        const delay = (milliseconds) =>
+          new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+        const log = (...parts) => {
+          try {
+            globalThis.__kotobaLibreLog?.("MCP", ...parts);
+          } catch (_) {
+          }
+        };
+        const basePath = () => {
+          const baseHref = document.querySelector("base")?.getAttribute("href") ?? "/";
+          try {
+            const value = new URL(baseHref, window.location.origin).pathname || "/";
+            if (value === "/") return "";
+            return value.endsWith("/") ? value.slice(0, -1) : value;
+          } catch (_) {
+            return "";
+          }
+        };
+        const apiURL = (path) => new URL(`${basePath()}${path}`, window.location.origin).href;
+        const fetchJSON = async (url, options = {}, timeoutMilliseconds = 15000) => {
+          const controller = new AbortController();
+          const timeout = window.setTimeout(() => controller.abort(), timeoutMilliseconds);
+          const { headers: optionHeaders, ...requestOptions } = options;
+          try {
+            const response = await fetch(url, {
+              credentials: "same-origin",
+              ...requestOptions,
+              headers: {
+                Accept: "application/json",
+                ...(authorizationHeader ? { Authorization: authorizationHeader } : {}),
+                ...(optionHeaders ?? {}),
+              },
+              signal: controller.signal,
+            });
+            let body = null;
+            try {
+              body = await response.json();
+            } catch (_) {
+            }
+            return { response, body };
+          } finally {
+            window.clearTimeout(timeout);
+          }
+        };
+        const refreshAuthorization = async () => {
+          try {
+            const { response, body } = await fetchJSON(apiURL("/api/auth/refresh"), {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+            });
+            if (!response.ok) {
+              result.errors.push(`auth refresh ${response.status}`);
+              return false;
+            }
+
+            const token = trimText(body?.token);
+            if (!token) {
+              result.errors.push("auth refresh missing token");
+              return false;
+            }
+
+            authorizationHeader = `Bearer ${token}`;
+            window.dispatchEvent(new CustomEvent("tokenUpdated", { detail: token }));
+            log("refreshed bearer token for MCP API calls");
+            return true;
+          } catch (error) {
+            result.errors.push(`auth refresh ${String(error)}`);
+            return false;
+          }
+        };
+        const fetchJSONWithAuthRetry = async (url, options = {}, timeoutMilliseconds = 15000) => {
+          let fetched = await fetchJSON(url, options, timeoutMilliseconds);
+          if (fetched.response.status === 401 && !authorizationHeader) {
+            log("received 401; refreshing bearer token");
+            if (await refreshAuthorization()) {
+              fetched = await fetchJSON(url, options, timeoutMilliseconds);
+            }
+          }
+          return fetched;
+        };
+        const isPlainObject = (value) =>
+          value && typeof value === "object" && !Array.isArray(value);
+        const shouldReconnect = (state) => {
+          return state === "disconnected" || state === "error";
+        };
+        const connectionState = (status) => {
+          if (!isPlainObject(status)) return "";
+          return trimText(status.connectionState).toLowerCase();
+        };
+        const statusNeedsOAuth = (status) => {
+          if (!isPlainObject(status)) return false;
+          return status.oauthRequired === true ||
+            status.requiresOAuth === true ||
+            trimText(status.oauthUrl).length > 0;
+        };
+        const visibleElement = (element) => {
+          if (!element || typeof element.getBoundingClientRect !== "function") return false;
+          const rect = element.getBoundingClientRect();
+          if (rect.width <= 0 || rect.height <= 0) return false;
+
+          const style = window.getComputedStyle?.(element);
+          if (!style) return true;
+          return style.display !== "none" &&
+            style.visibility !== "hidden" &&
+            style.opacity !== "0" &&
+            style.pointerEvents !== "none";
+        };
+        const elementText = (element) => {
+          if (!element) return "";
+          if (typeof element.value === "string") return element.value;
+          return trimText(element.textContent);
+        };
+        const editableElement = (element) => {
+          if (!element) return false;
+          if (element.isContentEditable === true) return true;
+          try {
+            return element.matches?.(editableSelector) === true;
+          } catch (_) {
+            return false;
+          }
+        };
+        const hasFocusedEditableElement = () => {
+          try {
+            if (document.hasFocus?.() !== true) return false;
+            return editableElement(document.activeElement);
+          } catch (_) {
+            return false;
+          }
+        };
+        const hasVisibleComposerDraft = () => {
+          try {
+            return Array.from(document.querySelectorAll(editableSelector)).some((element) => {
+              return visibleElement(element) && trimText(elementText(element)).length > 0;
+            });
+          } catch (_) {
+            return false;
+          }
+        };
+        const canSafelyReloadPage = () => {
+          return !hasFocusedEditableElement() && !hasVisibleComposerDraft();
+        };
+        const requestSafeReload = () => {
+          if (!shouldReloadAfterReconnect || !canSafelyReloadPage()) {
+            result.reloadDeferred = true;
+            log("deferred page refresh after MCP reconnect");
+            return;
+          }
+
+          result.reloadPerformed = true;
+          log("refreshing page after successful MCP reconnect");
+          window.setTimeout(() => window.location.reload(), reconnectReloadDelay);
+        };
+        const disabledControl = (element) => {
+          if (!element) return true;
+          if (element.disabled === true) return true;
+          if (element.matches?.("[disabled]") === true) return true;
+          if (element.getAttribute?.("aria-disabled") === "true") return true;
+          const disabledAncestor = typeof element.closest === "function"
+            ? element.closest("[aria-disabled='true'], fieldset[disabled]")
+            : null;
+          return disabledAncestor !== null;
+        };
+        const hasVisibleComposer = () =>
+          Array.from(document.querySelectorAll("textarea")).some(visibleElement);
+        const controlContext = (element) => {
+          const chunks = [];
+          let parent = element?.parentElement ?? null;
+          let depth = 0;
+          while (parent && depth < 6 && chunks.length < 2) {
+            const label = trimText(parent.getAttribute?.("aria-label"));
+            if (label && label !== "Connect") {
+              chunks.push(label);
+            }
+
+            const text = trimText(parent.textContent);
+            if (text && text !== "Connect") {
+              chunks.push(text.slice(0, 160));
+            }
+
+            parent = parent.parentElement;
+            depth += 1;
+          }
+          return chunks.join(" ").toLowerCase();
+        };
+        const looksLikeLoginControl = (element) => {
+          const label = trimText(element.getAttribute?.("aria-label")).toLowerCase();
+          const text = trimText(element.textContent).toLowerCase();
+          const context = controlContext(element);
+          const combined = `${label} ${text} ${context}`;
+          return combined.includes("log in") ||
+            combined.includes("login") ||
+            combined.includes("sign in") ||
+            combined.includes("sign up");
+        };
+        const isVisibleConnectControl = (element) => {
+          const label = trimText(element.getAttribute?.("aria-label"));
+          if (label !== "Connect" && label !== "Reconnect") return false;
+          if (!visibleElement(element)) return false;
+          if (disabledControl(element)) return false;
+          if (element.getAttribute?.("aria-pressed") === "true") return false;
+          return !looksLikeLoginControl(element);
+        };
+        const clickOneVisibleMCPConnectControl = () => {
+          if (!hasVisibleComposer()) {
+            log("skipped UI reconnect because the LibreChat composer is not visible");
+            return false;
+          }
+
+          const control = Array.from(document.querySelectorAll(mcpConnectControlSelector))
+            .find(isVisibleConnectControl);
+          if (!control) {
+            return false;
+          }
+
+          try {
+            control.click();
+            result.uiClicked += 1;
+            log("clicked visible LibreChat MCP", trimText(control.getAttribute?.("aria-label")), "control");
+            return true;
+          } catch (error) {
+            result.errors.push(`ui connect click ${String(error)}`);
+            return false;
+          }
+        };
+        const reconnectEntries = (connectionStatus) => {
+          const entries = [];
+          for (const [name, status] of Object.entries(connectionStatus)) {
+            if (!name || !isPlainObject(status)) continue;
+            const state = connectionState(status);
+            result.checked += 1;
+            if (!shouldReconnect(state)) {
+              result.skipped += 1;
+              continue;
+            }
+
+            entries.push({
+              name,
+              status,
+              state,
+              requiresOAuth: statusNeedsOAuth(status),
+            });
+          }
+          return entries;
+        };
+        const fetchConnectionStatus = async () => {
+          const { response, body } = await fetchJSONWithAuthRetry(apiURL("/api/mcp/connection/status"));
+          if (!response.ok) {
+            throw new Error(`status ${response.status}`);
+          }
+
+          const connectionStatus = isPlainObject(body?.connectionStatus) ? body.connectionStatus : null;
+          if (!connectionStatus) {
+            throw new Error("unexpected status response");
+          }
+
+          return connectionStatus;
+        };
+        const pollInterval = (attempt, timeout) => {
+          if (timeout <= reconnectPollTimeout) return 1000;
+          if (attempt < 12) return 5000;
+          if (attempt < 22) return 6000;
+          return 7500;
+        };
+        const waitForConnection = async (name, timeout, returnReconnectableState = false) => {
+          const startedAt = Date.now();
+          let attempt = 0;
+
+          while (Date.now() - startedAt <= timeout) {
+            const status = await fetchConnectionStatus();
+            const state = connectionState(status[name]);
+            if (state === "connected") return "connected";
+            if (returnReconnectableState && shouldReconnect(state)) return state;
+            if (state === "error") return "error";
+
+            const elapsed = Date.now() - startedAt;
+            const remaining = timeout - elapsed;
+            if (remaining <= 0) break;
+
+            await delay(Math.min(pollInterval(attempt, timeout), remaining));
+            attempt += 1;
+          }
+
+          return "timeout";
+        };
+        const recentOAuthOpens = () => {
+          const key = "__kotobaLibreMcpOAuthOpenedAt";
+          if (!isPlainObject(window[key])) {
+            window[key] = {};
+          }
+          return window[key];
+        };
+        const freshOAuthURL = (name, rawURL) => {
+          let url;
+          try {
+            url = new URL(rawURL, window.location.href);
+          } catch (_) {
+            result.errors.push(`${name}: invalid oauth url`);
+            return null;
+          }
+
+          if (url.protocol !== "https:" && url.protocol !== "http:") {
+            result.errors.push(`${name}: unsupported oauth url`);
+            return null;
+          }
+
+          const now = Date.now();
+          const openedAtByKey = recentOAuthOpens();
+          for (const [key, openedAt] of Object.entries(openedAtByKey)) {
+            if (typeof openedAt !== "number" || now - openedAt >= oauthOpenRepeatWindow) {
+              delete openedAtByKey[key];
+            }
+          }
+
+          const key = `${name}:${url.href}`;
+          if (typeof openedAtByKey[key] === "number") {
+            return null;
+          }
+
+          openedAtByKey[key] = now;
+          return url.href;
+        };
+        const openOAuth = async (name, rawURL) => {
+          const url = freshOAuthURL(name, rawURL);
+          if (!url) return;
+
+          try {
+            window.open(url, "_blank", "noopener,noreferrer");
+            result.oauthOpened += 1;
+            log("opened OAuth URL for", name);
+            await delay(oauthOpenDelay);
+          } catch (error) {
+            result.errors.push(`${name}: oauth open ${String(error)}`);
+          }
+        };
+        const pollReconnect = async (name, needsOAuth) => {
+          try {
+            const finalState = await waitForConnection(
+              name,
+              needsOAuth ? oauthPollTimeout : reconnectPollTimeout
+            );
+            if (finalState === "connected") {
+              result.connected += 1;
+              log("connected", name);
+            } else {
+              result.errors.push(`${name}: reconnect ${finalState}`);
+              log("reconnect did not complete", name, finalState);
+            }
+          } catch (error) {
+            result.errors.push(`${name}: poll ${String(error)}`);
+          }
+        };
+        const reinitializeWithAPI = async (entry, polls) => {
+          const name = entry.name;
+          try {
+            log("reinitializing", name, "from", entry.state);
+            const reconnectURL = apiURL(`/api/mcp/${encodeURIComponent(name)}/reinitialize`);
+            const reconnect = await fetchJSONWithAuthRetry(
+              reconnectURL,
+              {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+              },
+              reconnectRequestTimeout
+            );
+            if (!reconnect.response.ok) {
+              result.errors.push(`${name}: ${reconnect.response.status}`);
+              return;
+            }
+            if (reconnect.body?.success === false) {
+              const message = trimText(reconnect.body?.message) || "failed";
+              result.errors.push(`${name}: ${message}`);
+              return;
+            }
+            result.reinitialized += 1;
+            const oauthUrl = trimText(reconnect.body?.oauthUrl);
+            const needsOAuth = reconnect.body?.oauthRequired === true || oauthUrl.length > 0;
+            if (needsOAuth && !oauthUrl) {
+              result.errors.push(`${name}: missing oauth url`);
+              return;
+            }
+            if (needsOAuth) {
+              await openOAuth(name, oauthUrl);
+            }
+            polls.push(pollReconnect(name, needsOAuth));
+          } catch (error) {
+            result.errors.push(`${name}: ${String(error)}`);
+          }
+        };
+        const entriesStillDisconnectedAfterUIClick = async (entries) => {
+          await delay(uiClickSettleDelay);
+          const latestStatus = await fetchConnectionStatus();
+          const stillDisconnected = [];
+
+          for (const entry of entries) {
+            const latest = latestStatus[entry.name];
+            const latestState = connectionState(latest);
+            if (latestState === "connected") {
+              result.connected += 1;
+              log("connected", entry.name, "after LibreChat UI click");
+              continue;
+            }
+            if (latestState === "connecting") {
+              const finalState = await waitForConnection(
+                entry.name,
+                entry.requiresOAuth || statusNeedsOAuth(latest) ? oauthPollTimeout : reconnectPollTimeout,
+                true
+              );
+              if (finalState === "connected") {
+                result.connected += 1;
+                log("connected", entry.name, "after LibreChat UI click");
+                continue;
+              }
+              if (shouldReconnect(finalState)) {
+                stillDisconnected.push({
+                  ...entry,
+                  status: latest,
+                  state: finalState,
+                  requiresOAuth: entry.requiresOAuth || statusNeedsOAuth(latest),
+                });
+                continue;
+              }
+
+              result.errors.push(`${entry.name}: reconnect ${finalState}`);
+              continue;
+            }
+            if (shouldReconnect(latestState)) {
+              stillDisconnected.push({
+                ...entry,
+                status: latest,
+                state: latestState,
+                requiresOAuth: statusNeedsOAuth(latest),
+              });
+              continue;
+            }
+
+            stillDisconnected.push(entry);
+          }
+
+          return stillDisconnected;
+        };
+        const reconnectVisibleControls = async (entries, polls) => {
+          let remainingEntries = entries;
+          let attemptsRemaining = entries.length;
+
+          while (remainingEntries.length > 0 && attemptsRemaining > 0) {
+            const clickedControl = clickOneVisibleMCPConnectControl();
+            if (!clickedControl) break;
+
+            const previousCount = remainingEntries.length;
+            remainingEntries = await entriesStillDisconnectedAfterUIClick(remainingEntries);
+            attemptsRemaining -= 1;
+            if (remainingEntries.length >= previousCount) {
+              break;
+            }
+          }
+
+          return remainingEntries;
+        };
+        try {
+          if (window.location.protocol !== "https:") {
+            return result;
+          }
+          const connectionStatus = await fetchConnectionStatus();
+          log("checked MCP status for", Object.keys(connectionStatus).length, "server(s)");
+          const polls = [];
+          const entriesNeedingReconnect = reconnectEntries(connectionStatus);
+
+          const apiReconnectEntries = await reconnectVisibleControls(
+            entriesNeedingReconnect,
+            polls
+          );
+
+          for (const entry of apiReconnectEntries) {
+            await reinitializeWithAPI(entry, polls);
+          }
+
+          await Promise.all(polls);
+          if (result.uiClicked > 0 || result.reinitialized > 0) {
+            window.dispatchEvent(
+              new CustomEvent("kotoba-libre:mcp-auto-reconnect", { detail: { ...result } })
+            );
+          }
+          if (result.connected > 0 || shouldAttemptPendingReload) {
+            requestSafeReload();
+          }
+        } catch (error) {
+          result.errors.push(String(error));
+        }
+        return result;
+    """
 
     private static let loggerBootstrapScript = """
     (() => {
