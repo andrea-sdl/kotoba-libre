@@ -115,8 +115,10 @@ final class AppController: NSObject, ObservableObject, ASWebAuthenticationPresen
     private var hasInstalledApplicationObservers = false
     private var mcpAutoReconnectTimer: Timer?
     private var mcpAutoReconnectDeferredTask: Task<Void, Never>?
+    private var mcpAutoReconnectCatchUpTask: Task<Void, Never>?
     private var isMCPAutoReconnectRunning = false
     private var shouldRunMCPAutoReconnectAfterCurrentRun = false
+    private var hasPendingMCPUIRefresh = false
     private lazy var mainWindowController = MainWindowController(appController: self, store: store)
     private lazy var settingsWindowController = SettingsWindowController(appController: self)
     private lazy var launcherWindowController = LauncherWindowController(appController: self)
@@ -239,6 +241,10 @@ final class AppController: NSObject, ObservableObject, ASWebAuthenticationPresen
     func mainWindowDidShow() {
         runMCPAutoReconnect(reason: "window-show")
         scheduleDeferredMCPAutoReconnect(reason: "window-show-settled")
+    }
+
+    func mainWindowDidHide() {
+        attemptPendingMCPUIRefresh(reason: "window-hide")
     }
 
     func mainWebViewDidFinishNavigation() {
@@ -457,7 +463,10 @@ final class AppController: NSObject, ObservableObject, ASWebAuthenticationPresen
         activeAuthenticationSession = nil
         mcpAutoReconnectDeferredTask?.cancel()
         mcpAutoReconnectDeferredTask = nil
+        mcpAutoReconnectCatchUpTask?.cancel()
+        mcpAutoReconnectCatchUpTask = nil
         shouldRunMCPAutoReconnectAfterCurrentRun = false
+        hasPendingMCPUIRefresh = false
         mcpAutoReconnectTimer?.invalidate()
         mcpAutoReconnectTimer = nil
         mainWindowController.persistStateForTermination()
@@ -1195,15 +1204,19 @@ final class AppController: NSObject, ObservableObject, ASWebAuthenticationPresen
     private func configureMCPAutoReconnectTimer() {
         mcpAutoReconnectDeferredTask?.cancel()
         mcpAutoReconnectDeferredTask = nil
+        mcpAutoReconnectCatchUpTask?.cancel()
+        mcpAutoReconnectCatchUpTask = nil
         shouldRunMCPAutoReconnectAfterCurrentRun = false
         mcpAutoReconnectTimer?.invalidate()
         mcpAutoReconnectTimer = nil
 
         guard runtimeMode == .standard else {
+            hasPendingMCPUIRefresh = false
             return
         }
 
         guard settings.mcpAutoReconnectEnabled, settings.instanceBaseUrl != nil else {
+            hasPendingMCPUIRefresh = false
             return
         }
 
@@ -1243,6 +1256,39 @@ final class AppController: NSObject, ObservableObject, ASWebAuthenticationPresen
         }
     }
 
+    private func scheduleMCPAutoReconnectCatchUp(reason: String) {
+        guard runtimeMode == .standard else {
+            return
+        }
+
+        guard settings.mcpAutoReconnectEnabled, settings.instanceBaseUrl != nil else {
+            return
+        }
+
+        guard mainWindowController.contentKind == .web else {
+            return
+        }
+
+        mcpAutoReconnectCatchUpTask?.cancel()
+        mcpAutoReconnectCatchUpTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            guard !Task.isCancelled else {
+                return
+            }
+
+            self?.mcpAutoReconnectCatchUpTask = nil
+            self?.runMCPAutoReconnect(reason: reason)
+        }
+    }
+
+    private func attemptPendingMCPUIRefresh(reason: String) {
+        guard hasPendingMCPUIRefresh else {
+            return
+        }
+
+        runMCPAutoReconnect(reason: "\(reason)-pending-ui-refresh")
+    }
+
     private func runMCPAutoReconnect(reason: String) {
         guard runtimeMode == .standard else {
             return
@@ -1263,19 +1309,27 @@ final class AppController: NSObject, ObservableObject, ASWebAuthenticationPresen
         }
 
         isMCPAutoReconnectRunning = true
-        mainWindowController.reconnectMCPServersIfNeeded { [weak self] result in
+        let reloadPendingSync = hasPendingMCPUIRefresh
+        mainWindowController.reconnectMCPServersIfNeeded(reloadPendingSync: reloadPendingSync) { [weak self] result in
             guard let self else {
                 return
             }
 
             self.isMCPAutoReconnectRunning = false
+            if result.reloadPerformed {
+                self.hasPendingMCPUIRefresh = false
+            } else if result.reloadDeferred {
+                self.hasPendingMCPUIRefresh = true
+            }
             let shouldRunAgain = self.shouldRunMCPAutoReconnectAfterCurrentRun
             self.shouldRunMCPAutoReconnectAfterCurrentRun = false
+            let reloadState = result.reloadPerformed ? "performed" : (result.reloadDeferred ? "deferred" : "none")
             self.debugLog(
                 "KotobaLibre MCP: auto-reconnect reason=\(reason) checked=\(result.checkedServerCount) " +
                 "ui=\(result.uiClickedControlCount) reinitialized=\(result.reinitializedServerCount) " +
                 "connected=\(result.connectedServerCount) " +
                 "oauth=\(result.oauthURLCount) " +
+                "reload=\(reloadState) " +
                 "errors=\(result.errorMessages.count)"
             )
             if !result.errorMessages.isEmpty {
@@ -1417,10 +1471,51 @@ final class AppController: NSObject, ObservableObject, ASWebAuthenticationPresen
             name: NSApplication.didBecomeActiveNotification,
             object: nil
         )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleApplicationDidResignActive(_:)),
+            name: NSApplication.didResignActiveNotification,
+            object: nil
+        )
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self,
+            selector: #selector(handleWorkspaceDidWake(_:)),
+            name: NSWorkspace.didWakeNotification,
+            object: nil
+        )
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self,
+            selector: #selector(handleWorkspaceScreensDidWake(_:)),
+            name: NSWorkspace.screensDidWakeNotification,
+            object: nil
+        )
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self,
+            selector: #selector(handleWorkspaceSessionDidBecomeActive(_:)),
+            name: NSWorkspace.sessionDidBecomeActiveNotification,
+            object: nil
+        )
     }
 
     @objc private func handleApplicationDidBecomeActive(_ notification: Notification) {
         markResponsesRead()
+        scheduleMCPAutoReconnectCatchUp(reason: "app-active")
+    }
+
+    @objc private func handleApplicationDidResignActive(_ notification: Notification) {
+        attemptPendingMCPUIRefresh(reason: "app-resign-active")
+    }
+
+    @objc private func handleWorkspaceDidWake(_ notification: Notification) {
+        scheduleMCPAutoReconnectCatchUp(reason: "workspace-wake")
+    }
+
+    @objc private func handleWorkspaceScreensDidWake(_ notification: Notification) {
+        scheduleMCPAutoReconnectCatchUp(reason: "screens-wake")
+    }
+
+    @objc private func handleWorkspaceSessionDidBecomeActive(_ notification: Notification) {
+        scheduleMCPAutoReconnectCatchUp(reason: "session-active")
     }
 
     private func updateDockBadge() {
