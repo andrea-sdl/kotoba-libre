@@ -63,6 +63,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public static let defaultVoiceShortcut = "Ctrl+Alt+V"
     public static let defaultShowAppWindowShortcut = "Ctrl+Alt+K"
     public static let defaultLongResponseNotificationThresholdSeconds = 8
+    public static let defaultMCPAutoReconnectIntervalMinutes = 30
 
     public var instanceBaseUrl: String?
     public var globalShortcut: String
@@ -78,6 +79,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var appVisibilityMode: AppVisibilityMode
     public var backgroundResponseNotificationsEnabled: Bool
     public var longResponseNotificationThresholdSeconds: Int
+    public var mcpAutoReconnectEnabled: Bool
+    public var mcpAutoReconnectIntervalMinutes: Int
 
     enum CodingKeys: String, CodingKey {
         case instanceBaseUrl
@@ -94,6 +97,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
         case appVisibilityMode
         case backgroundResponseNotificationsEnabled
         case longResponseNotificationThresholdSeconds
+        case mcpAutoReconnectEnabled
+        case mcpAutoReconnectIntervalMinutes
     }
 
     public init(
@@ -110,7 +115,9 @@ public struct AppSettings: Codable, Equatable, Sendable {
         launcherOpacity: Double = 0.95,
         appVisibilityMode: AppVisibilityMode = .dockOnly,
         backgroundResponseNotificationsEnabled: Bool = true,
-        longResponseNotificationThresholdSeconds: Int = AppSettings.defaultLongResponseNotificationThresholdSeconds
+        longResponseNotificationThresholdSeconds: Int = AppSettings.defaultLongResponseNotificationThresholdSeconds,
+        mcpAutoReconnectEnabled: Bool = true,
+        mcpAutoReconnectIntervalMinutes: Int = AppSettings.defaultMCPAutoReconnectIntervalMinutes
     ) {
         self.instanceBaseUrl = instanceBaseUrl
         self.globalShortcut = globalShortcut
@@ -126,6 +133,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
         self.appVisibilityMode = appVisibilityMode
         self.backgroundResponseNotificationsEnabled = backgroundResponseNotificationsEnabled
         self.longResponseNotificationThresholdSeconds = longResponseNotificationThresholdSeconds
+        self.mcpAutoReconnectEnabled = mcpAutoReconnectEnabled
+        self.mcpAutoReconnectIntervalMinutes = mcpAutoReconnectIntervalMinutes
     }
 
     public init(from decoder: any Decoder) throws {
@@ -145,6 +154,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
         appVisibilityMode = try container.decodeIfPresent(AppVisibilityMode.self, forKey: .appVisibilityMode) ?? .dockOnly
         backgroundResponseNotificationsEnabled = try container.decodeIfPresent(Bool.self, forKey: .backgroundResponseNotificationsEnabled) ?? true
         longResponseNotificationThresholdSeconds = try container.decodeIfPresent(Int.self, forKey: .longResponseNotificationThresholdSeconds) ?? AppSettings.defaultLongResponseNotificationThresholdSeconds
+        mcpAutoReconnectEnabled = try container.decodeIfPresent(Bool.self, forKey: .mcpAutoReconnectEnabled) ?? true
+        mcpAutoReconnectIntervalMinutes = try container.decodeIfPresent(Int.self, forKey: .mcpAutoReconnectIntervalMinutes) ?? AppSettings.defaultMCPAutoReconnectIntervalMinutes
     }
 
     public func encode(to encoder: any Encoder) throws {
@@ -163,6 +174,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
         try container.encode(appVisibilityMode, forKey: .appVisibilityMode)
         try container.encode(backgroundResponseNotificationsEnabled, forKey: .backgroundResponseNotificationsEnabled)
         try container.encode(longResponseNotificationThresholdSeconds, forKey: .longResponseNotificationThresholdSeconds)
+        try container.encode(mcpAutoReconnectEnabled, forKey: .mcpAutoReconnectEnabled)
+        try container.encode(mcpAutoReconnectIntervalMinutes, forKey: .mcpAutoReconnectIntervalMinutes)
     }
 }
 
@@ -234,9 +247,24 @@ public enum KotobaLibreCore {
         "gov", "help", "info", "io", "me", "mobi", "name", "net", "online", "org", "page",
         "pro", "site", "software", "store", "tech", "tv", "wiki", "xyz"
     ]
+    private static let invisibleURLScalars: Set<Unicode.Scalar> = [
+        "\u{200B}",
+        "\u{200C}",
+        "\u{200D}",
+        "\u{2060}",
+        "\u{FEFF}"
+    ]
 
     public static func nowMarker(date: Date = Date()) -> String {
         "unix-ms-\(Int(date.timeIntervalSince1970 * 1_000))"
+    }
+
+    public static func cleanURLInput(_ value: String) -> String {
+        let trimmedValue = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        let scalars = trimmedValue.unicodeScalars.filter { scalar in
+            !invisibleURLScalars.contains(scalar)
+        }
+        return String(String.UnicodeScalarView(scalars))
     }
 
     public static func normalizeShortcutToken(_ token: String) -> String {
@@ -297,7 +325,7 @@ public enum KotobaLibreCore {
 
     public static func normalizeSettings(_ settings: AppSettings) -> AppSettings {
         var normalized = settings
-        if let value = normalized.instanceBaseUrl?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty {
+        if let value = normalized.instanceBaseUrl.map(cleanURLInput), !value.isEmpty {
             normalized.instanceBaseUrl = value
         } else {
             normalized.instanceBaseUrl = nil
@@ -320,6 +348,13 @@ public enum KotobaLibreCore {
         normalized.longResponseNotificationThresholdSeconds = min(
             max(normalized.longResponseNotificationThresholdSeconds, 1),
             300
+        )
+        if normalized.mcpAutoReconnectIntervalMinutes <= 0 {
+            normalized.mcpAutoReconnectIntervalMinutes = AppSettings.defaultMCPAutoReconnectIntervalMinutes
+        }
+        normalized.mcpAutoReconnectIntervalMinutes = min(
+            max(normalized.mcpAutoReconnectIntervalMinutes, 1),
+            240
         )
 
         return normalized
@@ -485,7 +520,7 @@ public enum KotobaLibreCore {
     }
 
     public static func parseInstanceBaseURL(_ settings: AppSettings) throws -> URL? {
-        guard let raw = settings.instanceBaseUrl?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else {
+        guard let raw = settings.instanceBaseUrl.map(cleanURLInput), !raw.isEmpty else {
             return nil
         }
 
@@ -612,6 +647,18 @@ public enum KotobaLibreCore {
         return host.caseInsensitiveCompare(configuredHost) == .orderedSame
     }
 
+    public static func matchesConfiguredInstanceOrigin(_ url: URL, settings: AppSettings) throws -> Bool {
+        guard try matchesConfiguredInstanceHost(url, settings: settings) else {
+            return false
+        }
+
+        guard let configuredURL = try parseInstanceBaseURL(settings) else {
+            return false
+        }
+
+        return normalizedPort(for: url) == normalizedPort(for: configuredURL)
+    }
+
     public static func mapCustomSchemeURLToInstanceURL(_ url: URL, instanceBaseURL: String?) throws -> URL? {
         guard url.scheme?.lowercased() == "kotobalibre" else {
             return nil
@@ -647,6 +694,21 @@ public enum KotobaLibreCore {
         components.percentEncodedQuery = sourceComponents?.percentEncodedQuery
         components.percentEncodedFragment = sourceComponents?.percentEncodedFragment
         return components.url
+    }
+
+    private static func normalizedPort(for url: URL) -> Int? {
+        if let port = url.port {
+            return port
+        }
+
+        switch url.scheme?.lowercased() {
+        case "https":
+            return 443
+        case "http":
+            return 80
+        default:
+            return nil
+        }
     }
 
     public static func presetTemplateHost(_ preset: Preset) throws -> String? {

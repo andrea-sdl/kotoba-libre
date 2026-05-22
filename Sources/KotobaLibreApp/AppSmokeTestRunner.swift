@@ -61,6 +61,8 @@ final class AppSmokeTestRunner {
         try expect(snapshot.mainContentKind == .onboarding, "clean launch should show onboarding")
         try expect(snapshot.hasInstanceBaseURL == false, "clean launch should not have an instance URL")
         try expect(snapshot.globalShortcutsEnabled == false, "clean launch should keep global shortcuts disabled until onboarding finishes")
+        try expect(snapshot.microphonePermissionState == .unavailableInLaunchMode, "smoke launch should explain missing microphone usage description")
+        try expect(snapshot.speechRecognitionPermissionState == .unavailableInLaunchMode, "smoke launch should explain missing speech-recognition usage description")
     }
 
     private func completeOnboardingAndCreatePreset() async throws -> Preset {
@@ -173,6 +175,21 @@ final class AppSmokeTestRunner {
         snapshot = appController.smokeTestSnapshot()
         try expect(snapshot.mainWindowVisible, "toggle should keep the visible main window open when it is unfocused")
         try expect(snapshot.mainWindowKey, "toggle should bring the visible main window to the foreground when it is unfocused")
+
+        appController.showLauncherWindow()
+        await settle()
+
+        snapshot = appController.smokeTestSnapshot()
+        try expect(snapshot.launcherWindowVisible, "launcher should be visible before toggling focus")
+        try expect(snapshot.launcherWindowKey, "launcher should be key before toggling focus")
+
+        appController.togglePrimaryWindow()
+        await settle()
+
+        snapshot = appController.smokeTestSnapshot()
+        try expect(snapshot.launcherWindowVisible == false, "toggle should hide the launcher before focusing the main window")
+        try expect(snapshot.mainWindowVisible, "toggle should keep the main window visible after dismissing the launcher")
+        try expect(snapshot.mainWindowKey, "toggle should keep focus on the main window after dismissing the launcher")
     }
 
     private func assertResetConfiguration() async throws {

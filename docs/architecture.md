@@ -11,6 +11,7 @@ Kotoba Libre is a native macOS desktop wrapper for LibreChat. The project is org
 - `AppSettings`, `Preset`, and related models
 - URL normalization and validation
 - Host restriction enforcement
+- MCP auto-reconnect defaults and interval normalization
 - Deep-link parsing
 - Query expansion for preset templates
 - JSON import/export helpers
@@ -36,6 +37,7 @@ This target is intentionally UI-free so behavior can be validated in the self-te
 - Global shortcut capture and registration
 - Launch-at-login integration
 - Local notification handoff for long-running background responses
+- MCP auto-reconnect scheduling for the standard runtime
 
 The UI stack is mixed by design:
 
@@ -43,6 +45,7 @@ The UI stack is mixed by design:
 - SwiftUI renders onboarding, settings, sheets, and launcher content with native Glass surfaces
 - WebKit renders LibreChat content inside `WKWebView`
 - Top-level `WKWebView` navigations add `X-Kotoba-Libre: Kotoba Libre/<version>` so the site can detect the embedded desktop app build
+- The embedded `WKWebView` also hosts the MCP reconnect bridge so status and reinitialize requests use LibreChat's same-origin browser session
 - When enabled in Instance Settings, external-host login redirects can be handed to the default browser, but that flow depends on the browser extension redirecting the completed auth back to `kotobalibre://...`
 - The Chrome helper preserves optional host ports in that redirect, so local HTTPS setups like `localhost:3000` keep working
 - Likely OAuth popup flows can be promoted into `ASWebAuthenticationSession` when their redirect URI returns through `kotobalibre://...`, otherwise they fall back to the external browser instead of staying trapped in `WKWebView`
@@ -57,6 +60,7 @@ It focuses on:
 
 - Settings normalization
 - Shortcut normalization
+- MCP auto-reconnect settings defaults and interval clamping
 - Deep-link parsing
 - URL policy enforcement
 - Preset import/export compatibility
@@ -173,6 +177,27 @@ The native shell also layers on conversation-level commands around that web sess
 - `Cmd+[` and `Cmd+]` drive WebKit history
 - `Cmd+K` opens a native search overlay backed by `WKWebView.find`
 - `Escape` triggers the page stop-generating control when a response is in flight
+
+## MCP Auto-Reconnect
+
+MCP auto-reconnect is an app-level scheduler coordinated by `AppController`, but the actual network work runs inside the main `WKWebView` page context.
+
+- It only runs in the standard runtime.
+- It is enabled by default and uses a normalized interval of 30 minutes unless the user changes it in the System tab.
+- It also runs when the main window is shown, when the main LibreChat page finishes loading, when the app becomes active, and after macOS wake/session-active notifications, then schedules one short settled retry so first app open is not lost before LibreChat has mounted its app shell.
+- Wake/session/app-active checks are debounced because macOS can deliver several related notifications while the machine is resuming.
+- It requires the current embedded page to match the configured LibreChat origin, including an explicit port when one is configured.
+- It never starts a second reconnect pass while one is still active.
+- The bridge calls the same-origin `/api/mcp/connection/status` endpoint with page credentials.
+- If LibreChat rejects a bridge request with `401`, the bridge calls `/api/auth/refresh`, dispatches LibreChat's `tokenUpdated` event, and retries with the returned bearer token.
+- It skips connected and connecting servers.
+- For disconnected or error states, the bridge clicks visible LibreChat MCP `Connect` or `Reconnect` controls one at a time when the app shell is mounted, then fetches status after each click before using the API fallback.
+- It posts to `/api/mcp/<serverName>/reinitialize` only for servers that are still disconnected or erroring after the UI path.
+- If reinitialize responses contain OAuth URLs, the page bridge opens them sequentially with `window.open` so LibreChat's browser session stays involved.
+- The bridge polls LibreChat's connection status after each reconnect attempt, using a short timeout for direct reconnects and a three-minute timeout for OAuth flows.
+- When at least one server reaches `connected`, the page is refreshed only if the main window is hidden or not key, no response is generating, and the page reports no focused editable field or non-empty composer draft.
+- If reconnect succeeds while refresh is unsafe, the app keeps a pending UI refresh flag and retries the safe refresh on later inactive, hidden, or catch-up points.
+- Bridge diagnostics are emitted only through the existing debug logging setting.
 
 ## Persistence
 

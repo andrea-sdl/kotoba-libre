@@ -17,6 +17,7 @@ LibreChat is powerful, but the browser workflow is easy to interrupt. Kotoba Lib
 - Native-feeling experience around a live WebKit session, without the usual browser-tab reload dance, and with a small app footprint
 - Menu bar only, Dock only, or hybrid presence modes depending on how visible you want the app to be
 - Native onboarding, settings, popup handling, deep links, notifications, and Dock integrations tailored for LibreChat
+- Optional MCP server auto-reconnect that uses LibreChat's own visible Connect/Reconnect controls first, then falls back to its MCP API for servers still disconnected or erroring
 
 ## Install
 
@@ -59,6 +60,7 @@ Kotoba Libre now adds a broader layer of Mac-native behavior around the embedded
 
 - Background responses can raise a system notification once they cross the long-response threshold you set in Settings
 - Unread background completions increment the Dock badge and bounce the Dock icon
+- MCP servers that fall into disconnected or error states can be reinitialized automatically from the embedded LibreChat session
 - The main app menu includes `Cmd+N` for a new chat, `Cmd+[` and `Cmd+]` for history, `Cmd+K` for message search, and `Escape` for stop generating
 - Dragging one file onto the Dock icon opens a new chat and attaches it
 - The main window title tracks the current chat title instead of staying static
@@ -210,6 +212,8 @@ The Shortcuts tab manages three separate shortcuts:
 The System tab also includes microphone and speech-recognition permission status, debug logging, and a destructive reset action that clears config and returns the app to onboarding.
 
 The System tab also lets users decide whether long background responses should raise a system notification, and how many seconds a response must run before it counts as long.
+
+The System tab also controls MCP auto-reconnect. It is enabled by default and checks every 30 minutes, plus every time the main LibreChat window is shown, finishes loading, the app becomes active, or macOS reports a wake/session-active event. First-open checks also get one short settled retry so the reconnect pass is not lost before LibreChat has mounted its app shell. The reconnect pass only runs on the configured LibreChat origin, uses the embedded page session to read `/api/mcp/connection/status`, refreshes LibreChat's bearer token if the API requires it, and skips connected or connecting servers. For disconnected or erroring servers, it clicks LibreChat's own visible MCP `Connect` or `Reconnect` controls one at a time when the app UI is mounted, checks status after each click, and posts to each server's reinitialize endpoint only when the UI path did not move it to connected or connecting. If LibreChat returns OAuth URLs, the page bridge opens them in order and polls LibreChat's connection status until each reconnect finishes or times out. When a reconnect succeeds, Kotoba Libre refreshes the page only if the window is safely out of the user's way and the page has no focused editor or composer draft; otherwise it defers that UI refresh until a later safe point.
 
 When host restriction is enabled and you change the configured LibreChat instance to a different host, Kotoba Libre re-validates saved agents, offers an export step first, and removes any incompatible agents after you confirm the change.
 
