@@ -77,6 +77,42 @@ struct KotobaLibreSelfTest {
         expect(authRetryMCPReconnectResult.connected == 1, "mcpBridgeConnectsAfterAuthRefreshRetry")
         expect(authRetryMCPReconnectResult.errors.isEmpty, "mcpBridgeAuthRefreshRetryHasNoErrors")
 
+        let safeReloadMCPReconnectResult = try runMCPBridgeRegressionScenario(Self.reloadAllowedMCPReconnectScenario)
+        expect(safeReloadMCPReconnectResult.reloadPerformed, "mcpBridgePerformsSafeReloadAfterReconnect")
+        expect(!safeReloadMCPReconnectResult.reloadDeferred, "mcpBridgeDoesNotDeferSafeReload")
+        expect(safeReloadMCPReconnectResult.reloadCount == 1, "mcpBridgeSchedulesOneSafeReload")
+
+        let unsafeReloadMCPReconnectResult = try runMCPBridgeRegressionScenario(
+            Self.reloadAllowedMCPReconnectScenario,
+            reloadAfterReconnect: false
+        )
+        expect(!unsafeReloadMCPReconnectResult.reloadPerformed, "mcpBridgeDoesNotReloadWhenNativeGateIsUnsafe")
+        expect(unsafeReloadMCPReconnectResult.reloadDeferred, "mcpBridgeDefersReloadWhenNativeGateIsUnsafe")
+        expect(unsafeReloadMCPReconnectResult.reloadCount == 0, "mcpBridgeSkipsReloadWhenNativeGateIsUnsafe")
+
+        let focusedEditableReloadResult = try runMCPBridgeRegressionScenario(Self.focusedEditableBlocksMCPReloadScenario)
+        expect(!focusedEditableReloadResult.reloadPerformed, "mcpBridgeDoesNotReloadFocusedEditablePage")
+        expect(focusedEditableReloadResult.reloadDeferred, "mcpBridgeDefersFocusedEditableReload")
+        expect(focusedEditableReloadResult.reloadCount == 0, "mcpBridgeFocusedEditableHasNoReloadCall")
+
+        let draftReloadResult = try runMCPBridgeRegressionScenario(Self.draftBlocksMCPReloadScenario)
+        expect(!draftReloadResult.reloadPerformed, "mcpBridgeDoesNotReloadComposerDraft")
+        expect(draftReloadResult.reloadDeferred, "mcpBridgeDefersComposerDraftReload")
+        expect(draftReloadResult.reloadCount == 0, "mcpBridgeComposerDraftHasNoReloadCall")
+
+        let pendingSafeReloadResult = try runMCPBridgeRegressionScenario(
+            Self.noReconnectMCPReloadScenario,
+            reloadPendingSync: true
+        )
+        expect(pendingSafeReloadResult.connected == 0, "mcpBridgePendingReloadDoesNotReconnectConnectedServers")
+        expect(pendingSafeReloadResult.reloadPerformed, "mcpBridgePerformsPendingSafeReload")
+        expect(pendingSafeReloadResult.reloadCount == 1, "mcpBridgePendingSafeReloadSchedulesOnce")
+
+        let noReconnectReloadResult = try runMCPBridgeRegressionScenario(Self.noReconnectMCPReloadScenario)
+        expect(!noReconnectReloadResult.reloadPerformed, "mcpBridgeSkipsReloadWithoutReconnectOrPendingSync")
+        expect(!noReconnectReloadResult.reloadDeferred, "mcpBridgeDoesNotDeferReloadWithoutReconnectOrPendingSync")
+        expect(noReconnectReloadResult.reloadCount == 0, "mcpBridgeNoReconnectHasNoReloadCall")
+
         let appControllerSource = try sourceFile(named: "Sources/KotobaLibreApp/AppController.swift")
         expect(
             appControllerSource.contains("scheduleDeferredMCPAutoReconnect(reason: \"window-show-settled\")"),
@@ -101,6 +137,34 @@ struct KotobaLibreSelfTest {
         expect(
             appControllerSource.contains("runMCPAutoReconnect(reason: \"pending-after-active\")"),
             "mcpSchedulerRunsQueuedRetryAfterActiveRun"
+        )
+        expect(
+            appControllerSource.contains("NSWorkspace.didWakeNotification"),
+            "mcpSchedulerObservesWorkspaceWake"
+        )
+        expect(
+            appControllerSource.contains("NSWorkspace.screensDidWakeNotification"),
+            "mcpSchedulerObservesScreensWake"
+        )
+        expect(
+            appControllerSource.contains("NSWorkspace.sessionDidBecomeActiveNotification"),
+            "mcpSchedulerObservesSessionActive"
+        )
+        expect(
+            appControllerSource.contains("scheduleMCPAutoReconnectCatchUp(reason: \"app-active\")"),
+            "mcpSchedulerSchedulesCatchUpWhenAppBecomesActive"
+        )
+        expect(
+            appControllerSource.contains("mcpAutoReconnectCatchUpTask?.cancel()"),
+            "mcpSchedulerDebouncesCatchUpRuns"
+        )
+        expect(
+            appControllerSource.contains("guard runtimeMode == .standard"),
+            "mcpSchedulerKeepsSmokeRuntimeGuards"
+        )
+        expect(
+            appControllerSource.contains("hasPendingMCPUIRefresh"),
+            "mcpSchedulerTracksDeferredUIRefresh"
         )
 
         let normalizedSettings = KotobaLibreCore.normalizeSettings(
@@ -382,7 +446,11 @@ struct KotobaLibreSelfTest {
         Foundation.exit(1)
     }
 
-    private static func runMCPBridgeRegressionScenario(_ scenarioScript: String) throws -> MCPBridgeRunResult {
+    private static func runMCPBridgeRegressionScenario(
+        _ scenarioScript: String,
+        reloadAfterReconnect: Bool = true,
+        reloadPendingSync: Bool = false
+    ) throws -> MCPBridgeRunResult {
         let bridgeScript = try extractMCPAutoReconnectScript()
         guard let context = JSContext() else {
             throw SelfTestFailure("could not create JavaScript context")
@@ -401,9 +469,10 @@ struct KotobaLibreSelfTest {
         var __error = null;
         (async function() {
           try {
-            var __result = await (async function(reloadAfterReconnect) {
+            var __result = await (async function(reloadAfterReconnect, reloadPendingSync) {
         \(bridgeScript)
-            })(true);
+            })(\(reloadAfterReconnect ? "true" : "false"), \(reloadPendingSync ? "true" : "false"));
+            __result.reloadCount = globalThis.__reloadCount || 0;
             __resultJSON = JSON.stringify(__result);
           } catch (error) {
             __error = String(error && error.stack ? error.stack : error);
@@ -516,13 +585,25 @@ struct KotobaLibreSelfTest {
       config = config || {};
       return {
         disabled: config.disabled === true,
+        value: config.value || "",
         textContent: config.text || "",
+        isContentEditable: config.contentEditable === true,
         parentElement: config.parent || null,
         getAttribute: function(name) {
           return name === "aria-label" ? (config.label || null) : null;
         },
         matches: function(selector) {
-          return selector === "[disabled]" ? this.disabled : false;
+          if (selector === "[disabled]") return this.disabled;
+          if (
+            selector.indexOf("textarea") !== -1 ||
+            selector.indexOf("input") !== -1 ||
+            selector.indexOf("contenteditable") !== -1 ||
+            selector.indexOf("role='textbox'") !== -1 ||
+            selector.indexOf('role="textbox"') !== -1
+          ) {
+            return config.editable === true || config.contentEditable === true;
+          }
+          return false;
         },
         closest: function() {
           return null;
@@ -535,13 +616,21 @@ struct KotobaLibreSelfTest {
     }
     function __installBrowserMock(config) {
       config = config || {};
-      var textarea = __mockElement({ text: "", visible: config.textareaVisible !== false });
+      globalThis.__reloadCount = 0;
+      var textarea = __mockElement({
+        editable: true,
+        text: "",
+        value: config.textareaValue || "",
+        visible: config.textareaVisible !== false,
+      });
       globalThis.window = {
         location: {
           protocol: "https:",
           origin: "https://chat.example.test",
           href: "https://chat.example.test/c/new",
-          reload: config.reload || function() {},
+          reload: config.reload || function() {
+            globalThis.__reloadCount += 1;
+          },
         },
         setTimeout: function(callback) {
           callback();
@@ -555,11 +644,25 @@ struct KotobaLibreSelfTest {
         open: config.open || function() {},
       };
       globalThis.document = {
+        activeElement: config.activeElement || null,
+        hasFocus: function() {
+          return config.documentHasFocus === true;
+        },
         querySelector: function() {
           return null;
         },
         querySelectorAll: function(selector) {
           if (selector === "textarea") {
+            return config.textareaVisible === false ? [] : [textarea];
+          }
+          if (
+            selector.indexOf("textarea") !== -1 ||
+            selector.indexOf("input") !== -1 ||
+            selector.indexOf("contenteditable") !== -1 ||
+            selector.indexOf("role='textbox'") !== -1 ||
+            selector.indexOf('role="textbox"') !== -1
+          ) {
+            if (config.editableElements) return config.editableElements;
             return config.textareaVisible === false ? [] : [textarea];
           }
           if (selector.indexOf('aria-label="Connect"') !== -1 || selector.indexOf('aria-label="Reconnect"') !== -1) {
@@ -732,12 +835,100 @@ struct KotobaLibreSelfTest {
       },
     });
     """#
+
+    private static let reloadAllowedMCPReconnectScenario = #"""
+    var posted = false;
+    __installBrowserMock({
+      textareaVisible: false,
+      fetchImpl: async function(url, options) {
+        if (url.endsWith("/api/mcp/connection/status")) {
+          return __response(200, {
+            connectionStatus: {
+              test: { connectionState: posted ? "connected" : "disconnected" },
+            },
+          });
+        }
+        if (url.endsWith("/api/mcp/test/reinitialize")) {
+          posted = options && options.method === "POST";
+          return __response(200, { success: true });
+        }
+        throw new Error("unexpected fetch " + url);
+      },
+    });
+    """#
+
+    private static let focusedEditableBlocksMCPReloadScenario = #"""
+    var posted = false;
+    var focusedTextarea = __mockElement({ editable: true, value: "", visible: true });
+    __installBrowserMock({
+      activeElement: focusedTextarea,
+      documentHasFocus: true,
+      editableElements: [focusedTextarea],
+      fetchImpl: async function(url, options) {
+        if (url.endsWith("/api/mcp/connection/status")) {
+          return __response(200, {
+            connectionStatus: {
+              test: { connectionState: posted ? "connected" : "disconnected" },
+            },
+          });
+        }
+        if (url.endsWith("/api/mcp/test/reinitialize")) {
+          posted = options && options.method === "POST";
+          return __response(200, { success: true });
+        }
+        throw new Error("unexpected fetch " + url);
+      },
+    });
+    """#
+
+    private static let draftBlocksMCPReloadScenario = #"""
+    var posted = false;
+    __installBrowserMock({
+      textareaValue: "unfinished prompt",
+      fetchImpl: async function(url, options) {
+        if (url.endsWith("/api/mcp/connection/status")) {
+          return __response(200, {
+            connectionStatus: {
+              test: { connectionState: posted ? "connected" : "disconnected" },
+            },
+          });
+        }
+        if (url.endsWith("/api/mcp/test/reinitialize")) {
+          posted = options && options.method === "POST";
+          return __response(200, { success: true });
+        }
+        throw new Error("unexpected fetch " + url);
+      },
+    });
+    """#
+
+    private static let noReconnectMCPReloadScenario = #"""
+    __installBrowserMock({
+      textareaVisible: false,
+      fetchImpl: async function(url) {
+        if (url.endsWith("/api/mcp/connection/status")) {
+          return __response(200, {
+            connectionStatus: {
+              test: { connectionState: "connected" },
+            },
+          });
+        }
+        if (url.indexOf("/reinitialize") !== -1) {
+          throw new Error("API fallback should not run for connected servers");
+        }
+        throw new Error("unexpected fetch " + url);
+      },
+    });
+    """#
 }
 
 private struct MCPBridgeRunResult: Decodable {
     let uiClicked: Int
     let reinitialized: Int
     let connected: Int
+    let reloadPerformed: Bool
+    let reloadDeferred: Bool
+    let reloadCount: Int
     let errors: [String]
 }
 

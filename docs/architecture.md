@@ -184,7 +184,8 @@ MCP auto-reconnect is an app-level scheduler coordinated by `AppController`, but
 
 - It only runs in the standard runtime.
 - It is enabled by default and uses a normalized interval of 30 minutes unless the user changes it in the System tab.
-- It also runs when the main window is shown and when the main LibreChat page finishes loading, then schedules one short settled retry so first app open is not lost before LibreChat has mounted its app shell.
+- It also runs when the main window is shown, when the main LibreChat page finishes loading, when the app becomes active, and after macOS wake/session-active notifications, then schedules one short settled retry so first app open is not lost before LibreChat has mounted its app shell.
+- Wake/session/app-active checks are debounced because macOS can deliver several related notifications while the machine is resuming.
 - It requires the current embedded page to match the configured LibreChat origin, including an explicit port when one is configured.
 - It never starts a second reconnect pass while one is still active.
 - The bridge calls the same-origin `/api/mcp/connection/status` endpoint with page credentials.
@@ -194,7 +195,8 @@ MCP auto-reconnect is an app-level scheduler coordinated by `AppController`, but
 - It posts to `/api/mcp/<serverName>/reinitialize` only for servers that are still disconnected or erroring after the UI path.
 - If reinitialize responses contain OAuth URLs, the page bridge opens them sequentially with `window.open` so LibreChat's browser session stays involved.
 - The bridge polls LibreChat's connection status after each reconnect attempt, using a short timeout for direct reconnects and a three-minute timeout for OAuth flows.
-- When at least one server reaches `connected` and no response is currently generating, the page is refreshed so LibreChat rebuilds its React Query state from the current backend status.
+- When at least one server reaches `connected`, the page is refreshed only if the main window is hidden or not key, no response is generating, and the page reports no focused editable field or non-empty composer draft.
+- If reconnect succeeds while refresh is unsafe, the app keeps a pending UI refresh flag and retries the safe refresh on later inactive, hidden, or catch-up points.
 - Bridge diagnostics are emitted only through the existing debug logging setting.
 
 ## Persistence

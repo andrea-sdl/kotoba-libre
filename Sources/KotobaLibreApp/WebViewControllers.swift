@@ -28,6 +28,8 @@ struct MCPAutoReconnectResult {
     let reinitializedServerCount: Int
     let connectedServerCount: Int
     let oauthURLCount: Int
+    let reloadPerformed: Bool
+    let reloadDeferred: Bool
     let errorMessages: [String]
 
     static let empty = MCPAutoReconnectResult(
@@ -36,6 +38,8 @@ struct MCPAutoReconnectResult {
         reinitializedServerCount: 0,
         connectedServerCount: 0,
         oauthURLCount: 0,
+        reloadPerformed: false,
+        reloadDeferred: false,
         errorMessages: []
     )
 }
@@ -180,6 +184,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     func hide() {
         persistWindowFrame()
         window?.orderOut(nil)
+        appController?.mainWindowDidHide()
     }
 
     func resetToDefaultSize() {
@@ -193,6 +198,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     func windowShouldClose(_ sender: NSWindow) -> Bool {
         persistWindowFrame()
         sender.orderOut(nil)
+        appController?.mainWindowDidHide()
         return false
     }
 
@@ -281,13 +287,32 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         webController?.stopGenerating(force: force) ?? false
     }
 
-    func reconnectMCPServersIfNeeded(completion: @escaping (MCPAutoReconnectResult) -> Void) {
+    private var canSafelyReloadMCPUI: Bool {
+        guard webController?.isGeneratingResponse != true else {
+            return false
+        }
+
+        guard let window, window.isVisible else {
+            return true
+        }
+
+        return !window.isKeyWindow
+    }
+
+    func reconnectMCPServersIfNeeded(
+        reloadPendingSync: Bool,
+        completion: @escaping (MCPAutoReconnectResult) -> Void
+    ) {
         guard let webController else {
             completion(.empty)
             return
         }
 
-        webController.reconnectMCPServersIfNeeded(completion: completion)
+        webController.reconnectMCPServersIfNeeded(
+            allowReloadAfterReconnect: canSafelyReloadMCPUI,
+            reloadPendingSync: reloadPendingSync,
+            completion: completion
+        )
     }
 
     private func installShortcutMonitor() {
@@ -1246,7 +1271,11 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
         return true
     }
 
-    func reconnectMCPServersIfNeeded(completion: @escaping (MCPAutoReconnectResult) -> Void) {
+    func reconnectMCPServersIfNeeded(
+        allowReloadAfterReconnect: Bool,
+        reloadPendingSync: Bool,
+        completion: @escaping (MCPAutoReconnectResult) -> Void
+    ) {
         guard let currentURL = webView.url else {
             debugLog("KotobaLibre MCP: skipped reconnect because the web view has no URL yet")
             completion(.empty)
@@ -1267,7 +1296,10 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
 
         webView.callAsyncJavaScript(
             Self.mcpAutoReconnectScript,
-            arguments: ["reloadAfterReconnect": !isGeneratingResponse],
+            arguments: [
+                "reloadAfterReconnect": allowReloadAfterReconnect,
+                "reloadPendingSync": reloadPendingSync,
+            ],
             in: nil,
             in: .page
         ) { [weak self] result in
@@ -1288,6 +1320,8 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
                         reinitializedServerCount: 0,
                         connectedServerCount: 0,
                         oauthURLCount: 0,
+                        reloadPerformed: false,
+                        reloadDeferred: false,
                         errorMessages: [error.localizedDescription]
                     )
                 )
@@ -1623,6 +1657,8 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
                 reinitializedServerCount: 0,
                 connectedServerCount: 0,
                 oauthURLCount: 0,
+                reloadPerformed: false,
+                reloadDeferred: false,
                 errorMessages: ["MCP reconnect bridge returned an unexpected result"]
             )
         }
@@ -1634,6 +1670,8 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
             reinitializedServerCount: intValue(payload["reinitialized"]),
             connectedServerCount: intValue(payload["connected"]),
             oauthURLCount: intValue(payload["oauthOpened"]),
+            reloadPerformed: boolValue(payload["reloadPerformed"]),
+            reloadDeferred: boolValue(payload["reloadDeferred"]),
             errorMessages: errors
         )
     }
@@ -1652,6 +1690,18 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
         }
 
         return 0
+    }
+
+    private func boolValue(_ value: Any?) -> Bool {
+        if let value = value as? Bool {
+            return value
+        }
+
+        if let value = value as? NSNumber {
+            return value.boolValue
+        }
+
+        return false
     }
 
     private func stringArray(_ value: Any?) -> [String] {
@@ -2293,6 +2343,8 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
           connected: 0,
           skipped: 0,
           oauthOpened: 0,
+          reloadPerformed: false,
+          reloadDeferred: false,
           errors: [],
         };
         const oauthPollTimeout = 180000;
@@ -2309,6 +2361,8 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
           '[role="button"][aria-label="Reconnect"]',
         ].join(",");
         const shouldReloadAfterReconnect = reloadAfterReconnect === true;
+        const shouldAttemptPendingReload = reloadPendingSync === true;
+        const editableSelector = "textarea, input, [contenteditable='true'], [contenteditable=''], [role='textbox']";
         let authorizationHeader = "";
         const trimText = (value) => typeof value === "string" ? value.trim() : "";
         const delay = (milliseconds) =>
@@ -2417,6 +2471,51 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
             style.visibility !== "hidden" &&
             style.opacity !== "0" &&
             style.pointerEvents !== "none";
+        };
+        const elementText = (element) => {
+          if (!element) return "";
+          if (typeof element.value === "string") return element.value;
+          return trimText(element.textContent);
+        };
+        const editableElement = (element) => {
+          if (!element) return false;
+          if (element.isContentEditable === true) return true;
+          try {
+            return element.matches?.(editableSelector) === true;
+          } catch (_) {
+            return false;
+          }
+        };
+        const hasFocusedEditableElement = () => {
+          try {
+            if (document.hasFocus?.() !== true) return false;
+            return editableElement(document.activeElement);
+          } catch (_) {
+            return false;
+          }
+        };
+        const hasVisibleComposerDraft = () => {
+          try {
+            return Array.from(document.querySelectorAll(editableSelector)).some((element) => {
+              return visibleElement(element) && trimText(elementText(element)).length > 0;
+            });
+          } catch (_) {
+            return false;
+          }
+        };
+        const canSafelyReloadPage = () => {
+          return !hasFocusedEditableElement() && !hasVisibleComposerDraft();
+        };
+        const requestSafeReload = () => {
+          if (!shouldReloadAfterReconnect || !canSafelyReloadPage()) {
+            result.reloadDeferred = true;
+            log("deferred page refresh after MCP reconnect");
+            return;
+          }
+
+          result.reloadPerformed = true;
+          log("refreshing page after successful MCP reconnect");
+          window.setTimeout(() => window.location.reload(), reconnectReloadDelay);
         };
         const disabledControl = (element) => {
           if (!element) return true;
@@ -2748,9 +2847,8 @@ final class WebContentViewController: NSViewController, WKNavigationDelegate, WK
               new CustomEvent("kotoba-libre:mcp-auto-reconnect", { detail: { ...result } })
             );
           }
-          if (result.connected > 0 && shouldReloadAfterReconnect) {
-            log("refreshing page after successful MCP reconnect");
-            window.setTimeout(() => window.location.reload(), reconnectReloadDelay);
+          if (result.connected > 0 || shouldAttemptPendingReload) {
+            requestSafeReload();
           }
         } catch (error) {
           result.errors.push(String(error));
